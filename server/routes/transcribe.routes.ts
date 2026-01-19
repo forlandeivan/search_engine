@@ -101,12 +101,14 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
           skillId: skill.id,
           executionMode: skill.executionMode,
           transcriptionFlowMode: skill.transcriptionFlowMode,
-        }, 'Skill is in no-code mode, redirecting to file upload flow');
+        }, 'Skill is in no-code mode, returning no-code flow indicator');
         
-        return res.status(409).json({
-          message: 'Навык использует no-code режим транскрибации',
-          code: 'NO_CODE_TRANSCRIPTION_MODE',
+        // Return 200 with special status to indicate no-code flow
+        // Client will handle this and use file upload flow instead
+        return res.status(200).json({
+          status: 'no_code_required',
           mode: 'no_code',
+          message: 'Навык использует no-code режим транскрибации',
         });
       }
     }

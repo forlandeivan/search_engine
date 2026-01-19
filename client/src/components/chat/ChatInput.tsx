@@ -162,8 +162,23 @@ export default function ChatInput({
           },
         });
 
-        if (response.status === 409) {
-          // В No-code режиме сервер сообщает 409 — загружаем файл и ждём отправки пользователем.
+        try {
+          await throwIfResNotOk(response);
+        } catch (error) {
+          const friendlyMessage = formatApiErrorMessage(error);
+          toast({
+            title: isInsufficientCreditsError(error) ? "Недостаточно кредитов" : "Не удалось отправить аудио",
+            description: friendlyMessage,
+            variant: "destructive",
+          });
+          throw error;
+        }
+
+        const result = await response.json();
+
+        // Check if skill is in no-code mode - use file upload flow
+        if (result.status === "no_code_required") {
+          // В No-code режиме загружаем файл и ждём отправки пользователем.
           // Загружаем файл на сервер (без отправки события)
           const uploadFormData = new FormData();
           uploadFormData.append("file", file);
@@ -201,20 +216,6 @@ export default function ChatInput({
           setPendingTranscribe(payload);
           return payload;
         }
-
-        try {
-          await throwIfResNotOk(response);
-        } catch (error) {
-          const friendlyMessage = formatApiErrorMessage(error);
-          toast({
-            title: isInsufficientCreditsError(error) ? "Недостаточно кредитов" : "Не удалось отправить аудио",
-            description: friendlyMessage,
-            variant: "destructive",
-          });
-          throw error;
-        }
-
-        const result = await response.json();
 
         if (result.status === "uploaded") {
           const payload: TranscribePayload = {

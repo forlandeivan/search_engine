@@ -760,8 +760,20 @@ chatRouter.post('/sessions/:chatId/messages/file', fileUpload.single('file'), as
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
-  const { id: workspaceId } = getRequestWorkspace(req);
   const chatId = req.params.chatId;
+  
+  // Try to get workspaceId from request, but if not available, get it from chat
+  let workspaceId: string;
+  try {
+    workspaceId = getRequestWorkspace(req).id;
+  } catch {
+    // If workspaceId not in request, get it from chat
+    const chatRecord = await storage.getChatSessionById(chatId);
+    if (!chatRecord || chatRecord.userId !== user.id) {
+      return res.status(404).json({ message: 'Чат не найден или недоступен' });
+    }
+    workspaceId = chatRecord.workspaceId;
+  }
 
   const file = req.file;
   if (!file) {
@@ -913,8 +925,20 @@ chatRouter.post('/sessions/:chatId/messages/:messageId/send', asyncHandler(async
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
-  const { id: workspaceId } = getRequestWorkspace(req);
   const { chatId, messageId } = req.params;
+  
+  // Try to get workspaceId from request, but if not available, get it from chat
+  let workspaceId: string;
+  try {
+    workspaceId = getRequestWorkspace(req).id;
+  } catch {
+    // If workspaceId not in request, get it from chat
+    const chatRecord = await storage.getChatSessionById(chatId);
+    if (!chatRecord || chatRecord.userId !== user.id) {
+      return res.status(404).json({ message: 'Чат не найден или недоступен' });
+    }
+    workspaceId = chatRecord.workspaceId;
+  }
 
   // Get chat and verify access
   const chat = await getChatById(chatId, workspaceId, user.id);
