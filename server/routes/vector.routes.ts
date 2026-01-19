@@ -518,7 +518,7 @@ vectorRouter.post('/collections', asyncHandler(async (req, res) => {
       },
     });
 
-    await storage.createWorkspaceCollection(workspaceId, parsed.name);
+    await storage.upsertCollectionWorkspace(parsed.name, workspaceId);
 
     res.status(201).json({
       name: parsed.name,
@@ -559,7 +559,7 @@ vectorRouter.delete('/collections/:name', asyncHandler(async (req, res) => {
   try {
     const client = getQdrantClient();
     await client.deleteCollection(req.params.name);
-    await storage.deleteWorkspaceCollection(workspaceId, req.params.name);
+    await storage.removeCollectionWorkspace(req.params.name);
 
     res.json({ success: true });
   } catch (error) {
