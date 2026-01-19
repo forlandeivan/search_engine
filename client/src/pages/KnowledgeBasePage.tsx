@@ -2754,6 +2754,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 onComplete={() => {
                   void basesQuery.refetch();
                   void nodeDetailQuery.refetch();
+                  void indexingSummaryQuery.refetch();
+                  if (isIndexingChangesOpen) {
+                    void indexingChangesQuery.refetch();
+                  }
                   setActiveJsonImportJobId(null);
                 }}
               />
