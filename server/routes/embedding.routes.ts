@@ -24,6 +24,12 @@ const logger = createLogger('embedding');
 // Create router instance
 export const embeddingRouter = Router();
 
+// Debug middleware to log all requests to embedding router
+embeddingRouter.use((req, res, next) => {
+  logger.info(`[EMBEDDING ROUTER] ${req.method} ${req.url} (originalUrl: ${req.originalUrl})`);
+  next();
+});
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -119,10 +125,16 @@ embeddingRouter.put('/services/:id', asyncHandler(async (req, res) => {
  * Проверяет, что нет активных моделей, привязанных к провайдеру
  */
 embeddingRouter.delete('/services/:id', asyncHandler(async (req, res) => {
+  logger.info(`DELETE /services/:id called with id: ${req.params.id}, url: ${req.url}, originalUrl: ${req.originalUrl}`);
+  
   const user = getAuthorizedUser(req, res);
-  if (!user) return;
+  if (!user) {
+    logger.warn('DELETE /services/:id - unauthorized');
+    return;
+  }
 
   const providerId = req.params.id;
+  logger.info(`DELETE /services/:id - deleting provider: ${providerId}`);
   
   // Проверяем, есть ли активные модели для этого провайдера
   const activeModels = await listModels({ 

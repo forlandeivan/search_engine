@@ -158,7 +158,7 @@ adminSettingsRouter.patch('/indexing-rules', asyncHandler(async (req, res) => {
  */
 adminSettingsRouter.get('/unica-chat', asyncHandler(async (_req, res) => {
   const config = await storage.getUnicaChatConfig();
-  res.json(config);
+  res.json({ config });
 }));
 
 /**
@@ -167,7 +167,7 @@ adminSettingsRouter.get('/unica-chat', asyncHandler(async (_req, res) => {
 adminSettingsRouter.put('/unica-chat', asyncHandler(async (req, res) => {
   try {
     const config = await storage.setUnicaChatConfig(req.body);
-    res.json(config);
+    res.json({ config });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid config', details: error.issues });

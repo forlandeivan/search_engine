@@ -1736,8 +1736,6 @@ export default function LlmProvidersPage() {
         </Card>
       </div>
 
-      {/* Временно отключена секция Unica Chat для отладки */}
-      {false && (
       <Card>
         <CardHeader className="space-y-2">
           <div className="flex items-center gap-2">
@@ -1920,7 +1918,6 @@ export default function LlmProvidersPage() {
           ) : null}
         </CardContent>
       </Card>
-      )}
     </div>
   );
 }
