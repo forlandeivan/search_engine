@@ -51,7 +51,7 @@ const smtpTestSchema = z.object({
  */
 adminSettingsRouter.get('/smtp', asyncHandler(async (_req, res) => {
   try {
-    const settings = await smtpSettingsService.get();
+    const settings = await smtpSettingsService.getSettings();
     res.json({
       ...settings,
       password: settings?.password ? '********' : '',
