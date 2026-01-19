@@ -1460,6 +1460,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       const res = await apiRequest("DELETE", `/api/knowledge/bases/${baseId}`, {
         confirmation,
       });
+      // 204 No Content не имеет тела, возвращаем объект с baseId
+      if (res.status === 204) {
+        return { deletedId: baseId } as DeleteKnowledgeBaseResponse;
+      }
       return (await res.json()) as DeleteKnowledgeBaseResponse;
     },
     onSuccess: (_, variables) => {
