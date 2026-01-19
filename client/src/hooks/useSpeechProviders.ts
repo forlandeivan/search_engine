@@ -47,6 +47,9 @@ export interface UpdateSpeechProviderPayload {
     apiKey?: string | null;
     folderId?: string | null;
     serviceAccountKey?: string | null;
+    s3AccessKeyId?: string | null;
+    s3SecretAccessKey?: string | null;
+    s3BucketName?: string | null;
   };
 }
 

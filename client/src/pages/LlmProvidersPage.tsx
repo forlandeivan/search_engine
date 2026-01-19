@@ -351,7 +351,7 @@ export default function LlmProvidersPage() {
   });
 
   const providersQuery = useQuery<ProvidersResponse>({
-    queryKey: ["/api/llm/providers"],
+    queryKey: ["/api/admin/llm-providers"],
     retry: false,
   });
 
@@ -768,7 +768,7 @@ export default function LlmProvidersPage() {
     UpdateLlmProviderVariables
   >({
     mutationFn: async ({ id, payload }) => {
-      const response = await apiRequest("PUT", `/api/llm/providers/${id}`, payload);
+      const response = await apiRequest("PUT", `/api/admin/llm-providers/${id}`, payload);
       if (!response.ok) {
         const body = (await response.json()) as { message?: string };
         throw new Error(body.message ?? "Не удалось обновить провайдера LLM");
@@ -776,7 +776,7 @@ export default function LlmProvidersPage() {
       return (await response.json()) as { provider: PublicLlmProvider };
     },
     onSuccess: ({ provider }, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/llm/providers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/llm-providers"] });
       toast({
         title: "Изменения сохранены",
         description: "Настройки провайдера обновлены.",
@@ -804,7 +804,7 @@ export default function LlmProvidersPage() {
     CreateLlmProviderVariables
   >({
     mutationFn: async ({ payload }) => {
-      const response = await apiRequest("POST", "/api/llm/providers", payload);
+      const response = await apiRequest("POST", "/api/admin/llm-providers", payload);
       const body = (await response.json()) as { provider?: PublicLlmProvider; message?: string };
       if (!response.ok) {
         throw new Error(body.message ?? "Не удалось создать провайдера LLM");
@@ -817,8 +817,8 @@ export default function LlmProvidersPage() {
       return { provider: body.provider };
     },
     onSuccess: ({ provider }, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/llm/providers"] });
-      queryClient.setQueryData<ProvidersResponse>(["/api/llm/providers"], (previous) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/llm-providers"] });
+      queryClient.setQueryData<ProvidersResponse>(["/api/admin/llm-providers"], (previous) => {
         if (!previous) {
           return { providers: [provider] } satisfies ProvidersResponse;
         }

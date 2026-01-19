@@ -171,9 +171,9 @@ export default function AdminModelsPage() {
   });
 
   const llmProvidersQuery = useQuery<ProviderOption[]>({
-    queryKey: ["/api/llm/providers"],
+    queryKey: ["/api/admin/llm-providers"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/llm/providers");
+      const res = await apiRequest("GET", "/api/admin/llm-providers");
       const data = (await res.json()) as { providers: { id: string; name: string; providerType?: string | null }[] };
       return (data.providers ?? []).map((p) => ({
         id: p.id,
@@ -269,7 +269,11 @@ export default function AdminModelsPage() {
     const llm = Array.isArray(llmProvidersQuery.data) ? llmProvidersQuery.data : [];
     const emb = Array.isArray(embeddingProvidersQuery.data) ? embeddingProvidersQuery.data : [];
     const speech = Array.isArray(speechProvidersQuery.data) ? speechProvidersQuery.data : [];
-    return [...llm, ...emb, ...speech].sort((a, b) => a.name.localeCompare(b.name));
+    return [...llm, ...emb, ...speech].sort((a, b) => {
+      const nameA = a?.name ?? '';
+      const nameB = b?.name ?? '';
+      return nameA.localeCompare(nameB);
+    });
   }, [llmProvidersQuery.data, embeddingProvidersQuery.data, speechProvidersQuery.data]);
 
   const createMutation = useMutation({

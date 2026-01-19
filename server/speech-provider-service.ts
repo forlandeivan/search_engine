@@ -247,15 +247,26 @@ class SpeechProviderService {
     return this.getProviderSecretValues(providerId);
   }
 
-  async update(providerId: string, payload: { isEnabled?: boolean; config?: Record<string, unknown>; secrets?: SpeechProviderSecretsPatch }): Promise<SpeechProviderDetail> {
+  async update(providerId: string, payload: { isEnabled?: boolean; config?: Record<string, unknown>; secrets?: Record<string, string | null> }): Promise<SpeechProviderDetail> {
     // Extract admin ID from request context - for now, use a default
     const actorAdminId = 'admin'; // TODO: get from request context
+    
+    // Convert secrets object to array format expected by updateProviderConfig
+    let secretsPatch: SpeechProviderSecretsPatch | undefined;
+    if (payload.secrets) {
+      secretsPatch = Object.entries(payload.secrets).map(([key, value]) => ({
+        key,
+        value: value ?? undefined,
+        clear: value === null,
+      }));
+    }
+    
     return this.updateProviderConfig({
       providerId,
       actorAdminId,
       isEnabled: payload.isEnabled,
       configPatch: payload.config,
-      secretsPatch: payload.secrets,
+      secretsPatch,
     });
   }
 

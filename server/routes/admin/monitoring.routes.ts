@@ -29,7 +29,12 @@ adminMonitoringRouter.get('/guard-blocks', asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(String(req.query.page)) || 1);
   const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize)) || 20));
   const result = await storage.listGuardBlocks({ page, pageSize });
-  res.json(result);
+  res.json({ 
+    items: result.blocks, 
+    totalCount: result.total, 
+    page: result.page, 
+    pageSize: result.pageSize 
+  });
 }));
 
 /**

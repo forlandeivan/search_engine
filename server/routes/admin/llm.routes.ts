@@ -2,6 +2,10 @@
  * Admin LLM Routes
  * 
  * Endpoints:
+ * - GET /api/admin/llm-providers - List LLM providers
+ * - POST /api/admin/llm-providers - Create LLM provider
+ * - PUT /api/admin/llm-providers/:id - Update LLM provider
+ * - DELETE /api/admin/llm-providers/:id - Delete LLM provider
  * - GET /api/admin/models - List LLM models
  * - POST /api/admin/models - Create LLM model
  * - PUT /api/admin/models/:id - Update LLM model
@@ -47,7 +51,8 @@ import {
   knowledgeBaseIndexingPolicySchema,
   updateKnowledgeBaseIndexingPolicySchema,
 } from '@shared/knowledge-base-indexing-policy';
-import type { PublicUser } from '@shared/schema';
+import type { PublicUser, LlmProviderInsert, UpdateLlmProvider } from '@shared/schema';
+import { updateLlmProviderSchema } from '@shared/schema';
 
 const logger = createLogger('admin-llm');
 
@@ -83,6 +88,89 @@ function getRequestWorkspace(req: Request): { id: string } | null {
 // ============================================================================
 // Routes
 // ============================================================================
+
+/**
+ * GET /llm-providers
+ * List all LLM providers (admin view)
+ */
+adminLlmRouter.get('/llm-providers', asyncHandler(async (_req, res) => {
+  const providers = await storage.listLlmProviders();
+  res.json({ providers });
+}));
+
+/**
+ * POST /llm-providers
+ * Create new LLM provider
+ */
+adminLlmRouter.post('/llm-providers', asyncHandler(async (req, res) => {
+  try {
+    const provider = await storage.createLlmProvider(req.body as LlmProviderInsert);
+    res.status(201).json({ provider });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: 'Invalid provider data', details: error.issues });
+    }
+    throw error;
+  }
+}));
+
+/**
+ * PUT /llm-providers/:id
+ * Update LLM provider
+ */
+adminLlmRouter.put('/llm-providers/:id', asyncHandler(async (req, res) => {
+  const providerId = req.params.id;
+  const payload = updateLlmProviderSchema.parse(req.body ?? {});
+  
+  // Trim and sanitize arrays
+  const updates: Parameters<typeof storage.updateLlmProvider>[1] = {};
+  
+  if (payload.model !== undefined) {
+    updates.model = payload.model.trim();
+  }
+  
+  if (payload.availableModels !== undefined) {
+    updates.availableModels = payload.availableModels.map(m => ({
+      label: m.label.trim(),
+      value: m.value.trim(),
+    }));
+  }
+  
+  if (payload.name !== undefined) updates.name = payload.name;
+  if (payload.description !== undefined) updates.description = payload.description;
+  if (payload.isActive !== undefined) updates.isActive = payload.isActive;
+  if (payload.isGlobal !== undefined) updates.isGlobal = payload.isGlobal;
+  if (payload.tokenUrl !== undefined) updates.tokenUrl = payload.tokenUrl;
+  if (payload.completionUrl !== undefined) updates.completionUrl = payload.completionUrl;
+  if (payload.authorizationKey !== undefined) updates.authorizationKey = payload.authorizationKey;
+  if (payload.scope !== undefined) updates.scope = payload.scope;
+  if (payload.requestHeaders !== undefined) updates.requestHeaders = payload.requestHeaders;
+  if (payload.requestConfig !== undefined) updates.requestConfig = payload.requestConfig as any;
+  if (payload.responseConfig !== undefined) updates.responseConfig = payload.responseConfig as any;
+  
+  const provider = await storage.updateLlmProvider(providerId, updates);
+  
+  if (!provider) {
+    return res.status(404).json({ message: 'Provider not found' });
+  }
+  
+  res.json({ provider });
+}));
+
+/**
+ * DELETE /llm-providers/:id
+ * Delete LLM provider
+ */
+adminLlmRouter.delete('/llm-providers/:id', asyncHandler(async (req, res) => {
+  const providerId = req.params.id;
+  const deleted = await storage.deleteLlmProvider(providerId);
+  
+  if (!deleted) {
+    return res.status(404).json({ message: 'Provider not found' });
+  }
+  
+  res.status(204).send();
+}));
 
 /**
  * GET /models
