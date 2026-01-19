@@ -34,9 +34,18 @@ type TariffLimit = {
   isEnabled: boolean;
 };
 
+type TariffPlanLimitsMap = Record<
+  string,
+  {
+    unit: string;
+    value: number | null;
+    isEnabled: boolean;
+  }
+>;
+
 type TariffDetail = {
   plan: TariffSummary;
-  limits: TariffLimit[];
+  limits: TariffPlanLimitsMap;
 };
 
 type LimitCatalogEntry = {
@@ -144,11 +153,13 @@ export default function AdminBillingPage() {
 
   useEffect(() => {
     if (detailQuery.data?.limits) {
+      // limits теперь объект, а не массив
+      const limitsObj = detailQuery.data.limits;
       const next: LimitFormState = {};
-      detailQuery.data.limits.forEach((lim) => {
-        next[lim.limitKey] = {
+      Object.entries(limitsObj).forEach(([limitKey, lim]) => {
+        next[limitKey] = {
           unit: lim.unit,
-          value: lim.limitValue,
+          value: lim.value,
           isEnabled: lim.isEnabled,
         };
       });
@@ -161,9 +172,9 @@ export default function AdminBillingPage() {
     }
     if (detailQuery.data?.limits) {
       const nextUnits: Record<string, ByteDisplayUnit> = {};
-      detailQuery.data.limits.forEach((lim) => {
-        if (BYTE_LIMIT_KEYS.has(lim.limitKey)) {
-          nextUnits[lim.limitKey] = "bytes";
+      Object.entries(detailQuery.data.limits).forEach(([limitKey, lim]) => {
+        if (BYTE_LIMIT_KEYS.has(limitKey)) {
+          nextUnits[limitKey] = "bytes";
         }
       });
       setStorageDisplayUnits(nextUnits);
@@ -173,14 +184,20 @@ export default function AdminBillingPage() {
   const catalog = limitCatalogQuery.data ?? [];
 
   const groupedLimits = useMemo(() => {
-    const limits = detailQuery.data?.limits ?? [];
+    const limitsObj = detailQuery.data?.limits ?? {};
     const groups = new Map<string, TariffLimit[]>();
-    limits.forEach((lim) => {
-      const group = getLimitGroup(lim.limitKey, catalog);
+    Object.entries(limitsObj).forEach(([limitKey, lim]) => {
+      const limit: TariffLimit = {
+        limitKey,
+        unit: lim.unit,
+        limitValue: lim.value,
+        isEnabled: lim.isEnabled,
+      };
+      const group = getLimitGroup(limitKey, catalog);
       if (!groups.has(group)) {
         groups.set(group, []);
       }
-      groups.get(group)!.push(lim);
+      groups.get(group)!.push(limit);
     });
     for (const list of groups.values()) {
       list.sort((a, b) => {
