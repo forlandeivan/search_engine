@@ -34,6 +34,8 @@ interface ImportContext {
     errorRecords: number;
   }) => Promise<void>;
   onError: (error: ImportRecordError) => void;
+  folderCache?: Map<string, string>; // Кэш папок: key = "parentId|folderName", value = folderId
+  folderCreationLocks?: Map<string, Promise<string>>; // Блокировки создания папок: key = "parentId|folderName", value = Promise<folderId>
 }
 
 /**
@@ -161,7 +163,7 @@ async function resolveParentFolder(
   if (config.mode === "flat") {
     // Если задана rootFolderName, создаём/находим корневую папку
     if (config.rootFolderName) {
-      return await ensureFolder(context.baseId, context.workspaceId, null, config.rootFolderName);
+      return await ensureFolder(context.baseId, context.workspaceId, null, config.rootFolderName, context.folderCache, context.folderCreationLocks);
     }
     return null;
   }
@@ -172,16 +174,17 @@ async function resolveParentFolder(
   }
 
   const groupValue = getNestedValue(record, config.groupByField);
-  const groupName = groupValue ? String(groupValue) : null;
+  // Нормализуем имя группы (убираем пробелы в начале/конце)
+  const groupName = groupValue ? String(groupValue).trim() : null;
 
-  if (!groupName || groupName.trim() === "") {
+  if (!groupName || groupName === "") {
     // Пустое значение
     if (config.emptyValueStrategy === "skip") {
       throw new Error("Empty group value - skipping");
     }
     if (config.emptyValueStrategy === "folder_uncategorized") {
       const folderName = config.uncategorizedFolderName ?? "Без категории";
-      return await ensureFolder(context.baseId, context.workspaceId, null, folderName);
+      return await ensureFolder(context.baseId, context.workspaceId, null, folderName, context.folderCache, context.folderCreationLocks);
     }
     // root
     return null;
@@ -189,47 +192,120 @@ async function resolveParentFolder(
 
   // Создаём/находим папку для группы
   const parentId = config.rootFolderName
-    ? await ensureFolder(context.baseId, context.workspaceId, null, config.rootFolderName)
+    ? await ensureFolder(context.baseId, context.workspaceId, null, config.rootFolderName, context.folderCache, context.folderCreationLocks)
     : null;
 
-  return await ensureFolder(context.baseId, context.workspaceId, parentId, groupName);
+  return await ensureFolder(context.baseId, context.workspaceId, parentId, groupName, context.folderCache, context.folderCreationLocks);
 }
 
 /**
  * Создать или найти папку
+ * Использует кэш и блокировки для предотвращения дубликатов при параллельной обработке
  */
 async function ensureFolder(
   baseId: string,
   workspaceId: string,
   parentId: string | null,
   folderName: string,
+  folderCache?: Map<string, string>,
+  folderCreationLocks?: Map<string, Promise<string>>,
 ): Promise<string> {
-  // Проверяем существующую папку
-  const existing = await db
-    .select()
-    .from(knowledgeNodes)
-    .where(
-      and(
-        eq(knowledgeNodes.baseId, baseId),
-        eq(knowledgeNodes.workspaceId, workspaceId),
-        eq(knowledgeNodes.type, "folder"),
-        eq(knowledgeNodes.title, folderName),
-        parentId ? eq(knowledgeNodes.parentId, parentId) : eq(knowledgeNodes.parentId, null),
-      ),
-    )
-    .limit(1);
-
-  if (existing.length > 0) {
-    return existing[0].id;
+  // Нормализуем имя папки (убираем пробелы в начале/конце)
+  const normalizedName = folderName.trim();
+  if (!normalizedName) {
+    throw new Error("Folder name cannot be empty");
   }
 
-  // Создаём новую папку
-  const folder = await createKnowledgeFolder(baseId, workspaceId, {
-    title: folderName,
-    parentId: parentId ?? undefined,
-  });
+  // Создаём ключ для кэша и блокировок
+  const cacheKey = `${parentId ?? "null"}|${normalizedName}`;
 
-  return folder.id;
+  // Проверяем кэш
+  if (folderCache?.has(cacheKey)) {
+    return folderCache.get(cacheKey)!;
+  }
+
+  // Проверяем, есть ли уже процесс создания этой папки
+  // Важно: проверяем ДО создания нового промиса, чтобы избежать race condition
+  let existingLock = folderCreationLocks?.get(cacheKey);
+  if (existingLock) {
+    // Ждём, пока другая запись создаст папку
+    return await existingLock;
+  }
+
+  // Создаём блокировку для создания папки
+  // Устанавливаем блокировку СРАЗУ, чтобы другие вызовы ждали
+  const creationPromise = (async () => {
+    try {
+      // Проверяем кэш ещё раз (возможно, другая запись уже создала папку)
+      if (folderCache?.has(cacheKey)) {
+        return folderCache.get(cacheKey)!;
+      }
+
+      // Проверяем существующую папку в БД (возможно, была создана другой записью)
+      const existing = await db
+        .select()
+        .from(knowledgeNodes)
+        .where(
+          and(
+            eq(knowledgeNodes.baseId, baseId),
+            eq(knowledgeNodes.workspaceId, workspaceId),
+            eq(knowledgeNodes.type, "folder"),
+            eq(knowledgeNodes.title, normalizedName),
+            parentId ? eq(knowledgeNodes.parentId, parentId) : eq(knowledgeNodes.parentId, null),
+          ),
+        )
+        .limit(1);
+
+      if (existing.length > 0) {
+        const folderId = existing[0].id;
+        // Сохраняем в кэш
+        folderCache?.set(cacheKey, folderId);
+        return folderId;
+      }
+
+      // Создаём новую папку
+      const folder = await createKnowledgeFolder(baseId, workspaceId, {
+        title: normalizedName,
+        parentId: parentId ?? undefined,
+      });
+
+      // Сохраняем в кэш
+      folderCache?.set(cacheKey, folder.id);
+      return folder.id;
+    } catch (error) {
+      // Если папка была создана параллельно, попробуем найти её снова
+      const retryExisting = await db
+        .select()
+        .from(knowledgeNodes)
+        .where(
+          and(
+            eq(knowledgeNodes.baseId, baseId),
+            eq(knowledgeNodes.workspaceId, workspaceId),
+            eq(knowledgeNodes.type, "folder"),
+            eq(knowledgeNodes.title, normalizedName),
+            parentId ? eq(knowledgeNodes.parentId, parentId) : eq(knowledgeNodes.parentId, null),
+          ),
+        )
+        .limit(1);
+
+      if (retryExisting.length > 0) {
+        const folderId = retryExisting[0].id;
+        folderCache?.set(cacheKey, folderId);
+        return folderId;
+      }
+
+      // Если всё равно не нашли, пробрасываем ошибку
+      throw error;
+    } finally {
+      // Удаляем блокировку после создания
+      folderCreationLocks?.delete(cacheKey);
+    }
+  })();
+
+  // Сохраняем блокировку СРАЗУ, чтобы другие вызовы ждали
+  folderCreationLocks?.set(cacheKey, creationPromise);
+
+  return await creationPromise;
 }
 
 /**
@@ -510,10 +586,16 @@ export async function processJsonImport(
     throw new Error(`File not found: ${fileKey}`);
   }
 
+  // Инициализируем кэш папок и блокировки для предотвращения дубликатов при параллельной обработке
+  const folderCache = new Map<string, string>();
+  const folderCreationLocks = new Map<string, Promise<string>>();
+
   const fullContext: ImportContext = {
     ...context,
     onProgress,
     onError,
+    folderCache,
+    folderCreationLocks,
   };
 
   if (fileFormat === "jsonl") {
