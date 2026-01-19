@@ -794,14 +794,14 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                       <div className="rounded-md border p-3">
                         <p className="text-xs text-muted-foreground">Положено по плану</p>
                         <p className="text-xl font-semibold">
-                          {formatCredits(creditsSummaryQuery.data?.planIncludedCredits.amount ?? 0)}{" "}
+                          {formatCredits(creditsSummaryQuery.data?.planIncludedCredits?.amount ?? 0)}{" "}
                           кредит(ов) / месяц
                         </p>
                       </div>
                       <div className="rounded-md border p-3">
                         <p className="text-xs text-muted-foreground">Следующее пополнение</p>
                         <p className="text-xl font-semibold">
-                          {creditsSummaryQuery.data?.balance.nextTopUpAt
+                          {creditsSummaryQuery.data?.balance?.nextTopUpAt
                             ? new Date(creditsSummaryQuery.data.balance.nextTopUpAt).toLocaleString("ru-RU")
                             : "—"}
                         </p>
