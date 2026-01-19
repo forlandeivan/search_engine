@@ -2,6 +2,9 @@ import { randomUUID } from "crypto";
 import type { File, FileKind, NoCodeAuthType } from "@shared/schema";
 import { storage } from "./storage";
 import { decryptSecret } from "./secret-storage";
+import { createLogger } from "./lib/logger";
+
+const logger = createLogger("file-events");
 
 export type FileEventAction = "file_uploaded" | "file_deleted";
 
@@ -82,11 +85,11 @@ export async function enqueueFileEventForSkill(opts: {
   const targetUrl = sanitizeTargetUrl(opts.skill.noCodeFileEventsUrl ?? opts.skill.noCodeEndpointUrl ?? null);
   if (!isNoCode || !targetUrl) {
     if (isNoCode) {
-      console.warn("[file-events] skip enqueue: no target URL for no-code skill", {
+      logger.warn({
         skillId: opts.file.skillId ?? null,
         workspaceId: opts.file.workspaceId,
         action: opts.action,
-      });
+      }, "Skip enqueue: no target URL for no-code skill");
     }
     return;
   }
@@ -94,6 +97,17 @@ export async function enqueueFileEventForSkill(opts: {
   const payload = buildFileEventPayload({ file: opts.file, action: opts.action });
   const bearerToken = decryptSecret(opts.skill.noCodeBearerToken ?? null);
   const normalizedBearerToken = bearerToken && bearerToken.trim().length > 0 ? bearerToken.trim() : null;
+  
+  logger.info({
+    eventId: payload.eventId,
+    action: opts.action,
+    fileId: opts.file.id,
+    targetUrl,
+    skillId: opts.file.skillId ?? null,
+    chatId: opts.file.chatId ?? null,
+    messageId: ("messageId" in opts.file && typeof opts.file.messageId === "string" ? opts.file.messageId : null) ?? null,
+  }, "Enqueuing file event");
+  
   await storage.enqueueFileEvent({
     eventId: payload.eventId,
     action: opts.action,

@@ -985,6 +985,18 @@ chatRouter.post('/sessions/:chatId/messages/:messageId/send', asyncHandler(async
     const fileRecord = await storage.getFile(fileId, workspaceId);
     if (fileRecord) {
       const bearerToken = await getSkillBearerToken({ workspaceId, skillId: skill.id });
+      const targetUrl = skill.noCodeConnection?.fileEventsUrl ?? skill.noCodeConnection?.endpointUrl ?? null;
+      
+      logger.info({
+        chatId,
+        messageId,
+        fileId: fileRecord.id,
+        skillId: skill.id,
+        targetUrl,
+        noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? null,
+        noCodeEndpointUrl: skill.noCodeConnection?.endpointUrl ?? null,
+      }, 'Enqueuing file event for no-code skill');
+      
       await enqueueFileEventForSkill({
         file: fileRecord,
         action: 'file_uploaded',
@@ -1002,6 +1014,7 @@ chatRouter.post('/sessions/:chatId/messages/:messageId/send', asyncHandler(async
         messageId,
         fileId: fileRecord.id,
         skillId: skill.id,
+        targetUrl,
       }, 'File event enqueued for no-code skill');
     } else {
       logger.warn({

@@ -6691,7 +6691,32 @@ export class DatabaseStorage implements IStorage {
       RETURNING *
     `);
     const row = (result.rows ?? [])[0] as Record<string, unknown> | undefined;
-    return row ? (row as unknown as FileEventOutbox) : null;
+    if (!row) return null;
+    
+    // Map snake_case fields from raw SQL to camelCase for TypeScript
+    const mapped: FileEventOutbox = {
+      id: row.id as string,
+      eventId: (row.event_id ?? row.eventId) as string,
+      action: row.action as string,
+      fileId: (row.file_id ?? row.fileId) as string,
+      workspaceId: (row.workspace_id ?? row.workspaceId) as string,
+      skillId: (row.skill_id ?? row.skillId) as string | null,
+      chatId: (row.chat_id ?? row.chatId) as string | null,
+      userId: (row.user_id ?? row.userId) as string | null,
+      messageId: (row.message_id ?? row.messageId) as string | null,
+      targetUrl: (row.target_url ?? row.targetUrl) as string, // CRITICAL: map target_url to targetUrl
+      authType: (row.auth_type ?? row.authType) as string,
+      bearerToken: (row.bearer_token ?? row.bearerToken) as string | null,
+      payload: row.payload as Record<string, unknown>,
+      status: row.status as string,
+      attempts: (row.attempts ?? 0) as number,
+      nextAttemptAt: (row.next_attempt_at ?? row.nextAttemptAt) as Date | null,
+      lastError: (row.last_error ?? row.lastError) as string | null,
+      createdAt: (row.created_at ?? row.createdAt) as Date,
+      updatedAt: (row.updated_at ?? row.updatedAt) as Date,
+    };
+    
+    return mapped;
   }
 
   async markFileEventSent(id: string): Promise<void> {
