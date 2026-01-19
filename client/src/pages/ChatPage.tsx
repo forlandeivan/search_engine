@@ -197,6 +197,74 @@ export default function ChatPage({ params }: ChatPageProps) {
     const source = new EventSource(url.toString(), { withCredentials: true });
     let reconnectRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
 
+    // Handle both named 'message' events and default onmessage
+    source.addEventListener('message', (event) => {
+      try {
+        debugLog("[SSE] Received named 'message' event", { eventType: event.type, dataLength: event.data?.length });
+        const payload = JSON.parse(event.data) as {
+          type: string;
+          message?: ChatMessage;
+          action?: BotAction;
+        };
+        debugLog("[SSE] Parsed payload from named event", { payloadType: payload?.type, hasMessage: !!payload?.message, hasAction: !!payload?.action, messageId: payload?.message?.id });
+        if (payload?.type === "message" && payload.message) {
+          setLocalMessages((prev) => {
+            if (prev.some((local) => areMessagesEquivalent(local, payload.message!))) {
+              return prev;
+            }
+            return [...prev, payload.message!];
+          });
+          queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey });
+        } else if (payload?.type === "bot_action" && payload.action) {
+          const action = payload.action;
+          setBotActionsByChatId((prev) => {
+            const chatActions = prev[action.chatId] ?? [];
+            const existingIndex = chatActions.findIndex((a) => a.actionId === action.actionId);
+
+            // Out-of-order protection: проверяем updatedAt
+            if (existingIndex >= 0) {
+              const existing = chatActions[existingIndex];
+              const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+              const actionTime = action.updatedAt ? new Date(action.updatedAt).getTime() : 0;
+
+              // Игнорируем более старые события для того же actionId
+              if (actionTime < existingTime) {
+                return prev; // Игнорируем out-of-order
+              }
+
+              // Проверка на дубликат (избегаем лишних re-render)
+              if (
+                existing.status === action.status &&
+                existingTime === actionTime &&
+                existing.displayText === action.displayText &&
+                JSON.stringify(existing.payload) === JSON.stringify(action.payload)
+              ) {
+                return prev; // Тот же объект, не обновляем
+              }
+            }
+
+            // Обновляем или добавляем action
+            const next = [...chatActions];
+            if (existingIndex >= 0) {
+              next[existingIndex] = action;
+            } else {
+              next.push(action);
+            }
+
+            // Удаляем из списка активных, если action завершён (done/error)
+            const filtered = next.filter((a) => a.status === "processing" || a.actionId === action.actionId);
+
+            return {
+              ...prev,
+              [action.chatId]: filtered,
+            };
+          });
+        }
+      } catch (error) {
+        debugLog("Failed to parse SSE named event", error);
+      }
+    });
+
     source.onopen = () => {
       setStreamError(null);
       // Reconnect recovery: fetch active bot_action after reconnect
@@ -248,11 +316,13 @@ export default function ChatPage({ params }: ChatPageProps) {
 
     source.onmessage = (event) => {
       try {
+        debugLog("[SSE] Received event", { eventType: event.type, dataLength: event.data?.length });
         const payload = JSON.parse(event.data) as {
           type: string;
           message?: ChatMessage;
           action?: BotAction;
         };
+        debugLog("[SSE] Parsed payload", { payloadType: payload?.type, hasMessage: !!payload?.message, hasAction: !!payload?.action, messageId: payload?.message?.id });
         if (payload?.type === "message" && payload.message) {
           setLocalMessages((prev) => {
             if (prev.some((local) => areMessagesEquivalent(local, payload.message!))) {

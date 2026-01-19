@@ -282,6 +282,7 @@ chatRouter.get('/sessions/:chatId/events', asyncHandler(async (req, res) => {
   }
 
   const listener = (payload: ChatEventPayload) => {
+    logger.debug({ chatId, payloadType: payload.type, hasMessage: !!payload.message, hasAction: !!payload.action }, 'Sending SSE event to client');
     sendSseEvent(res, 'message', payload);
   };
 

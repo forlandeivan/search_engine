@@ -57,6 +57,12 @@ const remoteSubscriptions = new Map<string, () => void>();
 export function emitChatMessage(chatId: string, message: unknown): void {
   const payload: ChatEventPayload = { type: "message", message };
   
+  // Log for debugging
+  const messageRecord = message as Record<string, unknown> | null;
+  const messageId = typeof messageRecord?.id === 'string' ? messageRecord.id : 'unknown';
+  const messageRole = typeof messageRecord?.role === 'string' ? messageRecord.role : 'unknown';
+  logger.debug({ chatId, messageId, messageRole, listenerCount: chatEvents.listenerCount(chatId) }, 'Emitting chat message event');
+  
   // Emit locally for this instance's SSE connections
   chatEvents.emit(chatId, payload);
   
