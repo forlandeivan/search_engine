@@ -204,6 +204,12 @@ export default function ChatInput({
 
           const uploadResult = await uploadResponse.json();
           
+          console.log("[ChatInput] File uploaded in no-code mode", {
+            uploadResult,
+            messageId: uploadResult.message?.id,
+            hasMessage: !!uploadResult.message,
+          });
+          
           // Устанавливаем pendingTranscribe с информацией о загруженном файле
           const payload: TranscribePayload = {
             operationId: null,
@@ -214,6 +220,11 @@ export default function ChatInput({
             fileId: uploadResult.fileId ?? null,
           };
           setPendingTranscribe(payload);
+          console.log("[ChatInput] Set pendingTranscribe", {
+            payload,
+            hasAudioMessage: !!payload.audioMessage,
+            audioMessageId: payload.audioMessage?.id,
+          });
           return payload;
         }
 
@@ -313,6 +324,11 @@ export default function ChatInput({
     }
 
     if (attachedFile && pendingTranscribe) {
+      console.log("[ChatInput] handleSend - calling onTranscribe", {
+        hasAttachedFile: !!attachedFile,
+        pendingTranscribeStatus: pendingTranscribe.status,
+        pendingTranscribeMessageId: pendingTranscribe.audioMessage?.id,
+      });
       if (onTranscribe) {
         onTranscribe(pendingTranscribe);
       }

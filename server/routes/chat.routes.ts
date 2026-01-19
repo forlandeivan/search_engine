@@ -927,6 +927,12 @@ chatRouter.post('/sessions/:chatId/messages/:messageId/send', asyncHandler(async
 
   const { chatId, messageId } = req.params;
   
+  logger.info({
+    chatId,
+    messageId,
+    userId: user.id,
+  }, 'Received request to send file event for no-code skill');
+  
   // Try to get workspaceId from request, but if not available, get it from chat
   let workspaceId: string;
   try {
@@ -968,6 +974,13 @@ chatRouter.post('/sessions/:chatId/messages/:messageId/send', asyncHandler(async
   const metadata = message.metadata as Record<string, unknown> | null;
   const fileId = metadata?.fileId as string | undefined;
   
+  logger.info({
+    chatId,
+    messageId,
+    fileId,
+    metadataKeys: metadata ? Object.keys(metadata) : null,
+  }, 'Processing file event send request');
+  
   if (fileId) {
     const fileRecord = await storage.getFile(fileId, workspaceId);
     if (fileRecord) {
@@ -983,7 +996,26 @@ chatRouter.post('/sessions/:chatId/messages/:messageId/send', asyncHandler(async
           noCodeBearerToken: bearerToken,
         },
       });
+      
+      logger.info({
+        chatId,
+        messageId,
+        fileId: fileRecord.id,
+        skillId: skill.id,
+      }, 'File event enqueued for no-code skill');
+    } else {
+      logger.warn({
+        chatId,
+        messageId,
+        fileId,
+      }, 'File record not found for fileId');
     }
+  } else {
+    logger.warn({
+      chatId,
+      messageId,
+      metadata,
+    }, 'No fileId found in message metadata');
   }
 
   res.json({ status: 'ok' });

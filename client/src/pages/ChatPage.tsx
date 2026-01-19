@@ -648,6 +648,13 @@ export default function ChatPage({ params }: ChatPageProps) {
         fileName = input.fileName || "audio";
         providedChatId = input.chatId ?? null;
         serverAudioMessage = input.audioMessage ?? null;
+        debugLog("[ChatPage] handleTranscription - parsed input", {
+          isUploadedFlow,
+          hasServerAudioMessage: !!serverAudioMessage,
+          serverAudioMessageId: serverAudioMessage?.id,
+          serverAudioMessageType: typeof serverAudioMessage?.id,
+          inputKeys: Object.keys(input),
+        });
       }
 
       let targetChatId = effectiveChatId;
@@ -676,6 +683,11 @@ export default function ChatPage({ params }: ChatPageProps) {
       if (isUploadedFlow) {
         if (targetChatId && serverAudioMessage) {
           // Отправляем событие для уже загруженного аудио в no-code режиме
+          debugLog("[ChatPage] Sending file event for uploaded audio", {
+            chatId: targetChatId,
+            messageId: serverAudioMessage.id,
+            workspaceId,
+          });
           try {
             const response = await fetch(
               `/api/chat/sessions/${targetChatId}/messages/${serverAudioMessage.id}/send?workspaceId=${encodeURIComponent(workspaceId)}`,
@@ -689,6 +701,10 @@ export default function ChatPage({ params }: ChatPageProps) {
               },
             );
             await throwIfResNotOk(response);
+            debugLog("[ChatPage] File event sent successfully", {
+              chatId: targetChatId,
+              messageId: serverAudioMessage.id,
+            });
           } catch (error) {
             console.error("[ChatPage] Failed to send uploaded audio message", error);
             // Не показываем ошибку пользователю, так как сообщение уже создано
@@ -706,6 +722,12 @@ export default function ChatPage({ params }: ChatPageProps) {
           });
           await queryClient.invalidateQueries({ queryKey: ["chat-messages"] }).catch(() => {});
           await queryClient.invalidateQueries({ queryKey: ["chats"] }).catch(() => {});
+        } else {
+          debugLog("[ChatPage] Cannot send file event - missing data", {
+            targetChatId,
+            hasServerAudioMessage: !!serverAudioMessage,
+            serverAudioMessageId: serverAudioMessage?.id,
+          });
         }
         showBotAction("Готово", "done");
         return;
