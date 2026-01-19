@@ -29,6 +29,7 @@ import { z } from 'zod';
 import { storage } from '../../storage';
 import { createLogger } from '../../lib/logger';
 import { asyncHandler } from '../../middleware/async-handler';
+import { listAdminSkillExecutions, getAdminSkillExecutionDetail } from '../../admin-skill-executions';
 import { 
   listModels, 
   createModel, 
@@ -64,6 +65,30 @@ export const adminLlmRouter = Router();
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+const adminLlmExecutionStatusSchema = z.enum(["pending", "running", "success", "error", "timeout", "cancelled"]);
+const adminLlmExecutionsQuerySchema = z.object({
+  from: z.string().optional(),
+  to: z.string().optional(),
+  workspaceId: z.string().uuid().optional(),
+  skillId: z.string().uuid().optional(),
+  userId: z.string().optional(),
+  status: adminLlmExecutionStatusSchema.optional(),
+  hasError: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === "true")),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+function parseDate(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
 
 function getSessionUser(req: Request): PublicUser | null {
   return (req as Request & { user?: PublicUser }).user ?? null;
@@ -267,9 +292,18 @@ adminLlmRouter.post('/llm-debug', asyncHandler(async (req, res) => {
  * GET /llm-executions
  */
 adminLlmRouter.get('/llm-executions', asyncHandler(async (req, res) => {
-  const page = Math.max(1, parseInt(String(req.query.page)) || 1);
-  const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize)) || 20));
-  const result = await storage.listLlmExecutions({ page, pageSize });
+  const query = adminLlmExecutionsQuerySchema.parse(req.query);
+  const result = await listAdminSkillExecutions({
+    from: parseDate(query.from),
+    to: parseDate(query.to),
+    workspaceId: query.workspaceId,
+    skillId: query.skillId,
+    userId: query.userId,
+    status: query.status,
+    hasError: query.hasError,
+    page: query.page,
+    pageSize: query.pageSize,
+  });
   res.json(result);
 }));
 
@@ -277,7 +311,7 @@ adminLlmRouter.get('/llm-executions', asyncHandler(async (req, res) => {
  * GET /llm-executions/:id
  */
 adminLlmRouter.get('/llm-executions/:id', asyncHandler(async (req, res) => {
-  const execution = await storage.getLlmExecution(req.params.id);
+  const execution = await getAdminSkillExecutionDetail(req.params.id);
   if (!execution) {
     return res.status(404).json({ message: 'Execution not found' });
   }
