@@ -1,10 +1,15 @@
-﻿import {
+import {
   CreateBucketCommand,
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+  type CompletedPart,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Readable } from "stream";
@@ -140,7 +145,7 @@ export async function deleteObject(workspaceId: string, key: string): Promise<vo
   }
 }
 
-const ALLOWED_PREFIXES = ["icons/", "files/", "attachments/"] as const;
+const ALLOWED_PREFIXES = ["icons/", "files/", "attachments/", "json-imports/"] as const;
 type AllowedPrefix = (typeof ALLOWED_PREFIXES)[number];
 
 function ensureAllowedPrefix(relativePath: string): void {
@@ -241,4 +246,153 @@ export async function generateWorkspaceFileDownloadUrl(
   const url = await getSignedUrl(downloadMinioClient, command, { expiresIn });
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
   return { url, expiresAt };
+}
+
+// JSON Import Multipart Upload
+
+const JSON_IMPORT_PART_SIZE = 10 * 1024 * 1024; // 10MB per part
+const JSON_IMPORT_MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
+
+export interface InitMultipartUploadResult {
+  uploadId: string;
+  fileKey: string;
+  partSize: number;
+  totalParts: number;
+}
+
+export interface PresignedPartUrl {
+  partNumber: number;
+  url: string;
+  expiresAt: string;
+}
+
+export async function initJsonImportMultipartUpload(
+  workspaceId: string,
+  fileName: string,
+  fileSize: number,
+  contentType: string = "application/json",
+): Promise<InitMultipartUploadResult> {
+  if (fileSize > JSON_IMPORT_MAX_FILE_SIZE) {
+    throw new Error(`File size exceeds maximum allowed size of ${JSON_IMPORT_MAX_FILE_SIZE} bytes`);
+  }
+
+  const bucket = await ensureWorkspaceBucketExists(workspaceId);
+  const timestamp = Date.now();
+  const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const fileKey = `json-imports/${timestamp}/${sanitizedFileName}`;
+
+  const command = new CreateMultipartUploadCommand({
+    Bucket: bucket,
+    Key: fileKey,
+    ContentType: contentType,
+  });
+
+  const response = await minioClient.send(command);
+  if (!response.UploadId) {
+    throw new Error("Failed to create multipart upload");
+  }
+
+  const totalParts = Math.ceil(fileSize / JSON_IMPORT_PART_SIZE);
+
+  return {
+    uploadId: response.UploadId,
+    fileKey,
+    partSize: JSON_IMPORT_PART_SIZE,
+    totalParts,
+  };
+}
+
+export async function generatePresignedPartUrls(
+  workspaceId: string,
+  fileKey: string,
+  uploadId: string,
+  totalParts: number,
+): Promise<PresignedPartUrl[]> {
+  const bucket = await ensureWorkspaceBucketExists(workspaceId);
+  const expiresIn = 3600; // 1 hour
+
+  const urls: PresignedPartUrl[] = [];
+  for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+    const command = new UploadPartCommand({
+      Bucket: bucket,
+      Key: fileKey,
+      UploadId: uploadId,
+      PartNumber: partNumber,
+    });
+
+    const url = await getSignedUrl(minioClient, command, { expiresIn });
+    urls.push({
+      partNumber,
+      url,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    });
+  }
+
+  return urls;
+}
+
+export async function completeJsonImportMultipartUpload(
+  workspaceId: string,
+  fileKey: string,
+  uploadId: string,
+  parts: Array<{ partNumber: number; etag: string }>,
+): Promise<{ fileKey: string; fileSize: number }> {
+  const bucket = await ensureWorkspaceBucketExists(workspaceId);
+
+  const completedParts: CompletedPart[] = parts.map((p) => ({
+    PartNumber: p.partNumber,
+    ETag: p.etag,
+  }));
+
+  const command = new CompleteMultipartUploadCommand({
+    Bucket: bucket,
+    Key: fileKey,
+    UploadId: uploadId,
+    MultipartUpload: { Parts: completedParts },
+  });
+
+  const response = await minioClient.send(command);
+  if (!response.Key) {
+    throw new Error("Failed to complete multipart upload");
+  }
+
+  // Get file size
+  const headResponse = await minioClient.send(
+    new HeadObjectCommand({
+      Bucket: bucket,
+      Key: fileKey,
+    }),
+  );
+
+  const fileSize = typeof headResponse.ContentLength === "number" ? headResponse.ContentLength : 0;
+
+  // Update workspace storage usage
+  await adjustWorkspaceStorageUsageBytes(workspaceId, fileSize);
+
+  return { fileKey, fileSize };
+}
+
+export async function abortJsonImportMultipartUpload(
+  workspaceId: string,
+  fileKey: string,
+  uploadId: string,
+): Promise<void> {
+  const bucket = await ensureWorkspaceBucketExists(workspaceId);
+
+  const command = new AbortMultipartUploadCommand({
+    Bucket: bucket,
+    Key: fileKey,
+    UploadId: uploadId,
+  });
+
+  await minioClient.send(command);
+}
+
+export async function deleteJsonImportFile(workspaceId: string, fileKey: string): Promise<void> {
+  // fileKey should be like "json-imports/1234567890/file.json"
+  if (!fileKey.startsWith("json-imports/")) {
+    throw new Error("Invalid file key for JSON import");
+  }
+
+  await deleteWorkspaceFile(workspaceId, fileKey);
 }

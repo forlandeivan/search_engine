@@ -209,9 +209,16 @@ export default function ChatPage({ params }: ChatPageProps) {
         debugLog("[SSE] Parsed payload from named event", { payloadType: payload?.type, hasMessage: !!payload?.message, hasAction: !!payload?.action, messageId: payload?.message?.id });
         if (payload?.type === "message" && payload.message) {
           setLocalMessages((prev) => {
-            // Check for duplicates by ID or content equivalence (for optimistic updates with local-* IDs)
-            if (prev.some((local) => areMessagesEquivalent(local, payload.message!))) {
-              debugLog("[SSE] Message already exists (by equivalence), skipping", { messageId: payload.message!.id });
+            const isDuplicate = prev.some((local) => {
+              // Exact ID match - always a duplicate
+              if (local.id === payload.message!.id) return true;
+              // For optimistic messages (local-* ID), check by content to avoid duplicating
+              // when the real server message arrives
+              if (local.id.startsWith('local-') && areMessagesEquivalent(local, payload.message!)) return true;
+              return false;
+            });
+            if (isDuplicate) {
+              debugLog("[SSE] Message already exists, skipping", { messageId: payload.message!.id });
               return prev;
             }
             return [...prev, payload.message!];
@@ -327,9 +334,16 @@ export default function ChatPage({ params }: ChatPageProps) {
         debugLog("[SSE] Parsed payload", { payloadType: payload?.type, hasMessage: !!payload?.message, hasAction: !!payload?.action, messageId: payload?.message?.id });
         if (payload?.type === "message" && payload.message) {
           setLocalMessages((prev) => {
-            // Check for duplicates by ID or content equivalence (for optimistic updates with local-* IDs)
-            if (prev.some((local) => areMessagesEquivalent(local, payload.message!))) {
-              debugLog("[SSE] Message already exists (by equivalence), skipping", { messageId: payload.message!.id });
+            const isDuplicate = prev.some((local) => {
+              // Exact ID match - always a duplicate
+              if (local.id === payload.message!.id) return true;
+              // For optimistic messages (local-* ID), check by content to avoid duplicating
+              // when the real server message arrives
+              if (local.id.startsWith('local-') && areMessagesEquivalent(local, payload.message!)) return true;
+              return false;
+            });
+            if (isDuplicate) {
+              debugLog("[SSE] Message already exists, skipping", { messageId: payload.message!.id });
               return prev;
             }
             return [...prev, payload.message!];

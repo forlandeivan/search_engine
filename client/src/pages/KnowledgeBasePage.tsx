@@ -46,6 +46,8 @@ import DocumentVectorizationProgress, {
   type DocumentVectorizationProgressStatus,
 } from "@/components/knowledge-base/DocumentVectorizationProgress";
 import { CreateKnowledgeBaseDialog } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
+import { JsonImportWizard } from "@/components/knowledge-base/JsonImportWizard";
+import { JsonImportCard } from "@/components/knowledge-base/JsonImportCard";
 import { ragDefaults, searchDefaults } from "@/constants/searchSettings";
 import {
   mergeChunkSearchSettings,
@@ -138,6 +140,7 @@ import {
   ChevronRight,
   Database,
   FileDown,
+  FileJson,
   FileText,
   FileType,
   Folder,
@@ -249,6 +252,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [exportingFormat, setExportingFormat] = useState<"doc" | "pdf" | null>(null);
   const [isCreateBaseDialogOpen, setIsCreateBaseDialogOpen] = useState(false);
   const [createBaseMode, setCreateBaseMode] = useState<KnowledgeBaseSourceType>("blank");
+  const [isJsonImportWizardOpen, setIsJsonImportWizardOpen] = useState(false);
+  const [activeJsonImportJobId, setActiveJsonImportJobId] = useState<string | null>(null);
   const isDeleteDialogOpen = Boolean(deleteTarget);
   const [hierarchyDialogState, setHierarchyDialogState] = useState<{
     nodeId: string;
@@ -1455,6 +1460,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       const res = await apiRequest("DELETE", `/api/knowledge/bases/${baseId}`, {
         confirmation,
       });
+      // 204 No Content не имеет тела, возвращаем объект с baseId
+      if (res.status === 204) {
+        return { deletedId: baseId } as DeleteKnowledgeBaseResponse;
+      }
       return (await res.json()) as DeleteKnowledgeBaseResponse;
     },
     onSuccess: (_, variables) => {
@@ -2734,6 +2743,27 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             />
           )}
         </div>
+        {activeJsonImportJobId && workspaceId && (
+          <>
+            <Separator />
+            <div className="pt-4">
+              <JsonImportCard
+                jobId={activeJsonImportJobId}
+                baseId={detail.id}
+                workspaceId={workspaceId}
+                onComplete={() => {
+                  void basesQuery.refetch();
+                  void nodeDetailQuery.refetch();
+                  void indexingSummaryQuery.refetch();
+                  if (isIndexingChangesOpen) {
+                    void indexingChangesQuery.refetch();
+                  }
+                  setActiveJsonImportJobId(null);
+                }}
+              />
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );
@@ -3220,6 +3250,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         workspaceId={workspaceId}
         initialMode={createBaseMode}
         onCreated={handleBaseCreated}
+        onJsonImportStarted={(jobId) => {
+          setActiveJsonImportJobId(jobId);
+        }}
       />
       <CreateKnowledgeDocumentDialog
         open={isCreateDocumentDialogOpen}
@@ -3495,6 +3528,16 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <JsonImportWizard
+        open={isJsonImportWizardOpen}
+        onOpenChange={setIsJsonImportWizardOpen}
+        baseId={selectedBase?.id ?? ""}
+        workspaceId={workspaceId ?? ""}
+        onImportStarted={(jobId) => {
+          setActiveJsonImportJobId(jobId);
+          setIsJsonImportWizardOpen(false);
+        }}
+      />
       {documentVectorizationProgress && (
         <DocumentVectorizationProgress
           title={`Векторизация: ${documentVectorizationProgress.documentTitle}`}

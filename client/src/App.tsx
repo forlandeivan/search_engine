@@ -35,6 +35,9 @@ import { Button } from "@/components/ui/button";
 console.log("[App.tsx] Button loaded");
 
 
+import { GlobalIndexingProgress } from "@/components/knowledge-base/GlobalIndexingProgress";
+console.log("[App.tsx] GlobalIndexingProgress loaded");
+
 import type { PublicUser } from "@shared/schema";
 import type { SessionResponse, WorkspaceState } from "@/types/session";
 console.log("[App.tsx] All imports complete");
@@ -425,6 +428,8 @@ function AppContent() {
   // Генерируем ключ на основе userId для принудительного перемонтирования при смене пользователя
   const appKey = session.user.id || 'no-user';
 
+  const workspaceId = workspace.active?.id ?? null;
+
   return (
     <ErrorBoundary
       onError={(error) => {
@@ -441,6 +446,7 @@ function AppContent() {
           <MainAppShell user={user} workspace={workspace} />
         </Route>
       </Switch>
+      <GlobalIndexingProgress workspaceId={workspaceId} />
     </ErrorBoundary>
   );
 }

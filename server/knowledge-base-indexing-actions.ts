@@ -290,6 +290,207 @@ export class KnowledgeBaseIndexingActionsService {
       })),
     };
   }
+
+  async cancel(
+    workspaceId: string,
+    baseId: string,
+    actionId?: string,
+  ): Promise<{
+    success: boolean;
+    actionId: string;
+    canceledJobs: number;
+    completedJobs: number;
+    message: string;
+  }> {
+    // Получаем активный action
+    const action = actionId
+      ? await this.get(workspaceId, baseId, actionId)
+      : await this.getLatest(workspaceId, baseId);
+
+    if (!action) {
+      throw new KnowledgeBaseError("Нет активной индексации для отмены", 400);
+    }
+
+    if (action.status !== "processing" && action.status !== "paused") {
+      throw new KnowledgeBaseError(
+        `Индексация не может быть отменена. Текущий статус: ${action.status}`,
+        400,
+      );
+    }
+
+    // Обновляем статус action на canceled
+    const updated = await this.update(workspaceId, baseId, action.actionId, {
+      status: "canceled",
+      displayText: "Индексация отменена пользователем",
+    });
+
+    if (!updated) {
+      throw new KnowledgeBaseError("Не удалось обновить статус индексации", 500);
+    }
+
+    // Получаем статистику jobs
+    const actionRecord = await storage.getKnowledgeBaseIndexingAction(
+      workspaceId,
+      baseId,
+      action.actionId,
+    );
+    if (!actionRecord) {
+      throw new KnowledgeBaseError("Action не найден после обновления", 500);
+    }
+
+    // Помечаем все pending jobs как canceled
+    const canceledCount = await storage.cancelPendingKnowledgeBaseIndexingJobs(
+      workspaceId,
+      baseId,
+      actionRecord.createdAt,
+      actionRecord.updatedAt,
+    );
+
+    // Получаем статистику завершённых jobs
+    const stats = await storage.getKnowledgeBaseIndexingJobsStatsForAction(
+      workspaceId,
+      baseId,
+      actionRecord.createdAt,
+      actionRecord.updatedAt,
+    );
+
+    return {
+      success: true,
+      actionId: action.actionId,
+      canceledJobs: canceledCount,
+      completedJobs: stats.processedDocuments,
+      message: `Индексация отменена. Обработано ${stats.processedDocuments} документов, отменено ${canceledCount}.`,
+    };
+  }
+
+  async pause(
+    workspaceId: string,
+    baseId: string,
+    actionId?: string,
+  ): Promise<{
+    success: boolean;
+    actionId: string;
+    status: KnowledgeBaseIndexingActionStatus;
+    processedDocuments: number;
+    pendingDocuments: number;
+    message: string;
+  }> {
+    const action = actionId
+      ? await this.get(workspaceId, baseId, actionId)
+      : await this.getLatest(workspaceId, baseId);
+
+    if (!action) {
+      throw new KnowledgeBaseError("Нет активной индексации", 400);
+    }
+
+    if (action.status !== "processing") {
+      throw new KnowledgeBaseError(
+        `Индексация не может быть приостановлена. Текущий статус: ${action.status}`,
+        400,
+      );
+    }
+
+    const updated = await this.update(workspaceId, baseId, action.actionId, {
+      status: "paused",
+      displayText: "Индексация приостановлена",
+    });
+
+    if (!updated) {
+      throw new KnowledgeBaseError("Не удалось приостановить индексацию", 500);
+    }
+
+    const actionRecord = await storage.getKnowledgeBaseIndexingAction(
+      workspaceId,
+      baseId,
+      action.actionId,
+    );
+    if (!actionRecord) {
+      throw new KnowledgeBaseError("Action не найден после обновления", 500);
+    }
+
+    const stats = await storage.getKnowledgeBaseIndexingJobsStatsForAction(
+      workspaceId,
+      baseId,
+      actionRecord.createdAt,
+      actionRecord.updatedAt,
+    );
+
+    const pendingCount = await storage.countKnowledgeBaseIndexingJobs(
+      workspaceId,
+      baseId,
+      "pending",
+      { since: actionRecord.createdAt },
+    );
+
+    return {
+      success: true,
+      actionId: action.actionId,
+      status: "paused",
+      processedDocuments: stats.processedDocuments,
+      pendingDocuments: pendingCount,
+      message: "Индексация приостановлена",
+    };
+  }
+
+  async resume(
+    workspaceId: string,
+    baseId: string,
+    actionId?: string,
+  ): Promise<{
+    success: boolean;
+    actionId: string;
+    status: KnowledgeBaseIndexingActionStatus;
+    pendingDocuments: number;
+    message: string;
+  }> {
+    const action = actionId
+      ? await this.get(workspaceId, baseId, actionId)
+      : await this.getLatest(workspaceId, baseId);
+
+    if (!action) {
+      throw new KnowledgeBaseError("Нет активной индексации", 400);
+    }
+
+    if (action.status !== "paused") {
+      throw new KnowledgeBaseError(
+        `Индексация не может быть возобновлена. Текущий статус: ${action.status}`,
+        400,
+      );
+    }
+
+    const updated = await this.update(workspaceId, baseId, action.actionId, {
+      status: "processing",
+      displayText: "Индексация возобновлена",
+    });
+
+    if (!updated) {
+      throw new KnowledgeBaseError("Не удалось возобновить индексацию", 500);
+    }
+
+    const actionRecord = await storage.getKnowledgeBaseIndexingAction(
+      workspaceId,
+      baseId,
+      action.actionId,
+    );
+    if (!actionRecord) {
+      throw new KnowledgeBaseError("Action не найден после обновления", 500);
+    }
+
+    const pendingCount = await storage.countKnowledgeBaseIndexingJobs(
+      workspaceId,
+      baseId,
+      "pending",
+      { since: actionRecord.createdAt },
+    );
+
+    return {
+      success: true,
+      actionId: action.actionId,
+      status: "processing",
+      pendingDocuments: pendingCount,
+      message: "Индексация возобновлена",
+    };
+  }
 }
 
 export const knowledgeBaseIndexingActionsService = new KnowledgeBaseIndexingActionsService();

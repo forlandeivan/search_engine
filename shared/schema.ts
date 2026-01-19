@@ -587,8 +587,17 @@ export const knowledgeBaseIndexingPolicy = pgTable("knowledge_base_indexing_poli
 export type KnowledgeBaseIndexingPolicy = typeof knowledgeBaseIndexingPolicy.$inferSelect;
 export type KnowledgeBaseIndexingPolicyInsert = typeof knowledgeBaseIndexingPolicy.$inferInsert;
 
-export const knowledgeBaseIndexingJobStatuses = ["pending", "processing", "completed", "failed"] as const;
+export const knowledgeBaseIndexingJobStatuses = ["pending", "processing", "completed", "failed", "paused", "canceled"] as const;
 export type KnowledgeBaseIndexingJobStatus = (typeof knowledgeBaseIndexingJobStatuses)[number];
+
+export const jsonImportJobStatuses = [
+  "pending",
+  "processing",
+  "completed",
+  "completed_with_errors",
+  "failed",
+] as const;
+export type JsonImportJobStatus = (typeof jsonImportJobStatuses)[number];
 
 export const knowledgeBaseIndexingJobs = pgTable(
   "knowledge_base_indexing_jobs",
@@ -633,6 +642,54 @@ export const knowledgeBaseIndexingJobs = pgTable(
 );
 export type KnowledgeBaseIndexingJob = typeof knowledgeBaseIndexingJobs.$inferSelect;
 export type KnowledgeBaseIndexingJobInsert = typeof knowledgeBaseIndexingJobs.$inferInsert;
+
+export const jsonImportJobs = pgTable(
+  "json_import_jobs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    baseId: varchar("base_id")
+      .notNull()
+      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    status: text("status")
+      .$type<JsonImportJobStatus>()
+      .notNull()
+      .default("pending"),
+    mappingConfig: jsonb("mapping_config").notNull().default(sql`'{}'::jsonb`),
+    hierarchyConfig: jsonb("hierarchy_config").notNull().default(sql`'{}'::jsonb`),
+    totalRecords: integer("total_records").notNull().default(0),
+    processedRecords: integer("processed_records").notNull().default(0),
+    createdDocuments: integer("created_documents").notNull().default(0),
+    skippedRecords: integer("skipped_records").notNull().default(0),
+    errorRecords: integer("error_records").notNull().default(0),
+    sourceFileKey: text("source_file_key").notNull(),
+    sourceFileName: text("source_file_name").notNull(),
+    sourceFileSize: bigint("source_file_size", { mode: "number" }).notNull().default(0),
+    sourceFileFormat: text("source_file_format")
+      .$type<"json" | "jsonl">()
+      .notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    errorLog: jsonb("error_log").notNull().default(sql`'[]'::jsonb`),
+    createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    workspaceBaseIdx: index("json_import_jobs_workspace_base_idx").on(
+      table.workspaceId,
+      table.baseId,
+    ),
+    statusIdx: index("json_import_jobs_status_idx").on(table.status, table.createdAt),
+    nextRetryIdx: index("json_import_jobs_next_retry_idx").on(table.nextRetryAt),
+  }),
+);
+export type JsonImportJob = typeof jsonImportJobs.$inferSelect;
+export type JsonImportJobInsert = typeof jsonImportJobs.$inferInsert;
 
 export const knowledgeDocumentIndexRevisionStatuses = [
   "processing",
@@ -792,7 +849,7 @@ export const indexingStages = [
 ] as const;
 export type IndexingStage = (typeof indexingStages)[number];
 
-export const knowledgeBaseIndexingActionStatuses = ["processing", "done", "error"] as const;
+export const knowledgeBaseIndexingActionStatuses = ["processing", "paused", "canceled", "done", "error"] as const;
 export type KnowledgeBaseIndexingActionStatus = (typeof knowledgeBaseIndexingActionStatuses)[number];
 
 export type KnowledgeBaseIndexingAction = {
@@ -931,7 +988,7 @@ export type KnowledgeBaseIndexingActionInsert = typeof knowledgeBaseIndexingActi
 export const knowledgeBaseNodeTypes = ["folder", "document"] as const;
 export type KnowledgeBaseNodeType = (typeof knowledgeBaseNodeTypes)[number];
 
-export const knowledgeNodeSourceTypes = ["manual", "import", "crawl"] as const;
+export const knowledgeNodeSourceTypes = ["manual", "import", "crawl", "json_import"] as const;
 export type KnowledgeNodeSourceType = (typeof knowledgeNodeSourceTypes)[number];
 
 export const knowledgeBases = pgTable("knowledge_bases", {

@@ -467,6 +467,27 @@ async function releaseDocumentIndexingLock(lock: DocumentIndexingLock | null): P
 }
 
 async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
+  // Проверяем статус action перед обработкой
+  const action = await knowledgeBaseIndexingActionsService.getLatest(job.workspaceId, job.baseId);
+  if (action) {
+    if (action.status === "canceled") {
+      workerLog(`job ${job.id} skipped: action is canceled`);
+      await storage.failKnowledgeBaseIndexingJob(job.id, "Индексация отменена");
+      return;
+    }
+    if (action.status === "paused") {
+      workerLog(`job ${job.id} skipped: action is paused`);
+      // Reschedule job для повторной проверки через 10 секунд
+      const nextRetryAt = new Date(Date.now() + 10_000);
+      await storage.rescheduleKnowledgeBaseIndexingJob(
+        job.id,
+        nextRetryAt,
+        "Индексация приостановлена",
+      );
+      return;
+    }
+  }
+
   let revisionId: string | null = null;
   const markJobError = async (message: string): Promise<void> => {
     try {
@@ -1426,13 +1447,15 @@ export function startKnowledgeBaseIndexingWorker() {
     active = true;
     let hadJob = false;
     try {
-      workerLog(`polling for next job...`);
+      // Логируем только если есть задачи или для отладки
       const job = await storage.claimNextKnowledgeBaseIndexingJob();
-      workerLog(`claimNextKnowledgeBaseIndexingJob returned: ${job ? `job ${job.id}` : "null"}`);
       if (!job) {
-        // Нет доступных job'ов, продолжаем опрос
+        // Нет доступных job'ов, продолжаем опрос без лишнего логирования
         return false;
       }
+      
+      // Логируем только когда нашли задачу
+      workerLog(`polling for next job... found job ${job.id}`);
 
       hadJob = true;
       workerLog(`claimed job ${job.id} for document ${job.documentId} base=${job.baseId} workspace=${job.workspaceId} status=${job.status} attempts=${job.attempts} versionId=${job.versionId ?? "null"}`);
