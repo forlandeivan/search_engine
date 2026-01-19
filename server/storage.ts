@@ -8838,12 +8838,19 @@ export class DatabaseStorage implements IStorage {
     const total = Number(countResult?.count ?? 0);
     
     // Get paginated data
-    const executions = await this.db
+    const rawExecutions = await this.db
       .select()
       .from(asrExecutions)
       .orderBy(desc(asrExecutions.createdAt))
       .limit(opts.pageSize)
       .offset(offset);
+    
+    // Convert BigInt to Number for JSON serialization
+    const executions = rawExecutions.map(exec => ({
+      ...exec,
+      fileSizeBytes: exec.fileSizeBytes ? Number(exec.fileSizeBytes) : null,
+      durationMs: exec.durationMs ? Number(exec.durationMs) : null,
+    }));
     
     return { executions, total, page: opts.page, pageSize: opts.pageSize };
   }
@@ -8854,7 +8861,15 @@ export class DatabaseStorage implements IStorage {
       .from(asrExecutions)
       .where(eq(asrExecutions.id, id))
       .limit(1);
-    return execution ?? null;
+    
+    if (!execution) return null;
+    
+    // Convert BigInt to Number for JSON serialization
+    return {
+      ...execution,
+      fileSizeBytes: execution.fileSizeBytes ? Number(execution.fileSizeBytes) : null,
+      durationMs: execution.durationMs ? Number(execution.durationMs) : null,
+    };
   }
 
   async listGuardBlocks(opts: { page: number; pageSize: number }): Promise<{ blocks: any[]; total: number; page: number; pageSize: number }> {
