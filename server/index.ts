@@ -309,17 +309,24 @@ function validateProductionSecrets(): void {
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
-    // Production: serve static files with fallback from dist/public to server/public
-    const distPublic = path.resolve(import.meta.dirname, "..", "dist", "public");
-    const serverPublic = path.resolve(import.meta.dirname, "public");
+    // Production: serve static files from dist/public (built assets)
+    // import.meta.dirname in dist/index.js = /path/to/dist
+    // So dist/public = /path/to/dist/public
+    const distPublic = path.resolve(import.meta.dirname, "public");
+    const fallbackDistPublic = path.resolve(import.meta.dirname, "..", "dist", "public");
     
-    const staticDir = fs.existsSync(serverPublic) ? serverPublic : 
-                     (fs.existsSync(distPublic) ? distPublic : null);
+    console.log(`[static] import.meta.dirname: ${import.meta.dirname}`);
+    console.log(`[static] Checking distPublic: ${distPublic} (exists: ${fs.existsSync(distPublic)})`);
+    console.log(`[static] Checking fallbackDistPublic: ${fallbackDistPublic} (exists: ${fs.existsSync(fallbackDistPublic)})`);
+    
+    const staticDir = fs.existsSync(distPublic) ? distPublic : 
+                     (fs.existsSync(fallbackDistPublic) ? fallbackDistPublic : null);
     
     if (!staticDir) {
-      throw new Error("No static assets found. Run 'npm run build' to build the client first.");
+      throw new Error(`No static assets found. Checked: ${distPublic}, ${fallbackDistPublic}. Run 'npm run build' to build the client first.`);
     }
     
+    console.log(`[static] Serving static files from: ${staticDir}`);
     app.use(express.static(staticDir));
 
     // Fallback to index.html for client-side routing (exclude API routes)
