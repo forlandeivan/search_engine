@@ -293,55 +293,63 @@ export function FieldMappingEditor({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Поле</TableHead>
-                <TableHead>Путь</TableHead>
-                <TableHead>Тип</TableHead>
-                <TableHead>Назначение</TableHead>
-                <TableHead>Пример значения</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {analysis.fields.map((field) => {
-                const fieldMapping = mapping.fields.find((f) => f.sourcePath === field.path);
-                const currentRole = fieldMapping?.role ?? "skip";
+          <div className="overflow-x-auto max-w-full">
+            <Table className="w-full">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-[100px]">Поле</TableHead>
+                  <TableHead className="min-w-[150px]">Путь</TableHead>
+                  <TableHead className="min-w-[80px]">Тип</TableHead>
+                  <TableHead className="min-w-[180px]">Назначение</TableHead>
+                  <TableHead className="min-w-[150px] max-w-[250px]">Пример значения</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {analysis.fields.map((field) => {
+                  const fieldMapping = mapping.fields.find((f) => f.sourcePath === field.path);
+                  const currentRole = fieldMapping?.role ?? "skip";
 
-                return (
-                  <TableRow key={field.path}>
-                    <TableCell className="font-medium">{field.key}</TableCell>
-                    <TableCell className="text-muted-foreground font-mono text-xs">
-                      {field.path}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{field.type}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Select value={currentRole} onValueChange={(value) => handleRoleChange(field.path, value as FieldRole)}>
-                        <SelectTrigger className="w-[180px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {FIELD_ROLES.map((role) => (
-                            <SelectItem key={role.value} value={role.value}>
-                              <div>
-                                <div className="font-medium">{role.label}</div>
-                                <div className="text-xs text-muted-foreground">{role.description}</div>
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
-                      {field.sampleValues.length > 0 ? field.sampleValues[0] : "—"}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                  return (
+                    <TableRow key={field.path}>
+                      <TableCell className="font-medium break-words">{field.key}</TableCell>
+                      <TableCell className="text-muted-foreground font-mono text-xs break-all max-w-[200px]">
+                        {field.path}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{field.type}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Select value={currentRole} onValueChange={(value) => handleRoleChange(field.path, value as FieldRole)}>
+                          <SelectTrigger className="w-[180px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {FIELD_ROLES.map((role) => (
+                              <SelectItem key={role.value} value={role.value}>
+                                <div>
+                                  <div className="font-medium">{role.label}</div>
+                                  <div className="text-xs text-muted-foreground">{role.description}</div>
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-[250px]">
+                        {field.sampleValues.length > 0 ? (
+                          <div className="break-words overflow-hidden line-clamp-2">
+                            {String(field.sampleValues[0])}
+                          </div>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 
@@ -365,14 +373,14 @@ export function FieldMappingEditor({
             </div>
             <div>
               <div className="text-sm font-medium text-muted-foreground mb-1">Контент</div>
-              <div className="text-sm whitespace-pre-wrap max-h-48 overflow-auto border rounded p-2">
+              <div className="text-sm whitespace-pre-wrap max-h-48 overflow-auto border rounded p-2 break-words">
                 {preview.content || "(пусто)"}
               </div>
             </div>
             {Object.keys(preview.metadata).length > 0 && (
               <div>
                 <div className="text-sm font-medium text-muted-foreground mb-1">Метаданные</div>
-                <pre className="text-xs bg-muted p-2 rounded overflow-auto">
+                <pre className="text-xs bg-muted p-2 rounded overflow-auto break-words whitespace-pre-wrap">
                   {JSON.stringify(preview.metadata, null, 2)}
                 </pre>
               </div>

@@ -81,42 +81,46 @@ export function StructurePreview({ analysis, isLoading }: StructurePreviewProps)
           {analysis.fields.length === 0 ? (
             <p className="text-sm text-muted-foreground">Поля не найдены</p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Поле</TableHead>
-                  <TableHead>Путь</TableHead>
-                  <TableHead>Тип</TableHead>
-                  <TableHead>Частота</TableHead>
-                  <TableHead>Примеры значений</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {analysis.fields.map((field) => (
-                  <TableRow key={field.path}>
-                    <TableCell className="font-medium">{field.key}</TableCell>
-                    <TableCell className="text-muted-foreground font-mono text-xs">{field.path}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{field.type}</Badge>
-                    </TableCell>
-                    <TableCell>{field.frequency}%</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {field.sampleValues.length > 0 ? (
-                        <div className="space-y-1">
-                          {field.sampleValues.map((value, idx) => (
-                            <div key={idx} className="truncate max-w-xs">
-                              {value}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
+            <div className="overflow-x-auto max-w-full">
+              <Table className="w-full">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[100px]">Поле</TableHead>
+                    <TableHead className="min-w-[150px]">Путь</TableHead>
+                    <TableHead className="min-w-[80px]">Тип</TableHead>
+                    <TableHead className="min-w-[80px]">Частота</TableHead>
+                    <TableHead className="min-w-[200px] max-w-[300px]">Примеры значений</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {analysis.fields.map((field) => (
+                    <TableRow key={field.path}>
+                      <TableCell className="font-medium break-words">{field.key}</TableCell>
+                      <TableCell className="text-muted-foreground font-mono text-xs break-all max-w-[200px]">
+                        {field.path}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{field.type}</Badge>
+                      </TableCell>
+                      <TableCell>{field.frequency}%</TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-[300px]">
+                        {field.sampleValues.length > 0 ? (
+                          <div className="space-y-1">
+                            {field.sampleValues.map((value, idx) => (
+                              <div key={idx} className="break-words overflow-hidden line-clamp-2">
+                                {String(value)}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -135,7 +139,7 @@ export function StructurePreview({ analysis, isLoading }: StructurePreviewProps)
                   <div className="flex items-center gap-2 mb-2">
                     <Badge variant="outline">Запись {idx + 1}</Badge>
                   </div>
-                  <pre className="text-xs overflow-auto max-h-64 bg-muted p-2 rounded">
+                  <pre className="text-xs overflow-auto max-h-64 bg-muted p-2 rounded break-words whitespace-pre-wrap">
                     {JSON.stringify(record, null, 2)}
                   </pre>
                 </div>

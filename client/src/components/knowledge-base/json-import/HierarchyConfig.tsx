@@ -276,9 +276,9 @@ export function HierarchyConfigEditor({
                     .filter((f) => f.type !== "array" && f.type !== "object")
                     .map((field) => (
                       <SelectItem key={field.path} value={field.path}>
-                        <div>
-                          <div className="font-medium">{field.key}</div>
-                          <div className="text-xs text-muted-foreground">{field.path}</div>
+                        <div className="max-w-[300px]">
+                          <div className="font-medium break-words">{field.key}</div>
+                          <div className="text-xs text-muted-foreground break-all truncate">{field.path}</div>
                         </div>
                       </SelectItem>
                     ))}
@@ -423,7 +423,7 @@ function HierarchyTree({
       ) : (
         <FileText className="h-4 w-4 text-muted-foreground" />
       )}
-      <span className="text-sm">
+      <span className="text-sm break-words">
         {node.name}
         {node.documentCount !== undefined && (
           <Badge variant="secondary" className="ml-2">

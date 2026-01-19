@@ -542,7 +542,7 @@ export function CreateKnowledgeBaseDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <div className="space-y-4 py-2 overflow-x-hidden">
           {/* Hide mode selection and name/description when in JSON import wizard steps beyond upload */}
           {!(mode === "json_import" && jsonImportStep !== "upload") && (
             <>
@@ -958,14 +958,14 @@ export function CreateKnowledgeBaseDialog({
 
               {/* Step 2: Preview */}
               {jsonImportStep === "preview" && structureAnalysis && (
-                <div className="max-h-[400px] overflow-y-auto">
+                <div className="max-h-[400px] overflow-y-auto overflow-x-hidden">
                   <StructurePreview analysis={structureAnalysis} />
                 </div>
               )}
 
               {/* Step 3: Mapping */}
               {jsonImportStep === "mapping" && structureAnalysis && (
-                <div className="max-h-[400px] overflow-y-auto">
+                <div className="max-h-[400px] overflow-y-auto overflow-x-hidden">
                   <FieldMappingEditor
                     analysis={structureAnalysis}
                     initialMapping={mappingConfig ?? undefined}
@@ -981,7 +981,7 @@ export function CreateKnowledgeBaseDialog({
 
               {/* Step 4: Hierarchy */}
               {jsonImportStep === "hierarchy" && structureAnalysis && (
-                <div className="max-h-[400px] overflow-y-auto">
+                <div className="max-h-[400px] overflow-y-auto overflow-x-hidden">
                   <HierarchyConfigEditor
                     analysis={structureAnalysis}
                     initialConfig={hierarchyConfig ?? undefined}
