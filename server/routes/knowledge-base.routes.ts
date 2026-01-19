@@ -44,6 +44,12 @@ import type {
   CreateJsonImportResponse,
   GetJsonImportStatusResponse,
 } from '@shared/json-import';
+import {
+  initJsonImportMultipartUpload,
+  generatePresignedPartUrls,
+  completeJsonImportMultipartUpload,
+  abortJsonImportMultipartUpload,
+} from '../workspace-storage-service';
 
 const logger = createLogger('knowledge-base');
 
@@ -648,6 +654,129 @@ knowledgeBaseRouter.get('/bases/:baseId/ask-ai/runs/:runId', asyncHandler(async 
   }
 
   res.json(run);
+}));
+
+/**
+ * POST /json-import/upload/init
+ * Initialize multipart upload for JSON/JSONL file
+ */
+const initUploadSchema = z.object({
+  fileName: z.string().min(1, "Укажите имя файла"),
+  fileSize: z.number().int().positive("Размер файла должен быть положительным"),
+  contentType: z.string().default("application/json"),
+});
+
+knowledgeBaseRouter.post('/json-import/upload/init', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const payload = initUploadSchema.parse(req.body);
+
+  try {
+    const result = await initJsonImportMultipartUpload(
+      workspaceId,
+      payload.fileName,
+      payload.fileSize,
+      payload.contentType,
+    );
+
+    const presignedUrls = await generatePresignedPartUrls(
+      workspaceId,
+      result.fileKey,
+      result.uploadId,
+      result.totalParts,
+    );
+
+    res.json({
+      uploadId: result.uploadId,
+      fileKey: result.fileKey,
+      partSize: result.partSize,
+      totalParts: result.totalParts,
+      presignedUrls: presignedUrls.map(p => ({
+        partNumber: p.partNumber,
+        url: p.url,
+        expiresAt: p.expiresAt,
+      })),
+    });
+  } catch (error) {
+    logger.error('Failed to init multipart upload', { error, workspaceId, fileName: payload.fileName });
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Не удалось инициализировать загрузку файла' 
+    });
+  }
+}));
+
+/**
+ * POST /json-import/upload/complete
+ * Complete multipart upload
+ */
+const completeUploadSchema = z.object({
+  uploadId: z.string().min(1, "Укажите uploadId"),
+  fileKey: z.string().min(1, "Укажите fileKey"),
+  parts: z.array(z.object({
+    partNumber: z.number().int().positive(),
+    etag: z.string().min(1),
+  })).min(1, "Укажите хотя бы одну часть"),
+});
+
+knowledgeBaseRouter.post('/json-import/upload/complete', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const payload = completeUploadSchema.parse(req.body);
+
+  try {
+    const result = await completeJsonImportMultipartUpload(
+      workspaceId,
+      payload.fileKey,
+      payload.uploadId,
+      payload.parts,
+    );
+
+    res.json({
+      fileKey: result.fileKey,
+      fileSize: result.fileSize,
+    });
+  } catch (error) {
+    logger.error('Failed to complete multipart upload', { error, workspaceId, uploadId: payload.uploadId });
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Не удалось завершить загрузку файла' 
+    });
+  }
+}));
+
+/**
+ * POST /json-import/upload/abort
+ * Abort multipart upload
+ */
+const abortUploadSchema = z.object({
+  uploadId: z.string().min(1, "Укажите uploadId"),
+  fileKey: z.string().min(1, "Укажите fileKey"),
+});
+
+knowledgeBaseRouter.post('/json-import/upload/abort', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const payload = abortUploadSchema.parse(req.body);
+
+  try {
+    await abortJsonImportMultipartUpload(
+      workspaceId,
+      payload.fileKey,
+      payload.uploadId,
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Failed to abort multipart upload', { error, workspaceId, uploadId: payload.uploadId });
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Не удалось отменить загрузку файла' 
+    });
+  }
 }));
 
 /**

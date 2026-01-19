@@ -1,5 +1,6 @@
 import type { JsonImportJob } from "@shared/schema";
 import { storage } from "./storage";
+import { deleteJsonImportFile } from "./workspace-storage-service";
 import type { MappingConfig, HierarchyConfig } from "@shared/json-import";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -30,6 +31,17 @@ async function processJob(job: JsonImportJob): Promise<void> {
       skippedRecords: 0,
       errorRecords: 0,
     });
+
+    // Delete source file after successful import
+    try {
+      await deleteJsonImportFile(job.workspaceId, job.sourceFileKey);
+      console.log(`[${JOB_TYPE}] Deleted source file for job ${job.id}: ${job.sourceFileKey}`);
+    } catch (deleteError) {
+      // Log but don't fail the job if file deletion fails
+      console.warn(
+        `[${JOB_TYPE}] Failed to delete source file for job ${job.id}: ${deleteError instanceof Error ? deleteError.message : String(deleteError)}`,
+      );
+    }
 
     console.log(`[${JOB_TYPE}] Job ${job.id} completed`);
   } catch (error) {

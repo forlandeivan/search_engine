@@ -11,9 +11,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, FileJson } from "lucide-react";
+import { useJsonImportUpload } from "@/hooks/useJsonImportUpload";
+import { Loader2, FileJson, X } from "lucide-react";
 import type { CreateJsonImportRequest } from "@shared/json-import";
 
 interface JsonImportWizardProps {
@@ -33,8 +35,10 @@ export function JsonImportWizard({
 }: JsonImportWizardProps) {
   const { toast } = useToast();
   const [file, setFile] = useState<File | null>(null);
+  const [uploadedFileKey, setUploadedFileKey] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { uploadFile, uploadProgress, isUploading, error: uploadError, abort } = useJsonImportUpload(workspaceId);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0] ?? null;
@@ -42,7 +46,7 @@ export function JsonImportWizard({
     setError(null);
   };
 
-  const handleSubmit = async () => {
+  const handleFileUpload = async () => {
     if (!file) {
       setError("Выберите файл для импорта");
       return;
@@ -55,18 +59,44 @@ export function JsonImportWizard({
       return;
     }
 
+    // Проверка размера (2GB)
+    const maxSize = 2 * 1024 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setError("Размер файла превышает максимально допустимый (2GB)");
+      return;
+    }
+
+    setError(null);
+
+    try {
+      const result = await uploadFile(file);
+      setUploadedFileKey(result.fileKey);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Не удалось загрузить файл";
+      setError(message);
+      toast({
+        variant: "destructive",
+        title: "Ошибка загрузки",
+        description: message,
+      });
+    }
+  };
+
+  const handleStartImport = async () => {
+    if (!uploadedFileKey || !file) {
+      setError("Сначала загрузите файл");
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
     try {
-      // TODO: US-2 - Загрузка файла в S3
       // TODO: US-3 - Preview структуры
       // TODO: US-4 - Маппинг полей
       // TODO: US-5 - Настройка иерархии
       
       // Временная заглушка для тестирования инфраструктуры
-      const fileKey = `json-imports/temp/${Date.now()}/${file.name}`;
-      
       const mappingConfig = {
         fields: [
           { sourcePath: "id", role: "id" as const },
@@ -80,7 +110,7 @@ export function JsonImportWizard({
       };
 
       const request: CreateJsonImportRequest = {
-        fileKey,
+        fileKey: uploadedFileKey,
         fileName: file.name,
         fileSize: file.size,
         mappingConfig,
@@ -118,8 +148,12 @@ export function JsonImportWizard({
   };
 
   const handleClose = () => {
-    if (!isSubmitting) {
+    if (!isSubmitting && !isUploading) {
+      if (isUploading) {
+        abort();
+      }
       setFile(null);
+      setUploadedFileKey(null);
       setError(null);
       onOpenChange(false);
     }
@@ -152,27 +186,70 @@ export function JsonImportWizard({
               type="file"
               accept=".json,.jsonl"
               onChange={handleFileChange}
-              disabled={isSubmitting}
+              disabled={isSubmitting || isUploading}
             />
             {file && (
-              <p className="text-sm text-muted-foreground">
-                Выбран: {file.name} ({(file.size / 1024).toFixed(2)} KB)
-              </p>
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  Выбран: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
+                </p>
+                {!uploadedFileKey && !isUploading && (
+                  <Button
+                    type="button"
+                    onClick={handleFileUpload}
+                    disabled={isSubmitting}
+                    className="w-full"
+                  >
+                    Загрузить файл
+                  </Button>
+                )}
+                {isUploading && uploadProgress && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        Загрузка части {uploadProgress.currentPart} из {uploadProgress.totalParts}
+                      </span>
+                      <span className="font-medium">{uploadProgress.percent}%</span>
+                    </div>
+                    <Progress value={uploadProgress.percent} />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={abort}
+                      className="w-full"
+                    >
+                      <X className="mr-2 h-4 w-4" />
+                      Отменить загрузку
+                    </Button>
+                  </div>
+                )}
+                {uploadedFileKey && (
+                  <Alert>
+                    <AlertDescription>
+                      Файл успешно загружен. Теперь можно запустить импорт.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
             )}
           </div>
 
-          {error && (
+          {(error || uploadError) && (
             <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
+              <AlertDescription>{error || uploadError}</AlertDescription>
             </Alert>
           )}
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={isSubmitting}>
-            Отмена
+          <Button variant="outline" onClick={handleClose} disabled={isSubmitting || isUploading}>
+            {isUploading ? "Отмена" : "Закрыть"}
           </Button>
-          <Button onClick={handleSubmit} disabled={isSubmitting || !file}>
+          <Button
+            onClick={handleStartImport}
+            disabled={isSubmitting || isUploading || !uploadedFileKey}
+          >
             {isSubmitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
