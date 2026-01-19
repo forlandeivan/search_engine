@@ -497,7 +497,7 @@ workspaceRouter.get('/:workspaceId/plan', asyncHandler(async (req, res) => {
   }
 
   const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
-  res.json(plan);
+  res.json({ plan });
 }));
 
 // ============================================================================
