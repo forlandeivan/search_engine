@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { useCreateKnowledgeBase } from "@/hooks/useCreateKnowledgeBase";
 import type { CreateKnowledgeBaseInput } from "@/hooks/useCreateKnowledgeBase";
 import type { KnowledgeBase, KnowledgeBaseSourceType } from "@/lib/knowledge-base";
-import { ChevronDown, ChevronUp, FolderArchive, Globe, HelpCircle, NotebookPen } from "lucide-react";
+import { ChevronDown, ChevronUp, FolderArchive, Globe, HelpCircle, NotebookPen, FileJson } from "lucide-react";
 
 type CreationOption = {
   value: KnowledgeBaseSourceType;
@@ -38,6 +38,12 @@ export const KNOWLEDGE_BASE_CREATION_OPTIONS: CreationOption[] = [
     description: "Подключите корпоративный портал или знания из публичного сайта для автообновления.",
     icon: Globe,
   },
+  {
+    value: "json_import",
+    title: "Импорт JSON/JSONL",
+    description: "Импортируйте структурированные данные из JSON или JSONL файлов в базу знаний.",
+    icon: FileJson,
+  },
 ];
 
 type CreateKnowledgeBaseDialogProps = {
@@ -46,6 +52,7 @@ type CreateKnowledgeBaseDialogProps = {
   initialMode?: KnowledgeBaseSourceType;
   onCreated?: (base: KnowledgeBase) => void;
   workspaceId?: string | null;
+  onJsonImportRequested?: (base: KnowledgeBase) => void;
 };
 
 type FieldLabelWithTooltipProps = {
@@ -80,6 +87,7 @@ export function CreateKnowledgeBaseDialog({
   initialMode = "blank",
   onCreated,
   workspaceId,
+  onJsonImportRequested,
 }: CreateKnowledgeBaseDialogProps) {
   const archiveInputRef = useRef<HTMLInputElement | null>(null);
   const [mode, setMode] = useState<KnowledgeBaseSourceType>(initialMode);
@@ -188,7 +196,7 @@ export function CreateKnowledgeBaseDialog({
         archiveInputRef.current.value = "";
       }
     }
-    if (value !== "crawler") {
+    if (value !== "crawler" && value !== "json_import") {
       setStartUrlsInput("");
       setSitemapUrl("");
       setAllowedDomainsInput("");
@@ -224,6 +232,10 @@ export function CreateKnowledgeBaseDialog({
     if (mode === "archive" && !archiveFile) {
       setError("Выберите архив документов для импорта");
       return;
+    }
+
+    if (mode === "json_import") {
+      // Для json_import не требуется дополнительная валидация, файл будет выбран в визарде
     }
 
     setError(null);
@@ -267,8 +279,14 @@ export function CreateKnowledgeBaseDialog({
         crawlerConfig,
       });
 
-      onCreated?.(created);
-      handleOpenChange(false);
+      // Если выбран режим json_import, открываем визард импорта вместо закрытия диалога
+      if (mode === "json_import") {
+        onJsonImportRequested?.(created);
+        handleOpenChange(false);
+      } else {
+        onCreated?.(created);
+        handleOpenChange(false);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Не удалось создать базу знаний. Попробуйте снова.";
       setError(message);
@@ -286,7 +304,7 @@ export function CreateKnowledgeBaseDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-2">
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-4">
             {KNOWLEDGE_BASE_CREATION_OPTIONS.map((option) => (
               <button
                 key={option.value}

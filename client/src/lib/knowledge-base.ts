@@ -40,7 +40,7 @@ export type KnowledgeDocument = {
   chunkSet?: KnowledgeDocumentChunkSet | null;
 };
 
-export type KnowledgeBaseSourceType = "blank" | "archive" | "crawler" | "unknown";
+export type KnowledgeBaseSourceType = "blank" | "archive" | "crawler" | "json_import" | "unknown";
 
 export type KnowledgeBaseTaskSummary = {
   total: number;
@@ -48,7 +48,7 @@ export type KnowledgeBaseTaskSummary = {
   completed: number;
 };
 
-export type KnowledgeBaseIngestion = {
+export type KnowledgeBaseIngestion =
   type: KnowledgeBaseSourceType;
   archiveName?: string;
   seedUrl?: string;

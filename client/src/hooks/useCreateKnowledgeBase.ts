@@ -74,7 +74,10 @@ export function useCreateKnowledgeBase(workspaceId?: string | null) {
       let structure: ArchiveImportResult["structure"] | undefined;
       let documents: ArchiveImportResult["documents"] | undefined;
       let tasks: KnowledgeBaseTaskSummary | undefined;
-      if (mode === "archive") {
+      if (mode === "json_import") {
+        // Для json_import просто создаем базу, импорт будет выполнен через визард
+        ingestion = { type: "json_import" };
+      } else if (mode === "archive") {
         if (!archiveFile) {
           throw new Error("Выберите архив документов для импорта");
         }

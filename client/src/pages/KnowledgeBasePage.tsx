@@ -253,6 +253,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [isCreateBaseDialogOpen, setIsCreateBaseDialogOpen] = useState(false);
   const [createBaseMode, setCreateBaseMode] = useState<KnowledgeBaseSourceType>("blank");
   const [isJsonImportWizardOpen, setIsJsonImportWizardOpen] = useState(false);
+  const [jsonImportBaseId, setJsonImportBaseId] = useState<string | null>(null);
   const [activeJsonImportJobId, setActiveJsonImportJobId] = useState<string | null>(null);
   const isDeleteDialogOpen = Boolean(deleteTarget);
   const [hierarchyDialogState, setHierarchyDialogState] = useState<{
@@ -2537,14 +2538,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           >
             <Plus className="mr-2 h-4 w-4" /> Новый документ
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setIsJsonImportWizardOpen(true)}
-            className="w-full sm:w-auto"
-          >
-            <FileJson className="mr-2 h-4 w-4" /> Импорт JSON/JSONL
-          </Button>
           <div className="flex flex-col items-start gap-1">
             <Button
               type="button"
@@ -3250,6 +3243,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         workspaceId={workspaceId}
         initialMode={createBaseMode}
         onCreated={handleBaseCreated}
+        onJsonImportRequested={(base) => {
+          setJsonImportBaseId(base.id);
+          setIsJsonImportWizardOpen(true);
+        }}
       />
       <CreateKnowledgeDocumentDialog
         open={isCreateDocumentDialogOpen}
@@ -3527,12 +3524,18 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </AlertDialog>
       <JsonImportWizard
         open={isJsonImportWizardOpen}
-        onOpenChange={setIsJsonImportWizardOpen}
-        baseId={selectedBase?.id ?? ""}
+        onOpenChange={(open) => {
+          setIsJsonImportWizardOpen(open);
+          if (!open) {
+            setJsonImportBaseId(null);
+          }
+        }}
+        baseId={jsonImportBaseId ?? selectedBase?.id ?? ""}
         workspaceId={workspaceId ?? ""}
         onImportStarted={(jobId) => {
           setActiveJsonImportJobId(jobId);
           setIsJsonImportWizardOpen(false);
+          setJsonImportBaseId(null);
         }}
       />
       {documentVectorizationProgress && (
