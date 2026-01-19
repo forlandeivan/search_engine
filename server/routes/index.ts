@@ -13,7 +13,7 @@ import { chatRouter } from './chat.routes';
 import { skillRouter } from './skill.routes';
 import { knowledgeBaseRouter } from './knowledge-base.routes';
 import { healthRouter } from './health.routes';
-import { publicRouter } from './public.routes';
+import { publicRouter, tariffsPublicRouter } from './public.routes';
 import { jobsRouter } from './jobs.routes';
 import { canvasRouter } from './canvas.routes';
 import { cardsRouter } from './cards.routes';
@@ -134,7 +134,7 @@ export function registerRouteModules(app: Express): void {
   // Public routes (no auth required)
   app.use('/api/public', publicRouter);
   app.use('/public', publicRouter);  // Legacy path without /api prefix
-  app.use('/api/tariffs', publicRouter);  // Public tariffs endpoint
+  app.use('/api/tariffs', tariffsPublicRouter);  // Public tariffs endpoint
   routerLogger.info('Registered: /api/public, /public, /api/tariffs');
 
   // Jobs routes (crawling, indexing background tasks)

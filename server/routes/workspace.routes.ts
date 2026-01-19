@@ -23,7 +23,8 @@ import { asyncHandler } from '../middleware/async-handler';
 import { workspaceMemberRoles, type PublicUser, type User, actionTargets, actionPlacements, actionInputTypes, actionOutputModes, type ActionPlacement } from '@shared/schema';
 import type { WorkspaceMemberWithUser } from '../storage';
 import { actionsRepository } from '../actions';
-import { workspacePlanService } from '../workspace-plan-service';
+import { workspacePlanService, PlanDowngradeNotAllowedError } from '../workspace-plan-service';
+import { getWorkspaceCreditSummary } from '../credit-summary-service';
 import {
   getWorkspaceLlmUsageSummary,
   getWorkspaceAsrUsageSummary,
@@ -496,7 +497,49 @@ workspaceRouter.get('/:workspaceId/plan', asyncHandler(async (req, res) => {
   }
 
   const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
-  res.json(plan);
+  res.json({ plan });
+}));
+
+/**
+ * PUT /:workspaceId/plan
+ * Update workspace plan
+ */
+workspaceRouter.put('/:workspaceId/plan', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId } = req.params;
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+  if (!membership) {
+    return res.status(403).json({ message: 'Доступ запрещён' });
+  }
+
+  // Проверяем, что пользователь имеет право менять тариф (обычно только owner или admin)
+  if (membership.role !== 'owner' && membership.role !== 'admin') {
+    return res.status(403).json({ message: 'Только владелец или администратор могут менять тариф' });
+  }
+
+  const { planCode } = req.body;
+  if (!planCode || typeof planCode !== 'string') {
+    return res.status(400).json({ message: 'Необходимо указать planCode' });
+  }
+
+  try {
+    const plan = await workspacePlanService.updateWorkspacePlan(workspaceId, planCode);
+    res.json({ plan });
+  } catch (error) {
+    if (error instanceof PlanDowngradeNotAllowedError) {
+      return res.status(400).json({ 
+        message: error.message,
+        code: error.code,
+        violations: error.violations,
+      });
+    }
+    if (error instanceof Error) {
+      return res.status(400).json({ message: error.message });
+    }
+    throw error;
+  }
 }));
 
 // ============================================================================
@@ -774,9 +817,20 @@ workspaceRouter.get('/:workspaceId/credits', asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Рабочее пространство не найдено' });
   }
 
+  const summary = await getWorkspaceCreditSummary(workspaceId);
+  const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
+
   res.json({
-    credits: workspace.credits ?? 0,
-    workspaceId: workspace.id,
+    workspaceId: summary.workspaceId,
+    balance: {
+      currentBalance: summary.currentBalance,
+      nextTopUpAt: summary.nextRefreshAt ? summary.nextRefreshAt.toISOString() : null,
+    },
+    planIncludedCredits: {
+      amount: summary.planLimit.amount,
+      period: summary.planLimit.period,
+    },
+    policy: summary.policy,
   });
 }));
 

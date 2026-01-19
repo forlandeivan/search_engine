@@ -18,6 +18,9 @@ import { HttpError } from '../lib/errors';
 import { QdrantConfigurationError } from '../qdrant';
 import { tariffPlanService } from '../tariff-plan-service';
 
+// Separate router for tariffs to avoid path conflicts
+export const tariffsPublicRouter = Router();
+
 // Validation schemas
 const knowledgeSuggestQuerySchema = z.object({
   q: z.string().default(''),
@@ -122,8 +125,8 @@ publicRouter.get('/search/suggest', asyncHandler(async (req, res) => {
  * GET /tariffs
  * List available tariff plans (public endpoint)
  */
-publicRouter.get('/tariffs', asyncHandler(async (_req, res) => {
-  const tariffs = await tariffPlanService.listAll();
+tariffsPublicRouter.get('/', asyncHandler(async (_req, res) => {
+  const tariffs = await tariffPlanService.getActivePlans();
   res.json({ tariffs });
 }));
 
