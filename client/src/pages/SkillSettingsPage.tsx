@@ -80,7 +80,17 @@ type SkillSettingsPageProps = {
 
 type WorkspacePlanResponse = {
   plan: {
+    id: string;
+    code: string;
+    name: string;
+    description?: string | null;
+    isActive: boolean;
+    includedCreditsAmount?: number;
+    includedCreditsPeriod?: string;
     noCodeFlowEnabled?: boolean;
+    sortOrder?: number;
+    createdAt?: string;
+    updatedAt?: string;
   };
 };
 

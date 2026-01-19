@@ -258,7 +258,7 @@ export default function AdminBillingPage() {
       }
 
       await apiRequest("PUT", `/api/admin/tariffs/${selectedPlanId}`, {
-        includedCreditsAmount: creditsAmount,
+        includedCreditsAmount: creditsAmountCents, // Отправляем центы, а не строку
         includedCreditsPeriod: "monthly",
         noCodeFlowEnabled,
       });

@@ -48,6 +48,9 @@ const updateTariffSchema = z.object({
   description: z.string().trim().max(500).optional(),
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
+  noCodeFlowEnabled: z.boolean().optional(),
+  includedCreditsAmount: z.union([z.number(), z.string()]).optional(),
+  includedCreditsPeriod: z.string().optional(),
 });
 
 // ============================================================================
@@ -114,7 +117,22 @@ adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
       return res.status(404).json({ message: 'Tariff not found' });
     }
     
-    // Update plan
+    // Update credits/noCodeFlowEnabled if provided (using dedicated method)
+    if (parsed.includedCreditsAmount !== undefined || parsed.includedCreditsPeriod !== undefined || parsed.noCodeFlowEnabled !== undefined) {
+      // includedCreditsAmount приходит в центах (число)
+      const amountCents = parsed.includedCreditsAmount !== undefined 
+        ? (typeof parsed.includedCreditsAmount === 'string' 
+            ? Math.round(parseFloat(parsed.includedCreditsAmount)) 
+            : Math.round(parsed.includedCreditsAmount))
+        : undefined;
+      await tariffPlanService.updatePlanCredits(planId, {
+        amountCents: amountCents ?? undefined,
+        period: parsed.includedCreditsPeriod ?? undefined,
+        noCodeFlowEnabled: parsed.noCodeFlowEnabled ?? undefined,
+      });
+    }
+    
+    // Update other plan fields
     const updates: Partial<typeof tariffPlans.$inferInsert> = {};
     if (parsed.name !== undefined) updates.name = parsed.name;
     if (parsed.description !== undefined) updates.description = parsed.description;
@@ -122,7 +140,9 @@ adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
     if (parsed.sortOrder !== undefined) updates.sortOrder = parsed.sortOrder;
     updates.updatedAt = new Date();
     
-    await db.update(tariffPlans).set(updates).where(eq(tariffPlans.id, planId));
+    if (Object.keys(updates).length > 1) { // больше чем только updatedAt
+      await db.update(tariffPlans).set(updates).where(eq(tariffPlans.id, planId));
+    }
     
     // Return updated plan with limits
     const tariff = await tariffPlanService.getPlanWithLimitsById(planId);

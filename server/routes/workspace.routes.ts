@@ -497,6 +497,7 @@ workspaceRouter.get('/:workspaceId/plan', asyncHandler(async (req, res) => {
   }
 
   const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
+  workspaceLogger.info(`[GET /:workspaceId/plan] workspaceId: ${workspaceId}, plan: ${plan.code}, noCodeFlowEnabled: ${plan.noCodeFlowEnabled}`);
   res.json({ plan });
 }));
 
@@ -505,8 +506,12 @@ workspaceRouter.get('/:workspaceId/plan', asyncHandler(async (req, res) => {
  * Update workspace plan
  */
 workspaceRouter.put('/:workspaceId/plan', asyncHandler(async (req, res) => {
+  console.log('[PUT /:workspaceId/plan] Request received:', req.method, req.path, req.params);
   const user = getAuthorizedUser(req, res);
-  if (!user) return;
+  if (!user) {
+    console.log('[PUT /:workspaceId/plan] No user, returning 401');
+    return;
+  }
 
   const { workspaceId } = req.params;
   const membership = await storage.getWorkspaceMember(user.id, workspaceId);
