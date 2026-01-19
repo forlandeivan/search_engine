@@ -25,24 +25,22 @@ export default defineConfig({
         manualChunks: (id) => {
           // Vendor chunks - separate large dependencies
           if (id.includes('node_modules')) {
-            // React, React DOM, and Radix UI MUST be in the same chunk
-            // to ensure React is available when Radix UI initializes
-            if (id.includes('react/') || id.includes('react-dom/') || id.includes('@radix-ui/')) {
+            // CRITICAL: All React-dependent libraries MUST be in the same chunk
+            // to ensure React is loaded and initialized before any library tries to use it.
+            // This prevents "Cannot read properties of undefined (reading 'createContext')" 
+            // and similar errors when chunks load in parallel.
+            if (
+              id.includes('react/') || 
+              id.includes('react-dom/') || 
+              id.includes('@radix-ui/') ||
+              id.includes('@tanstack/react-query') ||
+              id.includes('wouter') ||
+              id.includes('recharts') ||
+              id.includes('@tiptap/')
+            ) {
               return 'vendor-react';
             }
-            // TanStack Query
-            if (id.includes('@tanstack/react-query')) {
-              return 'vendor-query';
-            }
-            // Tiptap editor
-            if (id.includes('@tiptap/')) {
-              return 'vendor-editor';
-            }
-            // Chart libraries
-            if (id.includes('recharts')) {
-              return 'vendor-charts';
-            }
-            // PDF/File processing
+            // PDF/File processing (no React dependency)
             if (id.includes('pdfjs-dist') || id.includes('mammoth') || id.includes('turndown')) {
               return 'vendor-files';
             }
