@@ -1086,7 +1086,7 @@ export interface IStorage {
 
   // Monitoring (admin)
   listGuardBlocks(opts: { page: number; pageSize: number }): Promise<{ blocks: any[]; total: number; page: number; pageSize: number }>;
-  listCharges(opts: { page: number; pageSize: number; workspaceId?: string }): Promise<{ charges: any[]; total: number; page: number; pageSize: number }>;
+  listCharges(opts: { page: number; pageSize: number; workspaceId?: string; entryType?: string }): Promise<{ charges: any[]; total: number; page: number; pageSize: number }>;
   listSystemNotificationLogs(opts: { page: number; pageSize: number }): Promise<{ logs: any[]; total: number; page: number; pageSize: number }>;
   getSystemNotificationLog(id: string): Promise<any | null>;
 
@@ -8892,13 +8892,23 @@ export class DatabaseStorage implements IStorage {
     return { blocks, total, page: opts.page, pageSize: opts.pageSize };
   }
 
-  async listCharges(opts: { page: number; pageSize: number; workspaceId?: string }): Promise<{ charges: any[]; total: number; page: number; pageSize: number }> {
+  async listCharges(opts: { page: number; pageSize: number; workspaceId?: string; entryType?: string }): Promise<{ charges: any[]; total: number; page: number; pageSize: number }> {
     const offset = (opts.page - 1) * opts.pageSize;
     
     // Build where condition
-    const whereCondition = opts.workspaceId 
-      ? eq(workspaceCreditLedger.workspaceId, opts.workspaceId)
-      : undefined;
+    const conditions = [];
+    if (opts.workspaceId) {
+      conditions.push(eq(workspaceCreditLedger.workspaceId, opts.workspaceId));
+    }
+    if (opts.entryType) {
+      conditions.push(eq(workspaceCreditLedger.entryType, opts.entryType));
+    }
+    const whereCondition =
+      conditions.length === 0
+        ? undefined
+        : conditions.length === 1
+          ? conditions[0]
+          : and(...conditions);
     
     // Get total count
     const countQuery = this.db
