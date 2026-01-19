@@ -854,6 +854,43 @@ export default function LlmProvidersPage() {
     },
   });
 
+  const deleteProviderMutation = useMutation<void, Error, string>({
+    mutationFn: async (providerId) => {
+      const response = await apiRequest("DELETE", `/api/admin/llm-providers/${providerId}`);
+      
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { message?: string; details?: any } | null;
+        throw new Error(body?.message ?? "Не удалось удалить провайдера");
+      }
+    },
+    onSuccess: (_, providerId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/llm-providers"] });
+      queryClient.setQueryData<ProvidersResponse>(["/api/admin/llm-providers"], (previous) => {
+        if (!previous) return previous;
+        return {
+          providers: (previous.providers ?? []).filter(p => p.id !== providerId),
+        };
+      });
+      
+      // Сбрасываем выбор, если удалили текущий провайдер
+      if (selectedProviderId === providerId) {
+        setSelectedProviderId(null);
+      }
+      
+      toast({
+        title: "Провайдер удалён",
+        description: "LLM провайдер успешно удалён из системы.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Не удалось удалить провайдера",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const updateUnicaChatMutation = useMutation<UnicaChatConfigResponse, Error, UnicaChatFormValues>({
     mutationFn: async (values) => {
       if (!values.llmProviderConfigId) {
@@ -954,6 +991,16 @@ export default function LlmProvidersPage() {
       });
     }
   });
+
+  const handleDelete = () => {
+    if (!selectedProvider) return;
+    
+    if (!confirm(`Вы уверены, что хотите удалить провайдера "${selectedProvider.name}"?\n\nЭто действие нельзя отменить. Провайдер можно удалить только если к нему не привязаны активные модели в каталоге.`)) {
+      return;
+    }
+    
+    deleteProviderMutation.mutate(selectedProvider.id);
+  };
 
   const handleUnicaSubmit = unicaForm.handleSubmit(async (values) => {
     try {
@@ -1647,6 +1694,27 @@ export default function LlmProvidersPage() {
                         {isSubmitPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                         {isCreating ? "Создать провайдера" : "Сохранить изменения"}
                       </Button>
+                      
+                      {!isCreating && selectedProvider && (
+                        <Button 
+                          type="button" 
+                          variant="destructive" 
+                          onClick={handleDelete}
+                          disabled={deleteProviderMutation.isPending}
+                        >
+                          {deleteProviderMutation.isPending ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Удаление...
+                            </>
+                          ) : (
+                            <>
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Удалить провайдера
+                            </>
+                          )}
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         variant="outline"
