@@ -724,7 +724,7 @@ export async function buildChatLlmContext(
   let modelInfo: Model | null = null;
   let systemPromptOverride = skill.systemPrompt ?? null;
   const requestOverrides: Partial<LlmRequestConfig> = {};
-  let providerSource: "skill" | "global_unica_chat" = "skill";
+  let providerSource: "skill" | "global_unica_chat" | "fallback_single_provider" = "skill";
 
   if (isUnica) {
     const unicaConfig = await storage.getUnicaChatConfig();
@@ -750,6 +750,15 @@ export async function buildChatLlmContext(
     }
   }
   // RAG-настройки навыка больше не применяются в стандартном режиме.
+
+  if (!providerId && isUnica) {
+    const providers = await storage.listLlmProviders(workspaceId);
+    const activeProviders = providers.filter((candidate) => candidate.isActive);
+    if (activeProviders.length === 1) {
+      providerId = activeProviders[0].id;
+      providerSource = "fallback_single_provider";
+    }
+  }
 
   const providerLogInput = {
     chatId,

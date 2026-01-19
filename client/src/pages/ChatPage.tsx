@@ -190,7 +190,7 @@ export default function ChatPage({ params }: ChatPageProps) {
     if (!workspaceId || !effectiveChatId) {
       return;
     }
-    const url = new URL(`/api/chats/${effectiveChatId}/events`, window.location.origin);
+    const url = new URL(`/api/chat/sessions/${effectiveChatId}/events`, window.location.origin);
     if (workspaceId) {
       url.searchParams.set("workspaceId", workspaceId);
     }
