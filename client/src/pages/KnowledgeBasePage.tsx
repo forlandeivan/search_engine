@@ -253,7 +253,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [isCreateBaseDialogOpen, setIsCreateBaseDialogOpen] = useState(false);
   const [createBaseMode, setCreateBaseMode] = useState<KnowledgeBaseSourceType>("blank");
   const [isJsonImportWizardOpen, setIsJsonImportWizardOpen] = useState(false);
-  const [jsonImportBaseId, setJsonImportBaseId] = useState<string | null>(null);
   const [activeJsonImportJobId, setActiveJsonImportJobId] = useState<string | null>(null);
   const isDeleteDialogOpen = Boolean(deleteTarget);
   const [hierarchyDialogState, setHierarchyDialogState] = useState<{
@@ -3243,9 +3242,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         workspaceId={workspaceId}
         initialMode={createBaseMode}
         onCreated={handleBaseCreated}
-        onJsonImportRequested={(base) => {
-          setJsonImportBaseId(base.id);
-          setIsJsonImportWizardOpen(true);
+        onJsonImportStarted={(jobId) => {
+          setActiveJsonImportJobId(jobId);
         }}
       />
       <CreateKnowledgeDocumentDialog
@@ -3524,18 +3522,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </AlertDialog>
       <JsonImportWizard
         open={isJsonImportWizardOpen}
-        onOpenChange={(open) => {
-          setIsJsonImportWizardOpen(open);
-          if (!open) {
-            setJsonImportBaseId(null);
-          }
-        }}
-        baseId={jsonImportBaseId ?? selectedBase?.id ?? ""}
+        onOpenChange={setIsJsonImportWizardOpen}
+        baseId={selectedBase?.id ?? ""}
         workspaceId={workspaceId ?? ""}
         onImportStarted={(jobId) => {
           setActiveJsonImportJobId(jobId);
           setIsJsonImportWizardOpen(false);
-          setJsonImportBaseId(null);
         }}
       />
       {documentVectorizationProgress && (
