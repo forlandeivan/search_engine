@@ -55,6 +55,9 @@ const upload = multer({
 /**
  * POST /
  * Start transcription with audio file
+ * 
+ * If skill is in no-code mode (executionMode === 'no_code' or transcriptionFlowMode === 'no_code'),
+ * returns 409 to signal client should use file upload flow instead.
  */
 transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res) => {
   const user = getAuthorizedUser(req, res);
@@ -84,6 +87,30 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
   }
 
   const workspaceId = chat.workspaceId;
+
+  // Check if skill is in no-code mode - if so, redirect to file upload flow
+  if (chat.skillId) {
+    const skill = await getSkillById(workspaceId, chat.skillId);
+    if (skill) {
+      const isNoCodeExecution = skill.executionMode === 'no_code';
+      const isNoCodeTranscription = skill.transcriptionFlowMode === 'no_code';
+      
+      if (isNoCodeExecution || isNoCodeTranscription) {
+        logger.info({
+          chatId,
+          skillId: skill.id,
+          executionMode: skill.executionMode,
+          transcriptionFlowMode: skill.transcriptionFlowMode,
+        }, 'Skill is in no-code mode, redirecting to file upload flow');
+        
+        return res.status(409).json({
+          message: 'Навык использует no-code режим транскрибации',
+          code: 'NO_CODE_TRANSCRIPTION_MODE',
+          mode: 'no_code',
+        });
+      }
+    }
+  }
 
   try {
     const result = await yandexSttAsyncService.startAsyncTranscription({

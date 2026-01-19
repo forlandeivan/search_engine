@@ -8,6 +8,8 @@
  * - DELETE /api/chat/sessions/:chatId - Delete chat
  * - GET /api/chat/sessions/:chatId/messages - Get messages
  * - POST /api/chat/sessions/:chatId/messages/llm - Send message to LLM
+ * - POST /api/chat/sessions/:chatId/messages/file - Upload file to chat (no-code mode)
+ * - POST /api/chat/sessions/:chatId/messages/:messageId/send - Send uploaded file event (no-code)
  * - GET /api/chat/actions - List bot actions
  * - POST /api/chat/actions/start - Start bot action
  * - POST /api/chat/actions/update - Update bot action status
@@ -16,10 +18,14 @@
 import { Router, type Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
+import multer from 'multer';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { llmChatLimiter } from '../middleware/rate-limit';
+import { uploadFileToProvider, FileUploadToProviderError } from '../file-storage-provider-upload-service';
+import { enqueueFileEventForSkill } from '../no-code-file-events';
+import { buildFileUploadedEventPayload } from '../no-code-events';
 import {
   ChatServiceError,
   buildChatServiceErrorPayload,
@@ -39,7 +45,7 @@ import {
   listBotActionsForChat,
 } from '../chat-service';
 import { scheduleChatTitleGenerationIfNeeded } from '../chat-title-jobs';
-import { getSkillById, createUnicaChatSkillForWorkspace, UNICA_CHAT_SYSTEM_KEY } from '../skills';
+import { getSkillById, getSkillBearerToken, createUnicaChatSkillForWorkspace, UNICA_CHAT_SYSTEM_KEY } from '../skills';
 import { SkillRagConfigurationError, callRagForSkillChat } from '../chat-rag';
 import { runKnowledgeBaseRagPipeline } from '../lib/rag-pipeline';
 import { OperationBlockedError, mapDecisionToPayload } from '../guards/errors';
@@ -733,6 +739,242 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
   }
 }));
 
+// ============================================================================
+// File Upload for No-Code Mode
+// ============================================================================
+
+const fileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 512 * 1024 * 1024 }, // 512MB
+});
+
+/**
+ * POST /sessions/:chatId/messages/file
+ * Upload file to chat for no-code processing
+ * 
+ * This endpoint is used when skill is in no-code mode.
+ * File is uploaded to the configured file storage provider and
+ * an event is sent to the no-code endpoint.
+ */
+chatRouter.post('/sessions/:chatId/messages/file', fileUpload.single('file'), asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const chatId = req.params.chatId;
+
+  const file = req.file;
+  if (!file) {
+    return res.status(400).json({ message: 'Файл не предоставлен' });
+  }
+
+  // Get chat and verify access
+  const chat = await getChatById(chatId, workspaceId, user.id);
+  if (!chat.skillId) {
+    return res.status(400).json({ message: 'Чат не привязан к навыку' });
+  }
+
+  // Get skill and verify no-code mode
+  const skill = await getSkillById(workspaceId, chat.skillId);
+  if (!skill) {
+    return res.status(404).json({ message: 'Навык не найден' });
+  }
+
+  const isNoCodeMode = skill.executionMode === 'no_code';
+  if (!isNoCodeMode) {
+    return res.status(400).json({ 
+      message: 'Навык не в no-code режиме. Используйте стандартную транскрибацию.',
+      code: 'NOT_NO_CODE_MODE',
+    });
+  }
+
+  // Get file storage provider
+  const providerId = skill.noCodeConnection?.fileStorageProviderId ?? null;
+  if (!providerId) {
+    return res.status(400).json({ 
+      message: 'File storage provider не настроен для этого навыка',
+      code: 'NO_FILE_STORAGE_PROVIDER',
+    });
+  }
+
+  const fileName = file.originalname || 'audio.wav';
+  const mimeType = file.mimetype || 'application/octet-stream';
+  const sizeBytes = file.size;
+
+  logger.info({
+    chatId,
+    skillId: skill.id,
+    fileName,
+    mimeType,
+    sizeBytes,
+    providerId,
+  }, 'Uploading file to provider for no-code skill');
+
+  try {
+    // Get bearer token for the skill
+    const bearerToken = await getSkillBearerToken({ workspaceId, skillId: skill.id });
+
+    // Create file record
+    const fileRecord = await storage.createFile({
+      workspaceId,
+      skillId: skill.id,
+      chatId,
+      userId: user.id,
+      name: fileName,
+      mimeType,
+      sizeBytes: BigInt(sizeBytes),
+      kind: 'audio',
+      status: 'uploading',
+      storageType: 'external_provider',
+      providerId,
+    });
+
+    // Create user message with file
+    const messageContent = fileName;
+    const messageMetadata = {
+      type: 'audio' as const,
+      fileName,
+      mimeType,
+      sizeBytes,
+      fileId: fileRecord.id,
+    };
+
+    const userMessage = await storage.createChatMessage({
+      chatId,
+      role: 'user',
+      content: messageContent,
+      messageType: 'file',
+      metadata: messageMetadata,
+    });
+
+    // Upload file to provider
+    const uploadedFile = await uploadFileToProvider({
+      fileId: fileRecord.id,
+      providerId,
+      bearerToken,
+      data: file.buffer,
+      mimeType,
+      fileName,
+      sizeBytes,
+      context: {
+        workspaceId,
+        workspaceName: null,
+        skillId: skill.id,
+        skillName: skill.name ?? null,
+        chatId,
+        userId: user.id,
+        messageId: userMessage.id,
+        fileNameOriginal: fileName,
+      },
+      skillContext: {
+        executionMode: skill.executionMode,
+        noCodeEndpointUrl: skill.noCodeConnection?.endpointUrl ?? null,
+        noCodeAuthType: skill.noCodeConnection?.authType ?? null,
+        noCodeBearerToken: bearerToken,
+      },
+    });
+
+    // Enqueue file event for delivery to no-code endpoint
+    await enqueueFileEventForSkill({
+      file: uploadedFile,
+      action: 'file_uploaded',
+      skill: {
+        executionMode: skill.executionMode,
+        noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? null,
+        noCodeEndpointUrl: skill.noCodeConnection?.endpointUrl ?? null,
+        noCodeAuthType: skill.noCodeConnection?.authType ?? null,
+        noCodeBearerToken: bearerToken,
+      },
+    });
+
+    logger.info({
+      chatId,
+      skillId: skill.id,
+      fileId: uploadedFile.id,
+      messageId: userMessage.id,
+    }, 'File uploaded and event enqueued for no-code skill');
+
+    res.json({
+      status: 'uploaded',
+      message: mapMessage(userMessage),
+      fileId: uploadedFile.id,
+    });
+  } catch (error) {
+    logger.error({ err: error, chatId, skillId: skill.id }, 'Failed to upload file for no-code skill');
+    
+    if (error instanceof FileUploadToProviderError) {
+      return res.status(error.status).json({
+        message: error.message,
+        code: 'FILE_UPLOAD_ERROR',
+        details: error.details,
+      });
+    }
+    throw error;
+  }
+}));
+
+/**
+ * POST /sessions/:chatId/messages/:messageId/send
+ * Send event for already uploaded file message (no-code mode)
+ * 
+ * Used when audio was uploaded in no-code mode and client needs to trigger event delivery.
+ */
+chatRouter.post('/sessions/:chatId/messages/:messageId/send', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const { chatId, messageId } = req.params;
+
+  // Get chat and verify access
+  const chat = await getChatById(chatId, workspaceId, user.id);
+  if (!chat.skillId) {
+    return res.status(400).json({ message: 'Чат не привязан к навыку' });
+  }
+
+  // Get message
+  const messages = await getChatMessages(chatId, workspaceId, user.id);
+  const message = messages.find(m => m.id === messageId);
+  if (!message) {
+    return res.status(404).json({ message: 'Сообщение не найдено' });
+  }
+
+  // Get skill
+  const skill = await getSkillById(workspaceId, chat.skillId);
+  if (!skill) {
+    return res.status(404).json({ message: 'Навык не найден' });
+  }
+
+  const isNoCodeMode = skill.executionMode === 'no_code';
+  if (!isNoCodeMode) {
+    return res.status(400).json({ message: 'Навык не в no-code режиме' });
+  }
+
+  // Build and send file.uploaded event
+  const metadata = message.metadata as Record<string, unknown> | null;
+  const fileId = metadata?.fileId as string | undefined;
+  
+  if (fileId) {
+    const fileRecord = await storage.getFile(fileId, workspaceId);
+    if (fileRecord) {
+      const bearerToken = await getSkillBearerToken({ workspaceId, skillId: skill.id });
+      await enqueueFileEventForSkill({
+        file: fileRecord,
+        action: 'file_uploaded',
+        skill: {
+          executionMode: skill.executionMode,
+          noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? null,
+          noCodeEndpointUrl: skill.noCodeConnection?.endpointUrl ?? null,
+          noCodeAuthType: skill.noCodeConnection?.authType ?? null,
+          noCodeBearerToken: bearerToken,
+        },
+      });
+    }
+  }
+
+  res.json({ status: 'ok' });
+}));
+
 // Error handler for this router
 chatRouter.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   if (err instanceof z.ZodError) {
@@ -746,6 +988,9 @@ chatRouter.use((err: Error, req: Request, res: Response, next: NextFunction) => 
   }
   if (err instanceof HttpError) {
     return res.status(err.status).json({ message: err.message });
+  }
+  if (err instanceof FileUploadToProviderError) {
+    return res.status(err.status).json({ message: err.message, details: err.details });
   }
   next(err);
 });
