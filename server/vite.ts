@@ -57,7 +57,7 @@ export async function setupVite(app: Express, server: Server) {
 
   app.use((req, res, next) => {
     // Логируем все запросы к файлам для отладки
-    if (req.originalUrl.includes('/src/pages/ChatPage') || req.originalUrl.includes('@fs')) {
+    if (req.originalUrl.includes('/src/pages/') || req.originalUrl.includes('@fs') || req.originalUrl.includes('KnowledgeBase')) {
       log(`[VITE DEBUG] Request: ${req.method} ${req.originalUrl}`, 'vite');
     }
     next();
