@@ -1,20 +1,51 @@
+console.log("[App.tsx] Starting imports...");
+
 import { Switch, Route, Link, useLocation } from "wouter";
+console.log("[App.tsx] wouter loaded");
+
 import { useEffect, Suspense, lazy, useState, Component, type ReactNode, type ErrorInfo } from "react";
+console.log("[App.tsx] react loaded");
+
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+console.log("[App.tsx] react-query loaded");
+
 import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
+console.log("[App.tsx] queryClient loaded");
+
 import { Toaster } from "@/components/ui/toaster";
+console.log("[App.tsx] Toaster loaded");
+
 import { TooltipProvider } from "@/components/ui/tooltip";
+console.log("[App.tsx] TooltipProvider loaded");
+
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+console.log("[App.tsx] Sidebar loaded");
+
 import AdminSidebar from "@/components/AdminSidebar";
+console.log("[App.tsx] AdminSidebar loaded");
+
 import MainSidebar from "@/components/MainSidebar";
+console.log("[App.tsx] MainSidebar loaded");
+
 import ThemeToggle from "@/components/ThemeToggle";
+console.log("[App.tsx] ThemeToggle loaded");
+
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
+console.log("[App.tsx] WorkspaceSwitcher loaded");
+
 import { Loader2 } from "lucide-react";
+console.log("[App.tsx] lucide-react loaded");
+
 import { Button } from "@/components/ui/button";
+console.log("[App.tsx] Button loaded");
+
 import { useToast } from "@/hooks/use-toast";
+console.log("[App.tsx] useToast loaded");
+
 import type { PublicUser } from "@shared/schema";
 import type { SessionResponse, WorkspaceState } from "@/types/session";
 import type { CSSProperties } from "react";
+console.log("[App.tsx] All imports complete");
 
 // ErrorBoundary для перехвата ошибок рендеринга и предотвращения белого экрана
 interface ErrorBoundaryProps {

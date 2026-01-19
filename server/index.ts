@@ -158,7 +158,7 @@ const restrictedCors = cors({
                        originHostname.endsWith('.tilda.ws');
 
       if (isAllowed) {
-        log(`CORS: Allowed configured domain: ${origin} (hostname: ${originHostname})`);
+        // Skip logging for allowed domains to reduce log noise
         callback(null, true);
       } else {
         log(`CORS: Blocked unauthorized origin: ${origin} (hostname: ${originHostname})`);
