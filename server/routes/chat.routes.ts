@@ -874,25 +874,15 @@ chatRouter.post('/sessions/:chatId/messages/file', fileUpload.single('file'), as
       },
     });
 
-    // Enqueue file event for delivery to no-code endpoint
-    await enqueueFileEventForSkill({
-      file: uploadedFile,
-      action: 'file_uploaded',
-      skill: {
-        executionMode: skill.executionMode,
-        noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? null,
-        noCodeEndpointUrl: skill.noCodeConnection?.endpointUrl ?? null,
-        noCodeAuthType: skill.noCodeConnection?.authType ?? null,
-        noCodeBearerToken: bearerToken,
-      },
-    });
+    // NOTE: Event is NOT sent here - it will be sent when user explicitly sends the message
+    // via POST /sessions/:chatId/messages/:messageId/send
 
     logger.info({
       chatId,
       skillId: skill.id,
       fileId: uploadedFile.id,
       messageId: userMessage.id,
-    }, 'File uploaded and event enqueued for no-code skill');
+    }, 'File uploaded for no-code skill (event NOT sent yet, waiting for explicit send)');
 
     res.json({
       status: 'uploaded',
