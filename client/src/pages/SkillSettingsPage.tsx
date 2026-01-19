@@ -241,7 +241,13 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     return options.sort((a, b) => a.label.localeCompare(b.label, "ru"));
   }, [llmProviders, catalogLlmModels]);
 
-  const { updateSkill, isUpdating } = useUpdateSkill({ workspaceId });
+  const { updateSkill, isUpdating } = useUpdateSkill({ 
+    workspaceId,
+    onSuccess: (updatedSkill) => {
+      // Форма обновится автоматически через useEffect когда currentSkill изменится
+      // после invalidateQueries в useUpdateSkill
+    }
+  });
   const { generateCallbackToken, isGenerating: isGeneratingCallbackToken } = useGenerateCallbackToken({
     workspaceId,
     onSuccess: () => {

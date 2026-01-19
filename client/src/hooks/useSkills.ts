@@ -119,6 +119,16 @@ export function useUpdateSkill(options: { workspaceId: string | null; onSuccess?
       return await updateSkill(workspaceId, skillId, payload);
     },
     onSuccess: async (updatedSkill) => {
+      // Обновляем кэш напрямую для мгновенного обновления UI
+      queryClient.setQueryData<Skill[] | undefined>(
+        ["skills", workspaceId],
+        (old) => {
+          if (!old) return [updatedSkill];
+          return old.map((skill) => skill.id === updatedSkill.id ? updatedSkill : skill);
+        }
+      );
+      
+      // Также инвалидируем для синхронизации с сервером
       await queryClient.invalidateQueries({
         predicate: (query) => {
           const [key] = query.queryKey as [unknown, ...unknown[]];
