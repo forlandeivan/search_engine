@@ -2507,28 +2507,41 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             <Plus className="mr-2 h-4 w-4" /> Новый документ
           </Button>
           <div className="flex flex-col items-start gap-1">
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full sm:w-auto"
-              disabled={Boolean(
-                startIndexingMutation.isPending ||
-                  indexingButtonDisabledReason ||
-                  !detail.rootNodes || detail.rootNodes.length === 0,
-              )}
-              title={
-                indexingButtonDisabledReason ??
-                ((!detail.rootNodes || detail.rootNodes.length === 0) ? "Нет документов для индексации" : undefined)
-              }
-              onClick={handleStartIndexing}
-            >
-              {startIndexingMutation.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Database className="mr-2 h-4 w-4" />
-              )}
-              Индексировать
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={Boolean(
+                  startIndexingMutation.isPending ||
+                    indexingButtonDisabledReason ||
+                    !detail.rootNodes || detail.rootNodes.length === 0,
+                )}
+                title={
+                  indexingButtonDisabledReason ??
+                  ((!detail.rootNodes || detail.rootNodes.length === 0) ? "Нет документов для индексации" : undefined)
+                }
+                onClick={handleStartIndexing}
+              >
+                {startIndexingMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Database className="mr-2 h-4 w-4" />
+                )}
+                Индексировать
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setLocation(`/knowledge/${detail.id}/indexing/history`)}
+                disabled={!detail.id}
+                className="w-full sm:w-auto"
+              >
+                <History className="mr-2 h-4 w-4" />
+                История индексаций
+              </Button>
+            </div>
             {activeIndexingActionForBase && (
               <div className="flex flex-col gap-1.5 w-full sm:w-auto mt-1">
                 <div className="flex items-center gap-2">
