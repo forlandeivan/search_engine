@@ -43,8 +43,7 @@ type TariffPlanLimitsMap = Record<
   }
 >;
 
-type TariffDetail = {
-  plan: TariffSummary;
+type TariffDetail = TariffSummary & {
   limits: TariffPlanLimitsMap;
 };
 
@@ -165,10 +164,10 @@ export default function AdminBillingPage() {
       });
       setFormLimits(next);
     }
-    if (detailQuery.data?.plan) {
-      const amount = detailQuery.data.plan.includedCreditsAmount ?? 0;
+    if (detailQuery.data) {
+      const amount = detailQuery.data.includedCreditsAmount ?? 0;
       setCreditsAmount(formatCredits(amount));
-      setNoCodeFlowEnabled(Boolean(detailQuery.data.plan.noCodeFlowEnabled));
+      setNoCodeFlowEnabled(Boolean(detailQuery.data.noCodeFlowEnabled));
     }
     if (detailQuery.data?.limits) {
       const nextUnits: Record<string, ByteDisplayUnit> = {};
@@ -378,8 +377,8 @@ export default function AdminBillingPage() {
           ) : detailQuery.data ? (
             <div className="space-y-4">
               <div>
-                <p className="text-sm font-medium">{detailQuery.data.plan.name}</p>
-                <p className="text-xs text-muted-foreground">{detailQuery.data.plan.code}</p>
+                <p className="text-sm font-medium">{detailQuery.data.name}</p>
+                <p className="text-xs text-muted-foreground">{detailQuery.data.code}</p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border p-3">
                 <div className="space-y-1">
