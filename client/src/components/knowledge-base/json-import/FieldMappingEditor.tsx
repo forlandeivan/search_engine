@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -20,6 +20,7 @@ interface FieldMappingEditorProps {
   initialMapping?: MappingConfig;
   onMappingChange: (mapping: MappingConfig) => void;
   onValidationChange?: (isValid: boolean) => void;
+  showValidationErrors?: boolean;
 }
 
 const FIELD_ROLES: Array<{ value: FieldRole; label: string; description: string }> = [
@@ -201,20 +202,36 @@ export function FieldMappingEditor({
   initialMapping,
   onMappingChange,
   onValidationChange,
+  showValidationErrors = false,
 }: FieldMappingEditorProps) {
-  const [mapping, setMapping] = useState<MappingConfig>(
-    initialMapping ??
-      (() => {
-        // Создаём начальный маппинг: все поля как "skip"
-        return {
-          fields: analysis.fields.map((f) => ({ sourcePath: f.path, role: "skip" as FieldRole })),
-        };
-      }),
-  );
+  const initialMappingValue = useMemo(() => {
+    return initialMapping ?? {
+      fields: analysis.fields.map((f) => ({ sourcePath: f.path, role: "skip" as FieldRole })),
+    };
+  }, [initialMapping, analysis.fields]);
+
+  const [mapping, setMapping] = useState<MappingConfig>(initialMappingValue);
+
+  // Обновляем mapping при изменении initialMapping
+  useEffect(() => {
+    if (initialMapping) {
+      setMapping(initialMapping);
+    }
+  }, [initialMapping]);
+
+  // Вызываем onMappingChange при инициализации, чтобы родитель знал о текущем маппинге
+  useEffect(() => {
+    if (!initialMapping) {
+      // Если initialMapping не предоставлен, сообщаем родителю о созданном начальном маппинге
+      onMappingChange(initialMappingValue);
+    }
+    // Если initialMapping предоставлен, он уже должен быть известен родителю
+  }, []); // Только при монтировании
 
   const validation = useMemo(() => validateMapping(mapping), [mapping]);
 
-  // Уведомляем родителя об изменении валидности
+  // Уведомляем родителя об изменении валидности всегда (для блокировки кнопок)
+  // showValidationErrors только контролирует отображение ошибок
   useMemo(() => {
     onValidationChange?.(validation.valid);
   }, [validation.valid, onValidationChange]);
@@ -257,8 +274,8 @@ export function FieldMappingEditor({
         </Button>
       </div>
 
-      {/* Ошибки и предупреждения */}
-      {validation.errors.length > 0 && (
+      {/* Ошибки и предупреждения - показываем только если showValidationErrors = true */}
+      {showValidationErrors && validation.errors.length > 0 && (
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
           <AlertDescription>

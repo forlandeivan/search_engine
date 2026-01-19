@@ -84,44 +84,86 @@ function buildHierarchyPreview(
   }
 
   const distribution = calculateGroupDistribution(analysis.sampleRecords, config.groupByField);
+  
+  // Проверяем, есть ли поле в анализе и какая у него частота заполнения
+  const fieldInfo = analysis.fields.find((f) => f.path === config.groupByField);
+  const fieldFrequency = fieldInfo?.frequency ?? 0;
+  const isFieldFullyPopulated = fieldFrequency === 100;
+  
+  // Подсчитываем общее количество документов в sampleRecords с непустыми значениями
+  const sampleRecordsWithValue = analysis.sampleRecords.filter((record) => {
+    const parts = config.groupByField.split(".");
+    let value: unknown = record;
+    for (const part of parts) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        value = (value as Record<string, unknown>)[part];
+      } else {
+        value = undefined;
+        break;
+      }
+    }
+    return value !== undefined && value !== null && String(value).trim() !== "";
+  });
+  
+  const sampleRecordsWithValueCount = sampleRecordsWithValue.length;
+  const sampleRecordsTotal = analysis.sampleRecords.length;
+  const sampleRecordsEmptyCount = sampleRecordsTotal - sampleRecordsWithValueCount;
+  
+  // Экстраполируем на все записи
+  const totalRecords = analysis.estimatedRecordCount;
+  const recordsWithValueCount = isFieldFullyPopulated 
+    ? totalRecords 
+    : Math.round((sampleRecordsWithValueCount / sampleRecordsTotal) * totalRecords);
+  const recordsEmptyCount = totalRecords - recordsWithValueCount;
+  
   const sortedGroups = Array.from(distribution.entries())
+    .filter(([value]) => value.trim() !== "") // Исключаем пустые значения
     .sort((a, b) => b[1] - a[1])
     .slice(0, 20); // Показываем топ-20
 
   const children: HierarchyPreviewNode[] = [];
 
-  // Папки по группам
-  for (const [groupValue, count] of sortedGroups) {
-    if (groupValue.trim() === "") {
-      // Пустое значение обрабатывается отдельно
-      continue;
-    }
+  // Папки по группам - экстраполируем количество на все записи
+  const totalSampleCount = sortedGroups.reduce((sum, [, count]) => sum + count, 0);
+  
+  for (const [groupValue, sampleCount] of sortedGroups) {
+    // Экстраполируем количество документов в этой папке пропорционально
+    // Если поле заполнено у 100% записей, распределяем все записи пропорционально
+    const extrapolatedCount = totalSampleCount > 0 && recordsWithValueCount > 0
+      ? Math.round((sampleCount / totalSampleCount) * recordsWithValueCount)
+      : sampleCount; // Fallback на sampleCount если что-то не так
+    
     children.push({
       name: groupValue,
       type: "folder",
-      documentCount: count,
+      documentCount: extrapolatedCount,
     });
   }
 
   // Обработка пустых значений
-  const emptyCount = distribution.get("") || 0;
-  if (emptyCount > 0) {
+  if (recordsEmptyCount > 0) {
     if (config.emptyValueStrategy === "folder_uncategorized") {
       children.push({
         name: config.uncategorizedFolderName || "Без категории",
         type: "folder",
-        documentCount: emptyCount,
+        documentCount: recordsEmptyCount,
       });
     } else if (config.emptyValueStrategy === "root") {
-      // Документы в корне (не добавляем как папку)
+      // Документы в корне (не добавляем как папку, но учитываем в корне)
     }
-    // skip - не добавляем
+    // skip - не добавляем и не учитываем
   }
+
+  // В корне показываем только документы без значения (если emptyValueStrategy === "root")
+  // или 0, если все документы распределены по папкам (поле заполнено у 100%)
+  const rootDocumentCount = config.emptyValueStrategy === "root" 
+    ? recordsEmptyCount 
+    : 0;
 
   const rootNode: HierarchyPreviewNode = {
     name: config.rootFolderName || "Корень базы знаний",
     type: "folder",
-    documentCount: analysis.estimatedRecordCount,
+    documentCount: rootDocumentCount,
     children,
   };
 

@@ -21,7 +21,7 @@ import type { MappingConfig, HierarchyConfig, CreateJsonImportRequest } from "@s
 import { StructurePreview } from "./json-import/StructurePreview";
 import { FieldMappingEditor } from "./json-import/FieldMappingEditor";
 import { HierarchyConfigEditor } from "./json-import/HierarchyConfig";
-import { ChevronDown, ChevronUp, FolderArchive, Globe, HelpCircle, NotebookPen, FileJson, Loader2, X, ChevronRight, ChevronLeft } from "lucide-react";
+import { ChevronDown, ChevronUp, FolderArchive, Globe, HelpCircle, NotebookPen, FileJson, Loader2, X, ChevronRight, ChevronLeft, AlertTriangle } from "lucide-react";
 
 type CreationOption = {
   value: KnowledgeBaseSourceType;
@@ -118,6 +118,7 @@ export function CreateKnowledgeBaseDialog({
   const [previewError, setPreviewError] = useState<PreviewError | null>(null);
   const [mappingConfig, setMappingConfig] = useState<MappingConfig | null>(null);
   const [isMappingValid, setIsMappingValid] = useState(false);
+  const [showMappingValidationErrors, setShowMappingValidationErrors] = useState(false);
   const [hierarchyConfig, setHierarchyConfig] = useState<HierarchyConfig | null>(null);
   const [isSubmittingImport, setIsSubmittingImport] = useState(false);
   const [startUrlsInput, setStartUrlsInput] = useState("");
@@ -211,6 +212,7 @@ export function CreateKnowledgeBaseDialog({
     setPreviewError(null);
     setMappingConfig(null);
     setIsMappingValid(false);
+    setShowMappingValidationErrors(false);
     setHierarchyConfig(null);
     setIsSubmittingImport(false);
     if (jsonFileInputRef.current) {
@@ -376,8 +378,13 @@ export function CreateKnowledgeBaseDialog({
       setJsonImportStep("preview");
     } else if (jsonImportStep === "preview") {
       setJsonImportStep("mapping");
-    } else if (jsonImportStep === "mapping" && isMappingValid) {
-      setJsonImportStep("hierarchy");
+      setShowMappingValidationErrors(false); // Сбрасываем показ ошибок при входе на шаг
+    } else if (jsonImportStep === "mapping") {
+      // При попытке перейти дальше показываем ошибки валидации
+      setShowMappingValidationErrors(true);
+      if (isMappingValid) {
+        setJsonImportStep("hierarchy");
+      }
     }
   };
 
@@ -530,7 +537,13 @@ export function CreateKnowledgeBaseDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className={cn("max-w-xl", mode === "json_import" && "max-w-3xl")}>
+      <DialogContent 
+        className={cn(
+          "max-w-xl",
+          mode === "json_import" && "w-[1200px] h-[900px] max-w-[1200px] max-h-[900px] overflow-x-hidden"
+        )}
+        style={mode === "json_import" ? { width: "1200px", height: "900px", maxWidth: "1200px", maxHeight: "900px", overflowX: "hidden" } : undefined}
+      >
         <DialogHeader>
           <DialogTitle>
             {mode === "json_import" ? "Импорт JSON/JSONL" : "Создание базы знаний"}
@@ -958,14 +971,14 @@ export function CreateKnowledgeBaseDialog({
 
               {/* Step 2: Preview */}
               {jsonImportStep === "preview" && structureAnalysis && (
-                <div className="max-h-[400px] overflow-y-auto overflow-x-hidden">
+                <div className="max-h-[600px] overflow-y-auto overflow-x-hidden">
                   <StructurePreview analysis={structureAnalysis} />
                 </div>
               )}
 
               {/* Step 3: Mapping */}
               {jsonImportStep === "mapping" && structureAnalysis && (
-                <div className="max-h-[400px] overflow-y-auto overflow-x-hidden">
+                <div className="max-h-[600px] overflow-y-auto overflow-x-hidden">
                   <FieldMappingEditor
                     analysis={structureAnalysis}
                     initialMapping={mappingConfig ?? undefined}
@@ -975,13 +988,14 @@ export function CreateKnowledgeBaseDialog({
                     onValidationChange={(isValid) => {
                       setIsMappingValid(isValid);
                     }}
+                    showValidationErrors={showMappingValidationErrors}
                   />
                 </div>
               )}
 
               {/* Step 4: Hierarchy */}
               {jsonImportStep === "hierarchy" && structureAnalysis && (
-                <div className="max-h-[400px] overflow-y-auto overflow-x-hidden">
+                <div className="max-h-[600px] overflow-y-auto overflow-x-hidden">
                   <HierarchyConfigEditor
                     analysis={structureAnalysis}
                     initialConfig={hierarchyConfig ?? undefined}
@@ -995,65 +1009,114 @@ export function CreateKnowledgeBaseDialog({
           )}
 
           {(error || uploadError) && <p className="text-sm text-destructive">{error || uploadError}</p>}
+
+          {/* Сообщение о блокировке кнопки импорта */}
+          {mode === "json_import" && jsonImportStep === "hierarchy" && (
+            (() => {
+              const getBlockReason = () => {
+                if (isSubmittingImport) return "Идёт создание базы знаний...";
+                if (isUploading) return "Идёт загрузка файла...";
+                if (!uploadedFileKey) return "Файл не загружен. Вернитесь к шагу загрузки.";
+                if (!mappingConfig) return "Маппинг полей не настроен. Вернитесь к шагу маппинга.";
+                if (!name.trim()) return "Укажите название базы знаний.";
+                if (!isMappingValid) return "Маппинг полей настроен некорректно. Вернитесь к шагу маппинга.";
+                return null;
+              };
+              const blockReason = getBlockReason();
+              return blockReason ? (
+                <Alert variant="destructive" className="mt-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription>
+                    <strong>Кнопка "Создать и импортировать" заблокирована:</strong> {blockReason}
+                  </AlertDescription>
+                </Alert>
+              ) : null;
+            })()
+          )}
         </div>
 
         <DialogFooter>
           {mode === "json_import" ? (
-            <div className="flex items-center justify-between w-full">
-              <Button
-                variant="outline"
-                onClick={() => handleOpenChange(false)}
-                disabled={isSubmittingImport || isUploading}
-              >
-                Отмена
-              </Button>
-              <div className="flex gap-2">
-                {jsonImportStep !== "upload" && (
-                  <Button
-                    variant="outline"
-                    onClick={handleJsonImportBack}
-                    disabled={isSubmittingImport || isUploading}
-                  >
-                    <ChevronLeft className="mr-2 h-4 w-4" />
-                    Назад
-                  </Button>
-                )}
-                {jsonImportStep === "upload" && uploadedFileKey && structureAnalysis && (
-                  <Button onClick={handleJsonImportNext} disabled={isSubmittingImport || isUploading || isAnalyzing}>
-                    Далее
-                    <ChevronRight className="ml-2 h-4 w-4" />
-                  </Button>
-                )}
-                {jsonImportStep === "preview" && (
-                  <Button onClick={handleJsonImportNext} disabled={isSubmittingImport || isUploading || !structureAnalysis}>
-                    Далее
-                    <ChevronRight className="ml-2 h-4 w-4" />
-                  </Button>
-                )}
-                {jsonImportStep === "mapping" && (
-                  <Button
-                    onClick={handleJsonImportNext}
-                    disabled={isSubmittingImport || isUploading || !isMappingValid}
-                  >
-                    Далее
-                    <ChevronRight className="ml-2 h-4 w-4" />
-                  </Button>
-                )}
-                {jsonImportStep === "hierarchy" && (
-                  <Button
-                    onClick={handleSubmit}
-                    disabled={isSubmittingImport || isUploading || !uploadedFileKey || !mappingConfig || !name.trim()}
-                  >
-                    {isSubmittingImport ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Создаём...
-                      </>
-                    ) : (
-                      "Создать и импортировать"
-                    )}
-                  </Button>
-                )}
+            <div className="flex flex-col gap-3 w-full">
+              {/* Сообщение о блокировке кнопок навигации */}
+              {jsonImportStep === "upload" && !uploadedFileKey && (
+                <Alert>
+                  <AlertDescription className="text-sm">
+                    Загрузите файл для продолжения
+                  </AlertDescription>
+                </Alert>
+              )}
+              {jsonImportStep === "preview" && !structureAnalysis && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription className="text-sm">
+                    Не удалось проанализировать структуру файла. Вернитесь к шагу загрузки.
+                  </AlertDescription>
+                </Alert>
+              )}
+              {jsonImportStep === "mapping" && !isMappingValid && !showMappingValidationErrors && (
+                <Alert>
+                  <AlertDescription className="text-sm">
+                    Настройте маппинг полей и нажмите "Далее" для проверки
+                  </AlertDescription>
+                </Alert>
+              )}
+              <div className="flex items-center justify-between w-full">
+                <Button
+                  variant="outline"
+                  onClick={() => handleOpenChange(false)}
+                  disabled={isSubmittingImport || isUploading}
+                >
+                  Отмена
+                </Button>
+                <div className="flex gap-2">
+                  {jsonImportStep !== "upload" && (
+                    <Button
+                      variant="outline"
+                      onClick={handleJsonImportBack}
+                      disabled={isSubmittingImport || isUploading}
+                    >
+                      <ChevronLeft className="mr-2 h-4 w-4" />
+                      Назад
+                    </Button>
+                  )}
+                  {jsonImportStep === "upload" && uploadedFileKey && structureAnalysis && (
+                    <Button onClick={handleJsonImportNext} disabled={isSubmittingImport || isUploading || isAnalyzing}>
+                      Далее
+                      <ChevronRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  )}
+                  {jsonImportStep === "preview" && (
+                    <Button onClick={handleJsonImportNext} disabled={isSubmittingImport || isUploading || !structureAnalysis}>
+                      Далее
+                      <ChevronRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  )}
+                  {jsonImportStep === "mapping" && (
+                    <Button
+                      onClick={handleJsonImportNext}
+                      disabled={isSubmittingImport || isUploading || !isMappingValid}
+                    >
+                      Далее
+                      <ChevronRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  )}
+                  {jsonImportStep === "hierarchy" && (
+                    <Button
+                      onClick={handleSubmit}
+                      disabled={isSubmittingImport || isUploading || !uploadedFileKey || !mappingConfig || !name.trim() || !isMappingValid}
+                    >
+                      {isSubmittingImport ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Создаём...
+                        </>
+                      ) : (
+                        "Создать и импортировать"
+                      )}
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           ) : (
