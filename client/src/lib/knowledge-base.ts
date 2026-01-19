@@ -48,7 +48,7 @@ export type KnowledgeBaseTaskSummary = {
   completed: number;
 };
 
-export type KnowledgeBaseIngestion =
+export type KnowledgeBaseIngestion = {
   type: KnowledgeBaseSourceType;
   archiveName?: string;
   seedUrl?: string;
