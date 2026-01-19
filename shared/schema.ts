@@ -587,7 +587,7 @@ export const knowledgeBaseIndexingPolicy = pgTable("knowledge_base_indexing_poli
 export type KnowledgeBaseIndexingPolicy = typeof knowledgeBaseIndexingPolicy.$inferSelect;
 export type KnowledgeBaseIndexingPolicyInsert = typeof knowledgeBaseIndexingPolicy.$inferInsert;
 
-export const knowledgeBaseIndexingJobStatuses = ["pending", "processing", "completed", "failed"] as const;
+export const knowledgeBaseIndexingJobStatuses = ["pending", "processing", "completed", "failed", "paused", "canceled"] as const;
 export type KnowledgeBaseIndexingJobStatus = (typeof knowledgeBaseIndexingJobStatuses)[number];
 
 export const jsonImportJobStatuses = [
@@ -849,7 +849,7 @@ export const indexingStages = [
 ] as const;
 export type IndexingStage = (typeof indexingStages)[number];
 
-export const knowledgeBaseIndexingActionStatuses = ["processing", "done", "error"] as const;
+export const knowledgeBaseIndexingActionStatuses = ["processing", "paused", "canceled", "done", "error"] as const;
 export type KnowledgeBaseIndexingActionStatus = (typeof knowledgeBaseIndexingActionStatuses)[number];
 
 export type KnowledgeBaseIndexingAction = {

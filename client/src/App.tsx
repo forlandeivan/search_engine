@@ -42,6 +42,9 @@ console.log("[App.tsx] Button loaded");
 import { useToast } from "@/hooks/use-toast";
 console.log("[App.tsx] useToast loaded");
 
+import { GlobalIndexingProgress } from "@/components/knowledge-base/GlobalIndexingProgress";
+console.log("[App.tsx] GlobalIndexingProgress loaded");
+
 import type { PublicUser } from "@shared/schema";
 import type { SessionResponse, WorkspaceState } from "@/types/session";
 import type { CSSProperties } from "react";
@@ -507,6 +510,8 @@ function AppContent() {
   // Генерируем ключ на основе userId для принудительного перемонтирования при смене пользователя
   const appKey = session.user.id || 'no-user';
 
+  const workspaceId = workspace.active?.id ?? null;
+
   return (
     <ErrorBoundary
       onError={(error) => {
@@ -523,6 +528,7 @@ function AppContent() {
           <MainAppShell user={user} workspace={workspace} />
         </Route>
       </Switch>
+      <GlobalIndexingProgress workspaceId={workspaceId} />
     </ErrorBoundary>
   );
 }

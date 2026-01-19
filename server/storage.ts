@@ -1206,8 +1206,14 @@ export interface IStorage {
   countKnowledgeBaseIndexingJobs(
     workspaceId: string,
     baseId: string,
-    status: "pending" | "processing" | "completed" | "failed" | null,
+    status: "pending" | "processing" | "completed" | "failed" | "paused" | "canceled" | null,
     options?: { since?: Date | null },
+  ): Promise<number>;
+  cancelPendingKnowledgeBaseIndexingJobs(
+    workspaceId: string,
+    baseId: string,
+    actionCreatedAt: Date,
+    actionUpdatedAt: Date,
   ): Promise<number>;
   markKnowledgeBaseIndexingJobDone(
     jobId: string,
@@ -1264,6 +1270,15 @@ export interface IStorage {
     workspaceId: string,
     documentId: string,
   ): Promise<KnowledgeDocumentIndexRevisionRecord | null>;
+  getKnowledgeDocumentIndexRevisions(
+    workspaceId: string,
+    documentId: string,
+  ): Promise<KnowledgeDocumentIndexRevisionRecord[]>;
+  deleteKnowledgeDocumentIndexRevision(
+    workspaceId: string,
+    documentId: string,
+    revisionId: string,
+  ): Promise<void>;
   switchKnowledgeDocumentRevision(
     workspaceId: string,
     documentId: string,
@@ -8053,7 +8068,7 @@ export class DatabaseStorage implements IStorage {
   async countKnowledgeBaseIndexingJobs(
     workspaceId: string,
     baseId: string,
-    status: "pending" | "processing" | "completed" | "failed" | null,
+    status: "pending" | "processing" | "completed" | "failed" | "paused" | "canceled" | null,
     options: { since?: Date | null } = {},
   ): Promise<number> {
     await ensureKnowledgeBaseIndexingJobsTable();
@@ -8073,6 +8088,33 @@ export class DatabaseStorage implements IStorage {
       .from(knowledgeBaseIndexingJobs)
       .where(and(...conditions));
     return Number(result?.count ?? 0);
+  }
+
+  async cancelPendingKnowledgeBaseIndexingJobs(
+    workspaceId: string,
+    baseId: string,
+    actionCreatedAt: Date,
+    actionUpdatedAt: Date,
+  ): Promise<number> {
+    await ensureKnowledgeBaseIndexingJobsTable();
+    const result = await this.db
+      .update(knowledgeBaseIndexingJobs)
+      .set({
+        status: "canceled",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(knowledgeBaseIndexingJobs.workspaceId, workspaceId),
+          eq(knowledgeBaseIndexingJobs.baseId, baseId),
+          eq(knowledgeBaseIndexingJobs.jobType, "knowledge_base_indexing"),
+          eq(knowledgeBaseIndexingJobs.status, "pending"),
+          sql`${knowledgeBaseIndexingJobs.createdAt} >= ${actionCreatedAt}`,
+          sql`${knowledgeBaseIndexingJobs.createdAt} <= ${actionUpdatedAt}`,
+        ),
+      )
+      .returning({ id: knowledgeBaseIndexingJobs.id });
+    return result.length;
   }
 
   async getKnowledgeBaseIndexingPolicy(): Promise<KnowledgeBaseIndexingPolicy | null> {
@@ -8214,6 +8256,40 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(knowledgeDocumentIndexRevisions.createdAt))
       .limit(1);
     return row ?? null;
+  }
+
+  async getKnowledgeDocumentIndexRevisions(
+    workspaceId: string,
+    documentId: string,
+  ): Promise<KnowledgeDocumentIndexRevisionRecord[]> {
+    await ensureKnowledgeDocumentIndexRevisionsTable();
+    return await this.db
+      .select()
+      .from(knowledgeDocumentIndexRevisions)
+      .where(
+        and(
+          eq(knowledgeDocumentIndexRevisions.workspaceId, workspaceId),
+          eq(knowledgeDocumentIndexRevisions.documentId, documentId),
+        ),
+      )
+      .orderBy(desc(knowledgeDocumentIndexRevisions.createdAt));
+  }
+
+  async deleteKnowledgeDocumentIndexRevision(
+    workspaceId: string,
+    documentId: string,
+    revisionId: string,
+  ): Promise<void> {
+    await ensureKnowledgeDocumentIndexRevisionsTable();
+    await this.db
+      .delete(knowledgeDocumentIndexRevisions)
+      .where(
+        and(
+          eq(knowledgeDocumentIndexRevisions.workspaceId, workspaceId),
+          eq(knowledgeDocumentIndexRevisions.documentId, documentId),
+          eq(knowledgeDocumentIndexRevisions.id, revisionId),
+        ),
+      );
   }
 
   async switchKnowledgeDocumentRevision(

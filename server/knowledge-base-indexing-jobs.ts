@@ -467,6 +467,27 @@ async function releaseDocumentIndexingLock(lock: DocumentIndexingLock | null): P
 }
 
 async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
+  // Проверяем статус action перед обработкой
+  const action = await knowledgeBaseIndexingActionsService.getLatest(job.workspaceId, job.baseId);
+  if (action) {
+    if (action.status === "canceled") {
+      workerLog(`job ${job.id} skipped: action is canceled`);
+      await storage.failKnowledgeBaseIndexingJob(job.id, "Индексация отменена");
+      return;
+    }
+    if (action.status === "paused") {
+      workerLog(`job ${job.id} skipped: action is paused`);
+      // Reschedule job для повторной проверки через 10 секунд
+      const nextRetryAt = new Date(Date.now() + 10_000);
+      await storage.rescheduleKnowledgeBaseIndexingJob(
+        job.id,
+        nextRetryAt,
+        "Индексация приостановлена",
+      );
+      return;
+    }
+  }
+
   let revisionId: string | null = null;
   const markJobError = async (message: string): Promise<void> => {
     try {

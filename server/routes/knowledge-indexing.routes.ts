@@ -20,6 +20,7 @@ import {
   getKnowledgeBaseIndexingChanges,
   resetKnowledgeBaseIndex,
 } from '../knowledge-base';
+import { deleteIndexedDataForAction } from '../knowledge-base-indexing-cleanup';
 import type { PublicUser } from '@shared/schema';
 
 const logger = createLogger('knowledge-indexing');
@@ -248,6 +249,38 @@ knowledgeIndexingRouter.post('/bases/:baseId/indexing/reset', asyncHandler(async
 }));
 
 /**
+ * GET /indexing/active
+ * Get all active indexing actions for workspace
+ */
+knowledgeIndexingRouter.get('/indexing/active', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+
+  // Получаем все базы знаний workspace
+  const bases = await storage.getKnowledgeBases(workspaceId);
+  
+  // Для каждой базы получаем последний action
+  const activeActions = await Promise.all(
+    bases.map(async (base) => {
+      const action = await knowledgeBaseIndexingActionsService.getLatest(workspaceId, base.id);
+      if (action && (action.status === "processing" || action.status === "paused")) {
+        return {
+          ...action,
+          baseName: base.name ?? "Без названия",
+        };
+      }
+      return null;
+    }),
+  );
+
+  const filtered = activeActions.filter((action): action is NonNullable<typeof action> => action !== null);
+  
+  res.json({ actions: filtered });
+}));
+
+/**
  * GET /bases/:baseId/indexing/changes
  * Get indexing changes (documents pending indexing)
  */
@@ -290,6 +323,124 @@ knowledgeIndexingRouter.get('/bases/:baseId/indexing/changes', asyncHandler(asyn
 
   const changes = await getKnowledgeBaseIndexingChanges(baseId, workspaceId, { limit, offset });
   res.json(changes);
+}));
+
+/**
+ * POST /bases/:baseId/indexing/cancel
+ * Cancel indexing action
+ */
+knowledgeIndexingRouter.post('/bases/:baseId/indexing/cancel', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const { actionId, deleteIndexedData } = req.body as { actionId?: string; deleteIndexedData?: boolean };
+
+  logger.info({ userId: user.id, workspaceId, baseId, actionId, deleteIndexedData }, 'Indexing cancel requested');
+  
+  const result = await knowledgeBaseIndexingActionsService.cancel(
+    workspaceId,
+    baseId,
+    actionId,
+  );
+  
+  let cleanupResult = null;
+  if (deleteIndexedData) {
+    try {
+      cleanupResult = await deleteIndexedDataForAction(workspaceId, baseId, result.actionId);
+    } catch (error) {
+      logger.error(
+        { userId: user.id, workspaceId, baseId, actionId: result.actionId, error },
+        'Failed to cleanup indexed data',
+      );
+      // Не прерываем отмену, если cleanup не удался
+      cleanupResult = {
+        deletedVectors: 0,
+        deletedRevisions: 0,
+        restoredDocuments: 0,
+        errors: [error instanceof Error ? error.message : String(error)],
+      };
+    }
+  }
+  
+  logger.info({
+    userId: user.id,
+    workspaceId,
+    baseId,
+    actionId: result.actionId,
+    canceledJobs: result.canceledJobs,
+    completedJobs: result.completedJobs,
+    cleanupPerformed: deleteIndexedData,
+  }, 'Indexing cancel completed');
+  
+  res.json({
+    ...result,
+    cleanup: cleanupResult,
+  });
+}));
+
+/**
+ * POST /bases/:baseId/indexing/pause
+ * Pause indexing action
+ */
+knowledgeIndexingRouter.post('/bases/:baseId/indexing/pause', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const { actionId } = req.body as { actionId?: string };
+
+  logger.info({ userId: user.id, workspaceId, baseId, actionId }, 'Indexing pause requested');
+  
+  const result = await knowledgeBaseIndexingActionsService.pause(
+    workspaceId,
+    baseId,
+    actionId,
+  );
+  
+  logger.info({
+    userId: user.id,
+    workspaceId,
+    baseId,
+    actionId: result.actionId,
+    processedDocuments: result.processedDocuments,
+    pendingDocuments: result.pendingDocuments,
+  }, 'Indexing pause completed');
+  
+  res.json(result);
+}));
+
+/**
+ * POST /bases/:baseId/indexing/resume
+ * Resume indexing action
+ */
+knowledgeIndexingRouter.post('/bases/:baseId/indexing/resume', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const { actionId } = req.body as { actionId?: string };
+
+  logger.info({ userId: user.id, workspaceId, baseId, actionId }, 'Indexing resume requested');
+  
+  const result = await knowledgeBaseIndexingActionsService.resume(
+    workspaceId,
+    baseId,
+    actionId,
+  );
+  
+  logger.info({
+    userId: user.id,
+    workspaceId,
+    baseId,
+    actionId: result.actionId,
+    pendingDocuments: result.pendingDocuments,
+  }, 'Indexing resume completed');
+  
+  res.json(result);
 }));
 
 // Error handler for this router
