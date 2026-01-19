@@ -20,6 +20,7 @@ export function useCancelIndexing(baseId: string) {
     onSuccess: (data) => {
       queryClient.invalidateQueries(["/api/knowledge/bases", baseId]);
       queryClient.invalidateQueries(["/api/knowledge/indexing/active"]);
+      queryClient.invalidateQueries(["/api/knowledge/bases", baseId, "indexing/actions/history"]);
       toast({
         title: "Индексация отменена",
         description: data.message || "Обработка документов остановлена",

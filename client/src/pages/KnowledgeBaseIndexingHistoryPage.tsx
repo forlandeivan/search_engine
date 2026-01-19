@@ -13,6 +13,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { IndexingHistoryPanel } from "@/components/knowledge-base/IndexingHistoryPanel";
 import { IndexingLogDialog } from "@/components/knowledge-base/IndexingLogDialog";
 import { useKnowledgeBaseIndexingHistory } from "@/hooks/useKnowledgeBaseIndexingHistory";
+import { useActiveIndexingActions } from "@/hooks/useActiveIndexingActions";
+import { useQuery } from "@tanstack/react-query";
+import type { SessionResponse } from "@/types/session";
 
 type KnowledgeBaseIndexingHistoryPageProps = {
   params?: {
@@ -26,7 +29,14 @@ export default function KnowledgeBaseIndexingHistoryPage({ params }: KnowledgeBa
   const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
+  const { data: session } = useQuery<SessionResponse>({ queryKey: ["/api/auth/session"] });
+  const workspaceId = session?.workspace?.active?.id ?? session?.activeWorkspaceId ?? null;
+
   const { data, isLoading, isError, error } = useKnowledgeBaseIndexingHistory(baseId, 25);
+  const { data: activeActions = [] } = useActiveIndexingActions(workspaceId);
+  const activeActionForBase = baseId
+    ? activeActions.find((action) => action.baseId === baseId)
+    : undefined;
 
   const handleViewLog = (actionId: string) => {
     setSelectedActionId(actionId);
@@ -74,6 +84,8 @@ export default function KnowledgeBaseIndexingHistoryPage({ params }: KnowledgeBa
             isError={isError}
             error={error}
             onViewLog={handleViewLog}
+            activeAction={activeActionForBase}
+            baseId={baseId ?? undefined}
           />
         </CardContent>
       </Card>

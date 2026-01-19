@@ -18,6 +18,7 @@ export function usePauseIndexing(baseId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries(["/api/knowledge/bases", baseId]);
       queryClient.invalidateQueries(["/api/knowledge/indexing/active"]);
+      queryClient.invalidateQueries(["/api/knowledge/bases", baseId, "indexing/actions/history"]);
       toast({
         title: "Индексация приостановлена",
         description: "Вы можете возобновить индексацию в любой момент",
@@ -49,6 +50,7 @@ export function useResumeIndexing(baseId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries(["/api/knowledge/bases", baseId]);
       queryClient.invalidateQueries(["/api/knowledge/indexing/active"]);
+      queryClient.invalidateQueries(["/api/knowledge/bases", baseId, "indexing/actions/history"]);
       toast({
         title: "Индексация возобновлена",
         description: "Обработка документов продолжается",

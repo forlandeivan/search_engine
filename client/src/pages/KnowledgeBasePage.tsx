@@ -112,9 +112,7 @@ import { useResetKnowledgeBaseIndexing } from "@/hooks/useResetKnowledgeBaseInde
 import { useKnowledgeBaseIndexingStatus } from "@/hooks/useKnowledgeBaseIndexingStatus";
 import { useKnowledgeBaseIndexingSummary } from "@/hooks/useKnowledgeBaseIndexingSummary";
 import { useKnowledgeBaseIndexingChanges } from "@/hooks/useKnowledgeBaseIndexingChanges";
-import { useActiveIndexingActions } from "@/hooks/useActiveIndexingActions";
 import { KnowledgeBaseIndexingProgressToast } from "@/components/knowledge-base/KnowledgeBaseIndexingProgressToast";
-import { IndexingProgressCard } from "@/components/knowledge-base/IndexingProgressCard";
 import type {
   KnowledgeBaseSummary,
   KnowledgeBaseTreeNode,
@@ -609,10 +607,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     indexingActionId,
     { enabled: Boolean(workspaceId && selectedBase?.id && indexingActionId) },
   );
-  const { data: activeIndexingActions = [] } = useActiveIndexingActions(workspaceId);
-  const activeIndexingActionForBase = selectedBase?.id
-    ? activeIndexingActions.find((action) => action.baseId === selectedBase.id)
-    : null;
   const searchSettingsQueryKey = useMemo(
     () =>
       selectedBase
@@ -2766,17 +2760,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   }
                   setActiveJsonImportJobId(null);
                 }}
-              />
-            </div>
-          </>
-        )}
-        {activeIndexingActionForBase && (
-          <>
-            <Separator />
-            <div className="pt-4">
-              <IndexingProgressCard
-                action={activeIndexingActionForBase}
-                baseName={activeIndexingActionForBase.baseName}
               />
             </div>
           </>
