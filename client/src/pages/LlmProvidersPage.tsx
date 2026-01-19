@@ -693,6 +693,11 @@ export default function LlmProvidersPage() {
       return;
     }
 
+    // Ждем загрузки провайдеров
+    if (providersQuery.isLoading || providers.length === 0) {
+      return;
+    }
+
     const providerId = config.llmProviderConfigId ?? "";
     const provider = providers.find((entry: PublicLlmProvider) => entry.id === providerId) ?? null;
     const providerModels = getProviderModelOptions(provider);
@@ -741,7 +746,7 @@ export default function LlmProvidersPage() {
           ? String(fallbackMaxTokens)
           : "",
     });
-  }, [unicaChatQuery.data, providers, unicaForm]);
+  }, [unicaChatQuery.data, providers, providersQuery.isLoading, unicaForm]);
 
   useEffect(() => {
     if (!selectedUnicaProvider) {
@@ -1781,13 +1786,11 @@ export default function LlmProvidersPage() {
                               <SelectValue placeholder="Выберите провайдера" />
                             </SelectTrigger>
                             <SelectContent>
-                              {providers
-                                .filter((provider: PublicLlmProvider) => provider.providerType === "unica")
-                                .map((provider: PublicLlmProvider) => (
-                                  <SelectItem key={provider.id} value={provider.id}>
-                                    {provider.name}
-                                  </SelectItem>
-                                ))}
+                              {providers.map((provider: PublicLlmProvider) => (
+                                <SelectItem key={provider.id} value={provider.id}>
+                                  {provider.name}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </FormControl>
