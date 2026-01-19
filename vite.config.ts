@@ -25,17 +25,14 @@ export default defineConfig({
         manualChunks: (id) => {
           // Vendor chunks - separate large dependencies
           if (id.includes('node_modules')) {
-            // React and React DOM
-            if (id.includes('react/') || id.includes('react-dom/')) {
+            // React, React DOM, and Radix UI MUST be in the same chunk
+            // to ensure React is available when Radix UI initializes
+            if (id.includes('react/') || id.includes('react-dom/') || id.includes('@radix-ui/')) {
               return 'vendor-react';
             }
             // TanStack Query
             if (id.includes('@tanstack/react-query')) {
               return 'vendor-query';
-            }
-            // UI components (Radix UI)
-            if (id.includes('@radix-ui/')) {
-              return 'vendor-ui';
             }
             // Tiptap editor
             if (id.includes('@tiptap/')) {
