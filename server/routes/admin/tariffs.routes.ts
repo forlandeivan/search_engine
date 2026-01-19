@@ -18,6 +18,22 @@ import { createLogger } from '../../lib/logger';
 import { asyncHandler } from '../../middleware/async-handler';
 import { tariffPlanService } from '../../tariff-plan-service';
 import { TARIFF_LIMIT_CATALOG } from '../../tariff-limit-catalog';
+import { db } from '../../db';
+import { tariffPlans } from '@shared/schema';
+import { eq } from 'drizzle-orm';
+
+// Helper to build limits map
+function buildLimitsMap(limits: Array<{ limitKey: string; unit: string; limitValue: number | null; isEnabled: boolean }>) {
+  const result: Record<string, { unit: string; value: number | null; isEnabled: boolean }> = {};
+  for (const limit of limits) {
+    result[limit.limitKey] = {
+      unit: limit.unit,
+      value: limit.limitValue,
+      isEnabled: limit.isEnabled,
+    };
+  }
+  return result;
+}
 
 const logger = createLogger('admin-tariffs');
 
@@ -50,7 +66,16 @@ adminTariffsRouter.get('/info', asyncHandler(async (_req, res) => {
  * GET /tariffs
  */
 adminTariffsRouter.get('/', asyncHandler(async (_req, res) => {
-  const tariffs = await tariffPlanService.listAll();
+  const plans = await tariffPlanService.getAllPlans();
+  const tariffs = await Promise.all(
+    plans.map(async (plan) => {
+      const limits = await tariffPlanService.getPlanLimits(plan.id);
+      return {
+        ...plan,
+        limits: buildLimitsMap(limits),
+      };
+    })
+  );
   res.json({ tariffs });
 }));
 
@@ -59,7 +84,7 @@ adminTariffsRouter.get('/', asyncHandler(async (_req, res) => {
  */
 adminTariffsRouter.get('/:planId', asyncHandler(async (req, res) => {
   try {
-    const tariff = await tariffPlanService.getById(req.params.planId);
+    const tariff = await tariffPlanService.getPlanWithLimitsById(req.params.planId);
     if (!tariff) {
       return res.status(404).json({ message: 'Tariff not found' });
     }
@@ -81,7 +106,26 @@ adminTariffsRouter.get('/:planId', asyncHandler(async (req, res) => {
 adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
   try {
     const parsed = updateTariffSchema.parse(req.body);
-    const tariff = await tariffPlanService.update(req.params.planId, parsed);
+    const planId = req.params.planId;
+    
+    // Check if plan exists
+    const existing = await tariffPlanService.getPlanById(planId);
+    if (!existing) {
+      return res.status(404).json({ message: 'Tariff not found' });
+    }
+    
+    // Update plan
+    const updates: Partial<typeof tariffPlans.$inferInsert> = {};
+    if (parsed.name !== undefined) updates.name = parsed.name;
+    if (parsed.description !== undefined) updates.description = parsed.description;
+    if (parsed.isActive !== undefined) updates.isActive = parsed.isActive;
+    if (parsed.sortOrder !== undefined) updates.sortOrder = parsed.sortOrder;
+    updates.updatedAt = new Date();
+    
+    await db.update(tariffPlans).set(updates).where(eq(tariffPlans.id, planId));
+    
+    // Return updated plan with limits
+    const tariff = await tariffPlanService.getPlanWithLimitsById(planId);
     res.json(tariff);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -102,7 +146,8 @@ adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
  */
 adminTariffsRouter.put('/:planId/limits', asyncHandler(async (req, res) => {
   try {
-    const tariff = await tariffPlanService.updateLimits(req.params.planId, req.body);
+    const limits = Array.isArray(req.body) ? req.body : [];
+    const tariff = await tariffPlanService.upsertPlanLimits(req.params.planId, limits);
     res.json(tariff);
   } catch (error) {
     if (error instanceof z.ZodError) {
