@@ -105,6 +105,10 @@ const createKnowledgeBaseSchema = z.object({
   description: z.string().trim().max(2000).optional(),
 });
 
+const deleteKnowledgeBaseSchema = z.object({
+  confirmation: z.string().trim().min(1, "Введите название базы знаний для подтверждения удаления"),
+});
+
 const createFolderSchema = z.object({
   name: z.string().trim().min(1).max(255),
   parentId: z.string().trim().min(1).optional(),
@@ -226,7 +230,8 @@ knowledgeBaseRouter.delete('/bases/:baseId', asyncHandler(async (req, res) => {
   if (!user) return;
 
   const { id: workspaceId } = getRequestWorkspace(req);
-  await deleteKnowledgeBase(workspaceId, req.params.baseId);
+  const payload = deleteKnowledgeBaseSchema.parse(req.body);
+  await deleteKnowledgeBase(workspaceId, req.params.baseId, payload);
   res.status(204).send();
 }));
 
