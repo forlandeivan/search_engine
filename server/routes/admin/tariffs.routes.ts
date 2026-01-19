@@ -2,12 +2,13 @@
  * Admin Tariffs Routes
  * 
  * Endpoints:
- * - GET /api/admin/billing/info - Get billing info
+ * - GET /api/admin/billing/info - Get billing info (via /billing mount)
  * - GET /api/admin/tariffs - List all tariffs
  * - GET /api/admin/tariffs/:planId - Get tariff details
  * - PUT /api/admin/tariffs/:planId - Update tariff
  * - PUT /api/admin/tariffs/:planId/limits - Update tariff limits
- * - GET /api/admin/tariff-limit-catalog - Get limit catalog
+ * 
+ * Note: /api/admin/tariff-limit-catalog is in index.ts
  */
 
 import { Router } from 'express';
@@ -38,9 +39,10 @@ const updateTariffSchema = z.object({
 // ============================================================================
 
 /**
- * GET /billing/info
+ * GET /info
+ * Mounted at /billing/info via /billing prefix
  */
-adminTariffsRouter.get('/billing/info', asyncHandler(async (_req, res) => {
+adminTariffsRouter.get('/info', asyncHandler(async (_req, res) => {
   res.json({ billingEnabled: false, provider: null });
 }));
 
@@ -114,13 +116,6 @@ adminTariffsRouter.put('/:planId/limits', asyncHandler(async (req, res) => {
     }
     throw error;
   }
-}));
-
-/**
- * GET /tariff-limit-catalog
- */
-adminTariffsRouter.get('/limit-catalog', asyncHandler(async (_req, res) => {
-  res.json(TARIFF_LIMIT_CATALOG);
 }));
 
 export default adminTariffsRouter;
