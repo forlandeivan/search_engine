@@ -3,6 +3,10 @@
  * 
  * Handles embedding services/providers management:
  * - GET /api/embedding/services - List embedding providers
+ * - POST /api/embedding/services - Create embedding provider
+ * - PUT /api/embedding/services/:id - Update embedding provider
+ * - DELETE /api/embedding/services/:id - Delete embedding provider
+ * - POST /api/embedding/services/test-credentials - Test credentials
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -11,6 +15,8 @@ import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { listEmbeddingProvidersWithStatus } from '../embedding-provider-registry';
 import { fetchAccessToken } from '../llm-access-token';
+import { listModels } from '../model-service';
+import { storage } from '../storage';
 import type { PublicUser, EmbeddingProvider } from '@shared/schema';
 
 const logger = createLogger('embedding');
@@ -68,6 +74,80 @@ embeddingRouter.get('/services', asyncHandler(async (req, res) => {
   const workspaceId = getRequestWorkspace(req);
   const providers = await listEmbeddingProvidersWithStatus(workspaceId);
   res.json({ providers });
+}));
+
+/**
+ * POST /services
+ * Create embedding provider
+ */
+embeddingRouter.post('/services', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  try {
+    const provider = await storage.createEmbeddingProvider(req.body);
+    res.status(201).json({ provider });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: 'Invalid provider data', details: error.issues });
+    }
+    throw error;
+  }
+}));
+
+/**
+ * PUT /services/:id
+ * Update embedding provider
+ */
+embeddingRouter.put('/services/:id', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const providerId = req.params.id;
+  const provider = await storage.updateEmbeddingProvider(providerId, req.body);
+  
+  if (!provider) {
+    return res.status(404).json({ message: 'Provider not found' });
+  }
+  
+  res.json({ provider });
+}));
+
+/**
+ * DELETE /services/:id
+ * Delete embedding provider
+ * Проверяет, что нет активных моделей, привязанных к провайдеру
+ */
+embeddingRouter.delete('/services/:id', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const providerId = req.params.id;
+  
+  // Проверяем, есть ли активные модели для этого провайдера
+  const activeModels = await listModels({ 
+    providerId, 
+    type: 'EMBEDDINGS',
+    includeInactive: false 
+  });
+  
+  if (activeModels.length > 0) {
+    return res.status(409).json({ 
+      message: 'Невозможно удалить провайдер: существуют активные модели в каталоге',
+      details: {
+        activeModelsCount: activeModels.length,
+        models: activeModels.map(m => ({ key: m.modelKey, name: m.displayName }))
+      }
+    });
+  }
+  
+  const deleted = await storage.deleteEmbeddingProvider(providerId);
+  
+  if (!deleted) {
+    return res.status(404).json({ message: 'Provider not found' });
+  }
+  
+  res.status(204).send();
 }));
 
 /**

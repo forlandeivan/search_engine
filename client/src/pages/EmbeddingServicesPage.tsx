@@ -417,7 +417,7 @@ export default function EmbeddingServicesPage() {
 
   const deleteProviderMutation = useMutation<void, Error, string>({
     mutationFn: async (providerId) => {
-      const response = await apiRequest("DELETE", `/api/admin/embeddings/providers/${providerId}`);
+      const response = await apiRequest("DELETE", `/api/embedding/services/${providerId}`);
       
       if (!response.ok) {
         const body = await response.json().catch(() => null) as { message?: string; details?: any } | null;
@@ -426,7 +426,6 @@ export default function EmbeddingServicesPage() {
     },
     onSuccess: (_, providerId) => {
       queryClient.invalidateQueries({ queryKey: ["/api/embedding/services"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/embeddings/providers"] });
       queryClient.setQueryData<ProvidersResponse>(["/api/embedding/services"], (previous) => {
         if (!previous) return previous;
         return {
