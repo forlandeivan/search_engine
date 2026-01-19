@@ -14,11 +14,12 @@
  * - POST /api/admin/llm-debug - Set debug config
  * - GET /api/admin/llm-executions - List LLM executions
  * - GET /api/admin/llm-executions/:id - Get execution details
- * - GET /api/admin/embeddings/providers - List embedding providers
+ * - GET /api/admin/embeddings/providers - List embedding providers (для админских форм)
  * - POST /api/admin/embeddings/providers - Create embedding provider
  * - PUT /api/admin/embeddings/providers/:id - Update embedding provider
- * - DELETE /api/admin/embeddings/providers/:id - Delete embedding provider
  * - GET /api/admin/embeddings/providers/:providerId/models - Get provider models
+ * 
+ * Note: DELETE для embeddings providers находится в /api/embedding/services/:id
  * - GET /api/admin/knowledge-base-indexing-policy
  * - PUT /api/admin/knowledge-base-indexing-policy
  * - PATCH /api/admin/knowledge-base-indexing-policy
@@ -326,36 +327,11 @@ adminLlmRouter.put('/embeddings/providers/:id', asyncHandler(async (req, res) =>
 /**
  * DELETE /embeddings/providers/:id
  * Delete embedding provider
- * Проверяет, что нет активных моделей, привязанных к провайдеру
+ * УДАЛЕНО: теперь используется /api/embedding/services/:id в embedding.routes.ts
+ * Оставлен комментарий для истории.
  */
-adminLlmRouter.delete('/embeddings/providers/:id', asyncHandler(async (req, res) => {
-  const providerId = req.params.id;
-  
-  // Проверяем, есть ли активные модели для этого провайдера
-  const activeModels = await listModels({ 
-    providerId, 
-    type: 'EMBEDDINGS',
-    includeInactive: false 
-  });
-  
-  if (activeModels.length > 0) {
-    return res.status(409).json({ 
-      message: 'Невозможно удалить провайдер: существуют активные модели в каталоге',
-      details: {
-        activeModelsCount: activeModels.length,
-        models: activeModels.map(m => ({ key: m.modelKey, name: m.displayName }))
-      }
-    });
-  }
-  
-  const deleted = await storage.deleteEmbeddingProvider(providerId);
-  
-  if (!deleted) {
-    return res.status(404).json({ message: 'Provider not found' });
-  }
-  
-  res.status(204).send();
-}));
+// adminLlmRouter.delete('/embeddings/providers/:id', ...) - УДАЛЕНО
+// Используйте DELETE /api/embedding/services/:id вместо этого
 
 /**
  * GET /embeddings/providers/:providerId/models
