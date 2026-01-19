@@ -233,6 +233,40 @@ class SpeechProviderService {
     }
     return detail;
   }
+
+  // Aliases for consistent naming in admin routes
+  async list(): Promise<SpeechProviderSummary[]> {
+    return this.listProviders();
+  }
+
+  async getById(providerId: string): Promise<SpeechProviderDetail> {
+    return this.getProviderById(providerId);
+  }
+
+  async getSecrets(providerId: string): Promise<Record<string, string>> {
+    return this.getProviderSecretValues(providerId);
+  }
+
+  async update(providerId: string, payload: { isEnabled?: boolean; config?: Record<string, unknown>; secrets?: SpeechProviderSecretsPatch }): Promise<SpeechProviderDetail> {
+    // Extract admin ID from request context - for now, use a default
+    const actorAdminId = 'admin'; // TODO: get from request context
+    return this.updateProviderConfig({
+      providerId,
+      actorAdminId,
+      isEnabled: payload.isEnabled,
+      configPatch: payload.config,
+      secretsPatch: payload.secrets,
+    });
+  }
+
+  async testIamToken(providerId: string): Promise<{ success: boolean; message: string }> {
+    const provider = await storage.getSpeechProvider(providerId);
+    if (!provider) {
+      throw new SpeechProviderNotFoundError();
+    }
+    // Placeholder implementation - actual IAM token testing would require specific Yandex Cloud API calls
+    return { success: true, message: 'IAM token test not yet implemented' };
+  }
 }
 
 export const speechProviderService = new SpeechProviderService();

@@ -18,7 +18,6 @@ import { createLogger } from '../../lib/logger';
 import { asyncHandler } from '../../middleware/async-handler';
 import { smtpSettingsService, SmtpSettingsError } from '../../smtp-settings';
 import { smtpTestService } from '../../smtp-test-service';
-import { SmtpSettingsError } from '../../smtp-settings';
 import { indexingRulesService, IndexingRulesError } from '../../indexing-rules';
 
 const logger = createLogger('admin-settings');

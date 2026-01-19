@@ -165,6 +165,28 @@ class FileStorageProviderService {
     }
   }
 
+  // Aliases for consistent naming in admin routes
+  async list(): Promise<FileStorageProvider[]> {
+    const result = await this.listProviders();
+    return result.items;
+  }
+
+  async getById(id: string): Promise<FileStorageProvider> {
+    return this.getProviderById(id);
+  }
+
+  async create(payload: unknown): Promise<FileStorageProvider> {
+    return this.createProvider(payload);
+  }
+
+  async update(id: string, payload: unknown): Promise<FileStorageProvider> {
+    return this.updateProvider(id, payload);
+  }
+
+  async delete(id: string): Promise<void> {
+    return this.deleteProvider(id);
+  }
+
   async getWorkspaceDefault(workspaceId: string): Promise<FileStorageProvider | null> {
     const workspace = await storage.getWorkspace(workspaceId);
     if (!workspace) {

@@ -46,6 +46,11 @@ import {
   knowledgeDocumentIndexRevisions,
   knowledgeDocumentIndexState,
   knowledgeBaseIndexState,
+  workspaceLlmUsageLedger,
+  asrExecutions,
+  guardBlockEvents,
+  workspaceCreditLedger,
+  systemNotificationLogs,
   type KnowledgeBaseIndexingJob,
   type KnowledgeBaseIndexingJobInsert,
   type KnowledgeBaseIndexingPolicy,
@@ -1058,13 +1063,32 @@ export interface IStorage {
   ): Promise<FileStorageProvider | undefined>;
   deleteFileStorageProvider(id: string): Promise<boolean>;
 
+  // OAuth configuration
+  getOAuthConfig(provider: 'google' | 'yandex'): Promise<{ clientId: string; clientSecret: string; enabled: boolean } | null>;
+  setOAuthConfig(provider: 'google' | 'yandex', config: { clientId: string; clientSecret: string; enabled: boolean }): Promise<void>;
+
   // Unica Chat configuration
   getUnicaChatConfig(): Promise<UnicaChatConfig>;
+  setUnicaChatConfig(config: Partial<UnicaChatConfigInsert>): Promise<UnicaChatConfig>;
   updateUnicaChatConfig(
     updates: Partial<
       Pick<UnicaChatConfigInsert, "llmProviderConfigId" | "modelId" | "systemPrompt" | "temperature" | "topP" | "maxTokens">
     >,
   ): Promise<UnicaChatConfig>;
+
+  // LLM executions (admin monitoring)
+  listLlmExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }>;
+  getLlmExecution(id: string): Promise<any | null>;
+
+  // ASR executions (admin monitoring)
+  listAsrExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }>;
+  getAsrExecution(id: string): Promise<any | null>;
+
+  // Monitoring (admin)
+  listGuardBlocks(opts: { page: number; pageSize: number }): Promise<{ blocks: any[]; total: number; page: number; pageSize: number }>;
+  listCharges(opts: { page: number; pageSize: number; workspaceId?: string }): Promise<{ charges: any[]; total: number; page: number; pageSize: number }>;
+  listSystemNotificationLogs(opts: { page: number; pageSize: number }): Promise<{ logs: any[]; total: number; page: number; pageSize: number }>;
+  getSystemNotificationLog(id: string): Promise<any | null>;
 
   // Knowledge base RAG telemetry
   recordKnowledgeBaseRagRequest(entry: {
@@ -8746,6 +8770,173 @@ export class DatabaseStorage implements IStorage {
       .returning();
 
     return inserted;
+  }
+
+  async setUnicaChatConfig(config: Partial<UnicaChatConfigInsert>): Promise<UnicaChatConfig> {
+    return this.updateUnicaChatConfig(config as any);
+  }
+
+  async getOAuthConfig(provider: 'google' | 'yandex'): Promise<{ clientId: string; clientSecret: string; enabled: boolean } | null> {
+    // OAuth config stored in environment variables for now
+    // This is a placeholder for future DB-backed config
+    if (provider === 'google') {
+      const clientId = process.env.GOOGLE_CLIENT_ID || '';
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
+      const enabled = Boolean(clientId && clientSecret);
+      return clientId || clientSecret ? { clientId, clientSecret, enabled } : null;
+    } else if (provider === 'yandex') {
+      const clientId = process.env.YANDEX_CLIENT_ID || '';
+      const clientSecret = process.env.YANDEX_CLIENT_SECRET || '';
+      const enabled = Boolean(clientId && clientSecret);
+      return clientId || clientSecret ? { clientId, clientSecret, enabled } : null;
+    }
+    return null;
+  }
+
+  async setOAuthConfig(provider: 'google' | 'yandex', config: { clientId: string; clientSecret: string; enabled: boolean }): Promise<void> {
+    // OAuth config stored in environment variables for now
+    // This is a placeholder - in production, this should update a config table or restart with new env vars
+    console.warn(`[storage] setOAuthConfig called for ${provider}, but config is read from environment variables. Restart server with updated .env to apply changes.`);
+  }
+
+  async listLlmExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }> {
+    const offset = (opts.page - 1) * opts.pageSize;
+    
+    // Get total count
+    const [countResult] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(workspaceLlmUsageLedger);
+    const total = Number(countResult?.count ?? 0);
+    
+    // Get paginated data
+    const executions = await this.db
+      .select()
+      .from(workspaceLlmUsageLedger)
+      .orderBy(desc(workspaceLlmUsageLedger.occurredAt))
+      .limit(opts.pageSize)
+      .offset(offset);
+    
+    return { executions, total, page: opts.page, pageSize: opts.pageSize };
+  }
+
+  async getLlmExecution(id: string): Promise<any | null> {
+    const [execution] = await this.db
+      .select()
+      .from(workspaceLlmUsageLedger)
+      .where(eq(workspaceLlmUsageLedger.id, id))
+      .limit(1);
+    return execution ?? null;
+  }
+
+  async listAsrExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }> {
+    const offset = (opts.page - 1) * opts.pageSize;
+    
+    // Get total count
+    const [countResult] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(asrExecutions);
+    const total = Number(countResult?.count ?? 0);
+    
+    // Get paginated data
+    const executions = await this.db
+      .select()
+      .from(asrExecutions)
+      .orderBy(desc(asrExecutions.createdAt))
+      .limit(opts.pageSize)
+      .offset(offset);
+    
+    return { executions, total, page: opts.page, pageSize: opts.pageSize };
+  }
+
+  async getAsrExecution(id: string): Promise<any | null> {
+    const [execution] = await this.db
+      .select()
+      .from(asrExecutions)
+      .where(eq(asrExecutions.id, id))
+      .limit(1);
+    return execution ?? null;
+  }
+
+  async listGuardBlocks(opts: { page: number; pageSize: number }): Promise<{ blocks: any[]; total: number; page: number; pageSize: number }> {
+    const offset = (opts.page - 1) * opts.pageSize;
+    
+    // Get total count
+    const [countResult] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(guardBlockEvents);
+    const total = Number(countResult?.count ?? 0);
+    
+    // Get paginated data
+    const blocks = await this.db
+      .select()
+      .from(guardBlockEvents)
+      .orderBy(desc(guardBlockEvents.createdAt))
+      .limit(opts.pageSize)
+      .offset(offset);
+    
+    return { blocks, total, page: opts.page, pageSize: opts.pageSize };
+  }
+
+  async listCharges(opts: { page: number; pageSize: number; workspaceId?: string }): Promise<{ charges: any[]; total: number; page: number; pageSize: number }> {
+    const offset = (opts.page - 1) * opts.pageSize;
+    
+    // Build where condition
+    const whereCondition = opts.workspaceId 
+      ? eq(workspaceCreditLedger.workspaceId, opts.workspaceId)
+      : undefined;
+    
+    // Get total count
+    const countQuery = this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(workspaceCreditLedger);
+    if (whereCondition) {
+      countQuery.where(whereCondition);
+    }
+    const [countResult] = await countQuery;
+    const total = Number(countResult?.count ?? 0);
+    
+    // Get paginated data
+    const chargesQuery = this.db
+      .select()
+      .from(workspaceCreditLedger)
+      .orderBy(desc(workspaceCreditLedger.occurredAt))
+      .limit(opts.pageSize)
+      .offset(offset);
+    if (whereCondition) {
+      chargesQuery.where(whereCondition);
+    }
+    const charges = await chargesQuery;
+    
+    return { charges, total, page: opts.page, pageSize: opts.pageSize };
+  }
+
+  async listSystemNotificationLogs(opts: { page: number; pageSize: number }): Promise<{ logs: any[]; total: number; page: number; pageSize: number }> {
+    const offset = (opts.page - 1) * opts.pageSize;
+    
+    // Get total count
+    const [countResult] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(systemNotificationLogs);
+    const total = Number(countResult?.count ?? 0);
+    
+    // Get paginated data
+    const logs = await this.db
+      .select()
+      .from(systemNotificationLogs)
+      .orderBy(desc(systemNotificationLogs.createdAt))
+      .limit(opts.pageSize)
+      .offset(offset);
+    
+    return { logs, total, page: opts.page, pageSize: opts.pageSize };
+  }
+
+  async getSystemNotificationLog(id: string): Promise<any | null> {
+    const [log] = await this.db
+      .select()
+      .from(systemNotificationLogs)
+      .where(eq(systemNotificationLogs.id, id))
+      .limit(1);
+    return log ?? null;
   }
 
   async getUser(id: string): Promise<User | undefined> {
