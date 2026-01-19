@@ -209,9 +209,9 @@ export default function ChatPage({ params }: ChatPageProps) {
         debugLog("[SSE] Parsed payload from named event", { payloadType: payload?.type, hasMessage: !!payload?.message, hasAction: !!payload?.action, messageId: payload?.message?.id });
         if (payload?.type === "message" && payload.message) {
           setLocalMessages((prev) => {
-            // Check for duplicates by ID only (not by content), as same content can be sent multiple times
-            if (prev.some((local) => local.id === payload.message!.id)) {
-              debugLog("[SSE] Message already exists, skipping", { messageId: payload.message!.id });
+            // Check for duplicates by ID or content equivalence (for optimistic updates with local-* IDs)
+            if (prev.some((local) => areMessagesEquivalent(local, payload.message!))) {
+              debugLog("[SSE] Message already exists (by equivalence), skipping", { messageId: payload.message!.id });
               return prev;
             }
             return [...prev, payload.message!];
@@ -327,9 +327,9 @@ export default function ChatPage({ params }: ChatPageProps) {
         debugLog("[SSE] Parsed payload", { payloadType: payload?.type, hasMessage: !!payload?.message, hasAction: !!payload?.action, messageId: payload?.message?.id });
         if (payload?.type === "message" && payload.message) {
           setLocalMessages((prev) => {
-            // Check for duplicates by ID only (not by content), as same content can be sent multiple times
-            if (prev.some((local) => local.id === payload.message!.id)) {
-              debugLog("[SSE] Message already exists, skipping", { messageId: payload.message!.id });
+            // Check for duplicates by ID or content equivalence (for optimistic updates with local-* IDs)
+            if (prev.some((local) => areMessagesEquivalent(local, payload.message!))) {
+              debugLog("[SSE] Message already exists (by equivalence), skipping", { messageId: payload.message!.id });
               return prev;
             }
             return [...prev, payload.message!];
