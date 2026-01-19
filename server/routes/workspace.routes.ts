@@ -24,6 +24,7 @@ import { workspaceMemberRoles, type PublicUser, type User, actionTargets, action
 import type { WorkspaceMemberWithUser } from '../storage';
 import { actionsRepository } from '../actions';
 import { workspacePlanService } from '../workspace-plan-service';
+import { getWorkspaceCreditSummary } from '../credit-summary-service';
 import {
   getWorkspaceLlmUsageSummary,
   getWorkspaceAsrUsageSummary,
@@ -774,9 +775,20 @@ workspaceRouter.get('/:workspaceId/credits', asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Рабочее пространство не найдено' });
   }
 
+  const summary = await getWorkspaceCreditSummary(workspaceId);
+  const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
+
   res.json({
-    credits: workspace.credits ?? 0,
-    workspaceId: workspace.id,
+    workspaceId: summary.workspaceId,
+    balance: {
+      currentBalance: summary.currentBalance,
+      nextTopUpAt: summary.nextRefreshAt ? summary.nextRefreshAt.toISOString() : null,
+    },
+    planIncludedCredits: {
+      amount: summary.planLimit.amount,
+      period: summary.planLimit.period,
+    },
+    policy: summary.policy,
   });
 }));
 

@@ -788,7 +788,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                       <div className="rounded-md border p-3">
                         <p className="text-xs text-muted-foreground">Остаток</p>
                         <p className="text-xl font-semibold">
-                          {formatCredits(creditsSummaryQuery.data?.balance.currentBalance)}
+                          {formatCredits(creditsSummaryQuery.data?.balance?.currentBalance ?? 0)}
                         </p>
                       </div>
                       <div className="rounded-md border p-3">
