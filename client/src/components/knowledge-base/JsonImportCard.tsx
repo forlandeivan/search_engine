@@ -6,9 +6,24 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { apiRequest } from "@/lib/queryClient";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, CheckCircle2, XCircle, AlertCircle, ExternalLink } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, AlertCircle, ExternalLink, FileText } from "lucide-react";
 import type { GetJsonImportStatusResponse } from "@shared/json-import";
 import { Link } from "wouter";
+import { ImportErrorsModal } from "./json-import/ImportErrorsModal";
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds} сек`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) {
+    return remainingSeconds > 0 ? `${minutes} мин ${remainingSeconds} сек` : `${minutes} мин`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours} ч ${remainingMinutes} мин` : `${hours} ч`;
+}
 
 interface JsonImportCardProps {
   jobId: string;
@@ -19,6 +34,7 @@ interface JsonImportCardProps {
 
 export function JsonImportCard({ jobId, baseId, workspaceId, onComplete }: JsonImportCardProps) {
   const [pollingInterval, setPollingInterval] = useState<number | false>(2000);
+  const [isErrorsModalOpen, setIsErrorsModalOpen] = useState(false);
 
   const { data: status, isLoading } = useQuery<GetJsonImportStatusResponse>({
     queryKey: ["json-import-status", jobId, workspaceId],
@@ -176,18 +192,56 @@ export function JsonImportCard({ jobId, baseId, workspaceId, onComplete }: JsonI
                 {status.timing.durationSeconds !== null && (
                   <div>
                     <p className="text-muted-foreground">Время выполнения</p>
-                    <p className="font-semibold">{status.timing.durationSeconds} сек</p>
+                    <p className="font-semibold">
+                      {formatDuration(status.timing.durationSeconds)}
+                    </p>
                   </div>
                 )}
               </div>
 
               {status.status === "completed_with_errors" && (
-                <Alert variant="destructive">
-                  <AlertDescription>
-                    Импорт завершён, но {status.progress.errorRecords} записей не были импортированы.
-                    {status.hasMoreErrors && " Скачайте отчёт для просмотра всех ошибок."}
-                  </AlertDescription>
-                </Alert>
+                <>
+                  <Alert variant="destructive">
+                    <AlertDescription className="flex items-center justify-between">
+                      <span>
+                        Импорт завершён, но {status.progress.errorRecords} записей не были импортированы.
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setIsErrorsModalOpen(true)}
+                        className="ml-4"
+                      >
+                        <FileText className="mr-2 h-4 w-4" />
+                        Просмотреть ошибки
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                  {status.recentErrors.length > 0 && (
+                    <div className="text-sm text-muted-foreground">
+                      <p className="mb-2">Типы ошибок:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {(() => {
+                          const errorTypes = new Map<string, number>();
+                          status.recentErrors.forEach((err) => {
+                            const count = errorTypes.get(err.errorType) || 0;
+                            errorTypes.set(err.errorType, count + 1);
+                          });
+                          return Array.from(errorTypes.entries()).map(([type, count]) => (
+                            <Badge key={type} variant="outline" className="text-xs">
+                              {type === "parse_error" && "Парсинг"}
+                              {type === "validation_error" && "Валидация"}
+                              {type === "mapping_error" && "Маппинг"}
+                              {type === "duplicate" && "Дубликаты"}
+                              {type === "database_error" && "БД"}
+                              {type === "unknown" && "Неизвестные"}: {count}
+                            </Badge>
+                          ));
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
               {status.status === "failed" && (
@@ -220,19 +274,41 @@ export function JsonImportCard({ jobId, baseId, workspaceId, onComplete }: JsonI
 
         {status.recentErrors.length > 0 && (
           <div className="space-y-2">
-            <p className="text-sm font-medium">Последние ошибки:</p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium">Последние ошибки:</p>
+              {status.hasMoreErrors && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsErrorsModalOpen(true)}
+                  className="text-xs"
+                >
+                  Показать все ({status.progress.errorRecords})
+                </Button>
+              )}
+            </div>
             <div className="space-y-1 max-h-32 overflow-y-auto">
               {status.recentErrors.map((err, idx) => (
                 <div key={idx} className="rounded-md border bg-muted/40 p-2 text-xs">
                   <p className="font-medium">
-                    Строка {err.lineNumber}: {err.message}
+                    Строка {err.lineNumber ?? err.recordIndex ?? "—"}: {err.message}
                   </p>
+                  {err.field && (
+                    <p className="text-muted-foreground mt-1">Поле: {err.field}</p>
+                  )}
                 </div>
               ))}
             </div>
           </div>
         )}
       </CardContent>
+
+      <ImportErrorsModal
+        open={isErrorsModalOpen}
+        onOpenChange={setIsErrorsModalOpen}
+        jobId={jobId}
+        workspaceId={workspaceId}
+      />
     </Card>
   );
 }

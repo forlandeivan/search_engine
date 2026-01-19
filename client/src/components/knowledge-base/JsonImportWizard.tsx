@@ -18,7 +18,10 @@ import { useJsonImportUpload } from "@/hooks/useJsonImportUpload";
 import { Loader2, FileJson, X, ChevronRight, ChevronLeft } from "lucide-react";
 import type { CreateJsonImportRequest } from "@shared/json-import";
 import { StructurePreview } from "./json-import/StructurePreview";
+import { FieldMappingEditor } from "./json-import/FieldMappingEditor";
+import { HierarchyConfigEditor } from "./json-import/HierarchyConfig";
 import type { StructureAnalysis, PreviewError } from "@/lib/json-import-types";
+import type { MappingConfig, HierarchyConfig } from "@shared/json-import";
 
 interface JsonImportWizardProps {
   open: boolean;
@@ -40,10 +43,13 @@ export function JsonImportWizard({
   const [uploadedFileKey, setUploadedFileKey] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentStep, setCurrentStep] = useState<"upload" | "preview" | "mapping">("upload");
+  const [currentStep, setCurrentStep] = useState<"upload" | "preview" | "mapping" | "hierarchy">("upload");
   const [structureAnalysis, setStructureAnalysis] = useState<StructureAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [previewError, setPreviewError] = useState<PreviewError | null>(null);
+  const [mappingConfig, setMappingConfig] = useState<MappingConfig | null>(null);
+  const [isMappingValid, setIsMappingValid] = useState(false);
+  const [hierarchyConfig, setHierarchyConfig] = useState<HierarchyConfig | null>(null);
   const { uploadFile, uploadProgress, isUploading, error: uploadError, abort } = useJsonImportUpload(workspaceId);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -138,8 +144,9 @@ export function JsonImportWizard({
     if (currentStep === "upload" && uploadedFileKey && structureAnalysis) {
       setCurrentStep("preview");
     } else if (currentStep === "preview") {
-      // TODO: US-4 - Переход к маппингу
       setCurrentStep("mapping");
+    } else if (currentStep === "mapping" && isMappingValid) {
+      setCurrentStep("hierarchy");
     }
   };
 
@@ -148,6 +155,8 @@ export function JsonImportWizard({
       setCurrentStep("upload");
     } else if (currentStep === "mapping") {
       setCurrentStep("preview");
+    } else if (currentStep === "hierarchy") {
+      setCurrentStep("mapping");
     }
   };
 
@@ -157,23 +166,17 @@ export function JsonImportWizard({
       return;
     }
 
+    if (!mappingConfig || !isMappingValid) {
+      setError("Настройте маппинг полей перед запуском импорта");
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
     try {
-      // TODO: US-4 - Маппинг полей (из UI)
-      // TODO: US-5 - Настройка иерархии (из UI)
-      
-      // Временная заглушка для тестирования инфраструктуры
-      const mappingConfig = {
-        fields: [
-          { sourcePath: "id", role: "id" as const },
-          { sourcePath: "title", role: "title" as const },
-          { sourcePath: "content", role: "content" as const },
-        ],
-      };
-
-      const hierarchyConfig = {
+      // Используем настройки иерархии из UI или дефолтные
+      const finalHierarchyConfig = hierarchyConfig ?? {
         mode: "flat" as const,
       };
 
@@ -181,8 +184,8 @@ export function JsonImportWizard({
         fileKey: uploadedFileKey,
         fileName: file.name,
         fileSize: file.size,
-        mappingConfig,
-        hierarchyConfig,
+        mappingConfig: mappingConfig!,
+        hierarchyConfig: finalHierarchyConfig,
       };
 
       const response = await apiRequest(
@@ -226,6 +229,9 @@ export function JsonImportWizard({
       setCurrentStep("upload");
       setStructureAnalysis(null);
       setPreviewError(null);
+      setMappingConfig(null);
+      setIsMappingValid(false);
+      setHierarchyConfig(null);
       onOpenChange(false);
     }
   };
@@ -334,12 +340,27 @@ export function JsonImportWizard({
             </div>
           )}
 
-          {currentStep === "mapping" && (
-            <Alert>
-              <AlertDescription>
-                Настройка маппинга полей будет доступна в следующей версии (US-4).
-              </AlertDescription>
-            </Alert>
+          {currentStep === "mapping" && structureAnalysis && (
+            <FieldMappingEditor
+              analysis={structureAnalysis}
+              initialMapping={mappingConfig ?? undefined}
+              onMappingChange={(mapping) => {
+                setMappingConfig(mapping);
+              }}
+              onValidationChange={(isValid) => {
+                setIsMappingValid(isValid);
+              }}
+            />
+          )}
+
+          {currentStep === "hierarchy" && structureAnalysis && (
+            <HierarchyConfigEditor
+              analysis={structureAnalysis}
+              initialConfig={hierarchyConfig ?? undefined}
+              onConfigChange={(config) => {
+                setHierarchyConfig(config);
+              }}
+            />
           )}
         </div>
 
@@ -369,8 +390,17 @@ export function JsonImportWizard({
               )}
               {currentStep === "mapping" && (
                 <Button
+                  onClick={handleNext}
+                  disabled={isSubmitting || isUploading || !isMappingValid}
+                >
+                  Далее
+                  <ChevronRight className="ml-2 h-4 w-4" />
+                </Button>
+              )}
+              {currentStep === "hierarchy" && (
+                <Button
                   onClick={handleStartImport}
-                  disabled={isSubmitting || isUploading || !uploadedFileKey}
+                  disabled={isSubmitting || isUploading || !uploadedFileKey || !mappingConfig}
                 >
                   {isSubmitting ? (
                     <>

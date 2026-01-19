@@ -971,6 +971,165 @@ knowledgeBaseRouter.get('/json-import/:jobId', asyncHandler(async (req, res) => 
   res.json(response);
 }));
 
+/**
+ * GET /json-import/:jobId/errors
+ * Get JSON import errors with pagination
+ */
+knowledgeBaseRouter.get('/json-import/:jobId/errors', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { jobId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+
+  const job = await storage.getJsonImportJob(jobId, workspaceId);
+  if (!job) {
+    return res.status(404).json({ error: 'Задача импорта не найдена' });
+  }
+
+  const offset = Number.parseInt(req.query.offset as string, 10) || 0;
+  const limit = Math.min(Number.parseInt(req.query.limit as string, 10) || 100, 1000);
+  const errorType = req.query.errorType as string | undefined;
+
+  // Получаем все ошибки из error_log
+  const errorLog = Array.isArray(job.errorLog) ? (job.errorLog as unknown[]) : [];
+  
+  // Фильтруем по типу ошибки, если указан
+  let filteredErrors = errorLog;
+  if (errorType) {
+    filteredErrors = errorLog.filter((err: unknown) => {
+      if (err && typeof err === "object" && "errorType" in err) {
+        return (err as { errorType: string }).errorType === errorType;
+      }
+      return false;
+    });
+  }
+
+  // Применяем пагинацию
+  const paginatedErrors = filteredErrors.slice(offset, offset + limit);
+
+  // Подсчитываем статистику по типам ошибок
+  const summary = {
+    parseErrors: 0,
+    validationErrors: 0,
+    mappingErrors: 0,
+    duplicates: 0,
+    databaseErrors: 0,
+    unknownErrors: 0,
+  };
+
+  for (const err of errorLog) {
+    if (err && typeof err === "object" && "errorType" in err) {
+      const errorType = (err as { errorType: string }).errorType;
+      switch (errorType) {
+        case "parse_error":
+          summary.parseErrors++;
+          break;
+        case "validation_error":
+          summary.validationErrors++;
+          break;
+        case "mapping_error":
+          summary.mappingErrors++;
+          break;
+        case "duplicate":
+          summary.duplicates++;
+          break;
+        case "database_error":
+          summary.databaseErrors++;
+          break;
+        default:
+          summary.unknownErrors++;
+      }
+    }
+  }
+
+  res.json({
+    errors: paginatedErrors,
+    total: filteredErrors.length,
+    summary,
+  });
+}));
+
+/**
+ * GET /json-import/:jobId/errors/export
+ * Export JSON import errors to CSV or JSON
+ */
+knowledgeBaseRouter.get('/json-import/:jobId/errors/export', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { jobId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const format = (req.query.format as string) || "json";
+
+  const job = await storage.getJsonImportJob(jobId, workspaceId);
+  if (!job) {
+    return res.status(404).json({ error: 'Задача импорта не найдена' });
+  }
+
+  const errorLog = Array.isArray(job.errorLog) ? (job.errorLog as unknown[]) : [];
+
+  if (format === "csv") {
+    // Генерируем CSV
+    const headers = ["Строка", "Индекс", "Тип ошибки", "Сообщение", "Поле", "Превью"];
+    const rows = errorLog.map((err: unknown) => {
+      if (err && typeof err === "object") {
+        const e = err as {
+          lineNumber?: number;
+          recordIndex?: number;
+          errorType?: string;
+          message?: string;
+          field?: string;
+          rawPreview?: string;
+        };
+        return [
+          e.lineNumber?.toString() || "",
+          e.recordIndex?.toString() || "",
+          e.errorType || "",
+          (e.message || "").replace(/"/g, '""'),
+          e.field || "",
+          (e.rawPreview || "").replace(/"/g, '""'),
+        ];
+      }
+      return ["", "", "", "", "", ""];
+    });
+
+    const csvContent = [
+      headers.map((h) => `"${h}"`).join(","),
+      ...rows.map((row) => row.map((cell) => `"${cell}"`).join(",")),
+    ].join("\n");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="json-import-errors-${jobId.slice(0, 8)}.csv"`,
+    );
+    res.send(csvContent);
+  } else {
+    // JSON формат
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="json-import-errors-${jobId.slice(0, 8)}.json"`,
+    );
+    res.json({
+      jobId,
+      fileName: job.sourceFileName,
+      exportedAt: new Date().toISOString(),
+      errors: errorLog,
+      summary: {
+        total: errorLog.length,
+        parseErrors: errorLog.filter((e: unknown) => e && typeof e === "object" && "errorType" in e && (e as { errorType: string }).errorType === "parse_error").length,
+        validationErrors: errorLog.filter((e: unknown) => e && typeof e === "object" && "errorType" in e && (e as { errorType: string }).errorType === "validation_error").length,
+        mappingErrors: errorLog.filter((e: unknown) => e && typeof e === "object" && "errorType" in e && (e as { errorType: string }).errorType === "mapping_error").length,
+        duplicates: errorLog.filter((e: unknown) => e && typeof e === "object" && "errorType" in e && (e as { errorType: string }).errorType === "duplicate").length,
+        databaseErrors: errorLog.filter((e: unknown) => e && typeof e === "object" && "errorType" in e && (e as { errorType: string }).errorType === "database_error").length,
+        unknownErrors: errorLog.filter((e: unknown) => e && typeof e === "object" && "errorType" in e && !["parse_error", "validation_error", "mapping_error", "duplicate", "database_error"].includes((e as { errorType: string }).errorType)).length,
+      },
+    });
+  }
+}));
+
 // Error handler for this router
 knowledgeBaseRouter.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   if (err instanceof z.ZodError) {
