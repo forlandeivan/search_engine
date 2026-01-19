@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { centsToCredits, formatCredits, tryParseCreditsToCents } from "@shared/credits";
+import { centsToCredits, formatCredits, formatCreditsFromCents, tryParseCreditsToCents } from "@shared/credits";
 
 type TariffSummary = {
   id: string;
@@ -165,8 +165,9 @@ export default function AdminBillingPage() {
       setFormLimits(next);
     }
     if (detailQuery.data) {
-      const amount = detailQuery.data.includedCreditsAmount ?? 0;
-      setCreditsAmount(formatCredits(amount));
+      // includedCreditsAmount в базе хранится в центах, нужно конвертировать в кредиты для отображения
+      const amountCents = detailQuery.data.includedCreditsAmount ?? 0;
+      setCreditsAmount(formatCreditsFromCents(amountCents));
       setNoCodeFlowEnabled(Boolean(detailQuery.data.noCodeFlowEnabled));
     }
     if (detailQuery.data?.limits) {
@@ -254,14 +255,26 @@ export default function AdminBillingPage() {
       const creditsAmountCents = tryParseCreditsToCents(creditsAmount);
       if (creditsAmountCents === null || creditsAmountCents < 0) {
         toast({ variant: "destructive", title: "Ошибка", description: "Укажите корректное число кредитов (>= 0)" });
+        setIsSaving(false);
         return;
       }
 
-      await apiRequest("PUT", `/api/admin/tariffs/${selectedPlanId}`, {
+      const payload = {
         includedCreditsAmount: creditsAmountCents, // Отправляем центы, а не строку
         includedCreditsPeriod: "monthly",
         noCodeFlowEnabled,
-      });
+      };
+      console.log("[AdminBillingPage] Sending PUT request:", { url: `/api/admin/tariffs/${selectedPlanId}`, payload });
+      
+      try {
+        const response = await apiRequest("PUT", `/api/admin/tariffs/${selectedPlanId}`, payload);
+        const responseData = await response.json().catch(() => ({}));
+        console.log("[AdminBillingPage] PUT request success:", responseData);
+      } catch (error: any) {
+        console.error("[AdminBillingPage] PUT request error:", error);
+        // apiRequest уже выбросил ошибку через throwIfResNotOk, просто пробрасываем дальше
+        throw error;
+      }
       const limitsPayload = Object.entries(formLimits).map(([limitKey, data]) => ({
         limitKey,
         unit: data.unit,

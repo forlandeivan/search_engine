@@ -506,12 +506,8 @@ workspaceRouter.get('/:workspaceId/plan', asyncHandler(async (req, res) => {
  * Update workspace plan
  */
 workspaceRouter.put('/:workspaceId/plan', asyncHandler(async (req, res) => {
-  console.log('[PUT /:workspaceId/plan] Request received:', req.method, req.path, req.params);
   const user = getAuthorizedUser(req, res);
-  if (!user) {
-    console.log('[PUT /:workspaceId/plan] No user, returning 401');
-    return;
-  }
+  if (!user) return;
 
   const { workspaceId } = req.params;
   const membership = await storage.getWorkspaceMember(user.id, workspaceId);

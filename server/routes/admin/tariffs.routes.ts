@@ -108,8 +108,11 @@ adminTariffsRouter.get('/:planId', asyncHandler(async (req, res) => {
  */
 adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
   try {
-    const parsed = updateTariffSchema.parse(req.body);
     const planId = req.params.planId;
+    logger.info(`[PUT /:planId] Received request for planId: ${planId}`, { body: req.body });
+    
+    const parsed = updateTariffSchema.parse(req.body);
+    logger.info(`[PUT /:planId] Parsed data:`, parsed);
     
     // Check if plan exists
     const existing = await tariffPlanService.getPlanById(planId);
@@ -125,11 +128,17 @@ adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
             ? Math.round(parseFloat(parsed.includedCreditsAmount)) 
             : Math.round(parsed.includedCreditsAmount))
         : undefined;
+      logger.info(`[PUT /:planId] Updating credits/noCode:`, { 
+        amountCents, 
+        period: parsed.includedCreditsPeriod, 
+        noCodeFlowEnabled: parsed.noCodeFlowEnabled 
+      });
       await tariffPlanService.updatePlanCredits(planId, {
         amountCents: amountCents ?? undefined,
         period: parsed.includedCreditsPeriod ?? undefined,
         noCodeFlowEnabled: parsed.noCodeFlowEnabled ?? undefined,
       });
+      logger.info(`[PUT /:planId] Credits/noCode updated successfully`);
     }
     
     // Update other plan fields
@@ -149,14 +158,17 @@ adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
     res.json(tariff);
   } catch (error) {
     if (error instanceof z.ZodError) {
+      logger.error(`[PUT /:planId] Validation error:`, error.issues);
       return res.status(400).json({ message: 'Invalid data', details: error.issues });
     }
     if (error instanceof Error) {
+      logger.error(`[PUT /:planId] Error:`, error.message, error.stack);
       const httpError = error as Error & { status?: number };
       if (httpError.status !== undefined) {
         return res.status(httpError.status).json({ message: error.message });
       }
     }
+    logger.error(`[PUT /:planId] Unknown error:`, error);
     throw error;
   }
 }));
