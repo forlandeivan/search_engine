@@ -305,6 +305,10 @@ export default function AdminIndexingRulesPage() {
                               form.clearErrors("embeddingsModel");
                               form.setValue("embeddingsModel", "", { shouldValidate: false, shouldDirty: true });
                               field.onChange(value);
+                              // Сбрасываем ошибки валидации после установки значения
+                              setTimeout(() => {
+                                form.clearErrors();
+                              }, 0);
                             }}
                           >
                             <SelectTrigger id="indexing-embeddings-provider">
@@ -693,7 +697,8 @@ function KnowledgeBaseIndexingPolicyTab() {
         message: "Перекрытие должно быть меньше размера чанка",
       },
     )),
-    mode: "onChange",
+    mode: "onSubmit",
+    reValidateMode: "onSubmit", // Валидация только при отправке формы
     defaultValues: { ...DEFAULT_KNOWLEDGE_BASE_INDEXING_POLICY },
   });
 
