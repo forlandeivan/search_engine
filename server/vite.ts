@@ -32,8 +32,9 @@ export async function setupVite(app: Express, server: Server) {
     customLogger: {
       ...viteLogger,
       error: (msg, options) => {
+        // Логируем ошибку, но НЕ убиваем процесс
+        // Vite сам покажет ошибку в браузере через HMR overlay
         viteLogger.error(msg, options);
-        process.exit(1);
       },
     },
     server: {

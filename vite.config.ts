@@ -33,5 +33,14 @@ export default defineConfig({
         path.resolve(__dirname, "client", "src"),
       ],
     },
+    hmr: {
+      overlay: true, // Показывать ошибки в оверлее браузера
+    },
+    watch: {
+      // Игнорировать node_modules для лучшей производительности
+      ignored: ['**/node_modules/**', '**/dist/**'],
+    },
   },
+  // Улучшенная обработка ошибок
+  clearScreen: false, // Не очищать консоль при перезагрузке
 });
