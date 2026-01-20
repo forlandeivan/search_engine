@@ -113,3 +113,125 @@ export interface GetJsonImportStatusResponse {
   recentErrors: ImportRecordError[];
   hasMoreErrors: boolean;
 }
+
+// === Expression-based Mapping Types (v2) ===
+
+/**
+ * Тип токена в выражении
+ */
+export type ExpressionTokenType = 'field' | 'function' | 'text';
+
+/**
+ * Токен в выражении маппинга
+ * 
+ * Примеры:
+ * - { type: 'field', value: 'metadata.author' }
+ * - { type: 'function', value: 'NewGUID' }
+ * - { type: 'text', value: ' - ' }
+ */
+export interface ExpressionToken {
+  type: ExpressionTokenType;
+  value: string;
+  args?: string[];  // для функций с аргументами (будущее расширение)
+}
+
+/**
+ * Выражение = последовательность токенов
+ * 
+ * Пример: [{{ title }}] - [{{ category }}]
+ * → [
+ *     { type: 'field', value: 'title' },
+ *     { type: 'text', value: ' - ' },
+ *     { type: 'field', value: 'category' }
+ *   ]
+ */
+export type MappingExpression = ExpressionToken[];
+
+/**
+ * Маппинг для одного поля документа
+ */
+export interface DocumentFieldMapping {
+  expression: MappingExpression;
+  required?: boolean;
+}
+
+/**
+ * Динамическое поле метаданных
+ */
+export interface MetadataFieldMapping {
+  key: string;
+  expression: MappingExpression;
+}
+
+/**
+ * Конфиг маппинга v2 (expression-based)
+ */
+export interface MappingConfigV2 {
+  version: 2;
+  
+  // Основные поля документа
+  id?: DocumentFieldMapping;
+  title: DocumentFieldMapping;
+  content: DocumentFieldMapping;
+  contentHtml?: DocumentFieldMapping;
+  contentMd?: DocumentFieldMapping;
+  
+  // Динамические метаданные
+  metadata: MetadataFieldMapping[];
+  
+  // Настройки
+  contentJoinSeparator?: string;
+  titleFallback?: 'first_line' | 'content_excerpt' | 'filename';
+}
+
+/**
+ * Старый формат для backwards compatibility
+ */
+export interface MappingConfigV1 {
+  fields: FieldMapping[];
+  contentJoinSeparator?: string;
+  titleFallback?: 'first_line' | 'content_excerpt' | 'filename';
+  deduplication?: {
+    mode: 'skip' | 'allow_all';
+  };
+}
+
+/**
+ * Объединённый тип для обратной совместимости
+ */
+export type MappingConfig = MappingConfigV1 | MappingConfigV2;
+
+/**
+ * Type guard для проверки версии конфига
+ */
+export function isMappingConfigV2(config: MappingConfig): config is MappingConfigV2 {
+  return 'version' in config && config.version === 2;
+}
+
+/**
+ * Создание пустого выражения
+ */
+export function createEmptyExpression(): MappingExpression {
+  return [];
+}
+
+/**
+ * Создание токена поля
+ */
+export function createFieldToken(fieldPath: string): ExpressionToken {
+  return { type: 'field', value: fieldPath };
+}
+
+/**
+ * Создание токена функции
+ */
+export function createFunctionToken(functionName: string, args?: string[]): ExpressionToken {
+  return { type: 'function', value: functionName, args };
+}
+
+/**
+ * Создание текстового токена
+ */
+export function createTextToken(text: string): ExpressionToken {
+  return { type: 'text', value: text };
+}
