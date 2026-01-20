@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@/lib/zod-resolver";
 import { z } from "zod";
-import { Sparkles, Plus, Pencil, Loader2, Copy } from "lucide-react";
+import { Sparkles, Plus, Pencil, Loader2, Copy, Ellipsis, ArrowUpDown, Search } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,7 +49,6 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
-import { MoreVertical } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1696,18 +1695,45 @@ export default function SkillsPage() {
   const { toast } = useToast();
   const [archiveTarget, setArchiveTarget] = useState<Skill | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortField, setSortField] = useState<"name" | "updatedAt">("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   const knowledgeBaseMap = useMemo(() => {
     return new Map(knowledgeBases.map((kb) => [kb.id, kb]));
   }, [knowledgeBases]);
 
   const sortedSkills = useMemo(() => {
-    return [...skills].sort((a, b) => {
-      const aName = a.name?.toLowerCase() ?? "";
-      const bName = b.name?.toLowerCase() ?? "";
-      return aName.localeCompare(bName, "ru");
+    // Фильтрация по поисковому запросу
+    let filtered = skills.filter((skill) => {
+      if (!searchQuery.trim()) return true;
+      const query = searchQuery.toLowerCase();
+      const name = skill.name?.toLowerCase() ?? "";
+      const description = skill.description?.toLowerCase() ?? "";
+      const id = skill.id.toLowerCase();
+      return name.includes(query) || description.includes(query) || id.includes(query);
     });
-  }, [skills]);
+
+    // Сортировка
+    return [...filtered].sort((a, b) => {
+      let aValue: string | number;
+      let bValue: string | number;
+
+      if (sortField === "name") {
+        aValue = a.name?.toLowerCase() ?? "";
+        bValue = b.name?.toLowerCase() ?? "";
+      } else {
+        aValue = new Date(a.updatedAt).getTime();
+        bValue = new Date(b.updatedAt).getTime();
+      }
+
+      const comparison = typeof aValue === "string" 
+        ? aValue.localeCompare(bValue as string, "ru")
+        : aValue - (bValue as number);
+
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+  }, [skills, searchQuery, sortField, sortDirection]);
 
   const llmOptions = useMemo<LlmSelectionOption[]>(() => {
     const options: LlmSelectionOption[] = [];
@@ -1864,29 +1890,17 @@ export default function SkillsPage() {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="inline-flex items-center gap-2 text-sm font-medium text-primary">
-            <Sparkles className="h-4 w-4" /> Навыки ассистента
-          </div>
-          <h1 className="text-2xl font-semibold">Навыки</h1>
-          <p className="text-sm text-muted-foreground">
-            Управляйте сценариями работы ИИ-ассистента: определяйте, какие базы знаний и модель LLM использовать в каждом кейсе.
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          <Button onClick={() => navigate("/skills/new")} disabled={Boolean(creationDisabledReason)}>
-            <Plus className="mr-2 h-4 w-4" /> Создать навык
-          </Button>
-          {creationDisabledReason && (
-            <p className="text-xs text-muted-foreground text-right max-w-xs">{creationDisabledReason}</p>
-          )}
-        </div>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-4 px-6 pt-6">
+        <h1 className="text-3xl font-semibold">Навыки ассистента</h1>
+        <Button onClick={() => navigate("/skills/new")} disabled={Boolean(creationDisabledReason)}>
+          <Plus />
+          Создать навык
+        </Button>
       </div>
 
       {(isError || knowledgeBaseQuery.error || llmError || modelsError || embeddingProvidersError) && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="mx-6">
           <AlertTitle>Не удалось загрузить данные</AlertTitle>
           <AlertDescription>
             {error?.message ||
@@ -1897,37 +1911,99 @@ export default function SkillsPage() {
         </Alert>
       )}
 
-      <Card>
-        <CardHeader className="py-4">
-          <CardTitle className="text-base">Список навыков</CardTitle>
-          <CardDescription>Название, описание, связанные базы, действия и выбранная модель LLM.</CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          {showLoadingState ? (
-            <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Загрузка данных...
+      <div className="mx-6">
+        {showLoadingState ? (
+          <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Загрузка данных...
+          </div>
+        ) : skills.length === 0 ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            Пока нет ни одного навыка — создайте первый, чтобы ускорить ответы ассистента.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="relative flex-1 max-w-sm">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Поиск по навыкам..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {sortedSkills.length === skills.length
+                  ? `Всего навыков: ${skills.length}`
+                  : `Найдено: ${sortedSkills.length} из ${skills.length}`}
+              </div>
             </div>
-          ) : skills.length === 0 ? (
-            <div className="py-12 text-center text-sm text-muted-foreground">
-              Пока нет ни одного навыка — создайте первый, чтобы ускорить ответы ассистента.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[60px] text-center">Иконка</TableHead>
-                  <TableHead className="w-[220px]">Название</TableHead>
-                  <TableHead>Описание</TableHead>
-                  <TableHead className="w-[200px]">Действия</TableHead>
-                  <TableHead className="w-[220px]">Базы знаний</TableHead>
-                  <TableHead className="w-[220px]">LLM модель</TableHead>
-                  <TableHead className="w-[140px]">Обновлено</TableHead>
-                  <TableHead className="w-[80px]" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sortedSkills.map((skill) => {
-                  return (
+            
+            <div className="rounded-lg border bg-card">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[60px] text-center">Иконка</TableHead>
+                    <TableHead className="w-[220px]">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="-ml-3 h-8 data-[state=open]:bg-accent"
+                        onClick={() => {
+                          if (sortField === "name") {
+                            setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+                          } else {
+                            setSortField("name");
+                            setSortDirection("asc");
+                          }
+                        }}
+                      >
+                        Название
+                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                      </Button>
+                    </TableHead>
+                    <TableHead>Описание</TableHead>
+                    <TableHead className="w-[200px]">Действия</TableHead>
+                    <TableHead className="w-[220px]">Базы знаний</TableHead>
+                    <TableHead className="w-[220px]">LLM модель</TableHead>
+                    <TableHead className="w-[140px]">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="-ml-3 h-8 data-[state=open]:bg-accent"
+                        onClick={() => {
+                          if (sortField === "updatedAt") {
+                            setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+                          } else {
+                            setSortField("updatedAt");
+                            setSortDirection("asc");
+                          }
+                        }}
+                      >
+                        Обновлено
+                        <ArrowUpDown className="ml-2 h-4 w-4" />
+                      </Button>
+                    </TableHead>
+                    <TableHead className="w-[80px]" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sortedSkills.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="h-24 text-center">
+                        <div className="text-sm text-muted-foreground">
+                          {searchQuery ? (
+                            <>
+                              Ничего не найдено по запросу "<span className="font-medium">{searchQuery}</span>"
+                            </>
+                          ) : (
+                            "Нет навыков"
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    sortedSkills.map((skill) => (
                     <TableRow
                       key={skill.id}
                       role="button"
@@ -2007,7 +2083,7 @@ export default function SkillsPage() {
                                 aria-label="Действия с навыком"
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <MoreVertical className="h-4 w-4" />
+                                <Ellipsis className="h-4 w-4" />
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
@@ -2037,13 +2113,14 @@ export default function SkillsPage() {
                       </div>
                     </TableCell>
                     </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+      </div>
 
       <Dialog open={Boolean(archiveTarget)} onOpenChange={(open) => !open && setArchiveTarget(null)}>
         <DialogContent>
