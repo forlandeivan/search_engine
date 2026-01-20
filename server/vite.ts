@@ -55,13 +55,16 @@ export async function setupVite(app: Express, server: Server) {
     appType: "custom",
   });
 
-  app.use((req, res, next) => {
-    // Логируем все запросы к файлам для отладки
-    if (req.originalUrl.includes('/src/pages/') || req.originalUrl.includes('@fs') || req.originalUrl.includes('KnowledgeBase')) {
-      log(`[VITE DEBUG] Request: ${req.method} ${req.originalUrl}`, 'vite');
-    }
-    next();
-  });
+  // Отладочное логирование запросов Vite (включается через переменную окружения DEBUG_VITE_REQUESTS=1)
+  if (process.env.DEBUG_VITE_REQUESTS === "1") {
+    app.use((req, res, next) => {
+      // Логируем все запросы к файлам для отладки
+      if (req.originalUrl.includes('/src/pages/') || req.originalUrl.includes('@fs') || req.originalUrl.includes('KnowledgeBase')) {
+        log(`[VITE DEBUG] Request: ${req.method} ${req.originalUrl}`, 'vite');
+      }
+      next();
+    });
+  }
   
   app.use(vite.middlewares);
   
