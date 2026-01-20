@@ -1,7 +1,6 @@
-import { useState, useRef, useCallback, KeyboardEvent, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, KeyboardEvent, useEffect } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { ExpressionToken } from "./ExpressionToken";
 import { FieldTokenPopup } from "./FieldTokenPopup";
 import { FunctionTokenPopup } from "./FunctionTokenPopup";
 import type { MappingExpression, FieldInfo, LLMTokenConfig, ExpressionToken as ExpressionTokenType } from "@shared/json-import";
@@ -24,24 +23,59 @@ const MACRO_TYPE_ATTR = 'data-macro-type';
 const MACRO_VALUE_ATTR = 'data-macro-value';
 
 /**
+ * Рендеринг токенов в HTML для contentEditable
+ */
+function renderTokensToHtml(tokens: MappingExpression): string {
+  if (tokens.length === 0) {
+    return '';
+  }
+
+  return tokens.map((token, index) => {
+    if (token.type === 'text') {
+      // Экранируем HTML в тексте
+      return token.value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>');
+    } else if (token.type === 'field') {
+      return `<span ${MACRO_DATA_ATTR}="${index}" ${MACRO_TYPE_ATTR}="field" ${MACRO_VALUE_ATTR}="${token.value}" contenteditable="false" style="display: inline-block; margin: 0 1px; padding: 1px 6px; border-radius: 4px; background-color: rgb(219 234 254); color: rgb(30 64 175); font-size: 0.75rem; font-family: monospace; cursor: default; user-select: none;">{$${token.value}}</span>`;
+    } else if (token.type === 'function') {
+      const args = token.args?.join(', ') || '';
+      return `<span ${MACRO_DATA_ATTR}="${index}" ${MACRO_TYPE_ATTR}="function" ${MACRO_VALUE_ATTR}="${token.value}" data-macro-args='${JSON.stringify(token.args || [])}' contenteditable="false" style="display: inline-block; margin: 0 1px; padding: 1px 6px; border-radius: 4px; background-color: rgb(243 232 255); color: rgb(107 33 168); font-size: 0.75rem; font-family: monospace; cursor: default; user-select: none;">{$${token.value}(${args})}</span>`;
+    } else if (token.type === 'llm') {
+      const configStr = JSON.stringify(token.llmConfig || {});
+      return `<span ${MACRO_DATA_ATTR}="${index}" ${MACRO_TYPE_ATTR}="llm" ${MACRO_VALUE_ATTR}="AI генерация" data-macro-config='${configStr.replace(/'/g, '&#39;')}' contenteditable="false" style="display: inline-block; margin: 0 1px; padding: 1px 6px; border-radius: 4px; background-color: rgb(220 252 231); color: rgb(21 128 61); font-size: 0.75rem; font-family: monospace; cursor: pointer; user-select: none;">✨ AI</span>`;
+    }
+    return '';
+  }).join('');
+}
+
+/**
  * Парсинг DOM элемента в токены
  */
 function parseContentEditable(element: HTMLElement): MappingExpression {
   const tokens: MappingExpression = [];
   
   // Проходим по всем дочерним узлам
-  for (let i = 0; i < element.childNodes.length; i++) {
-    const node = element.childNodes[i];
-    
+  function parseNode(node: Node) {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = node.textContent || '';
       if (text) {
-        tokens.push(createTextToken(text));
+        // Заменяем <br> обратно на \n
+        tokens.push(createTextToken(text.replace(/<br>/g, '\n')));
       }
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const el = node as HTMLElement;
       
-      if (el.hasAttribute(MACRO_DATA_ATTR)) {
+      if (el.tagName === 'BR') {
+        // Обрабатываем <br> как перенос строки
+        if (tokens.length > 0 && tokens[tokens.length - 1].type === 'text') {
+          tokens[tokens.length - 1].value += '\n';
+        } else {
+          tokens.push(createTextToken('\n'));
+        }
+      } else if (el.hasAttribute(MACRO_DATA_ATTR)) {
         const type = el.getAttribute(MACRO_TYPE_ATTR);
         const value = el.getAttribute(MACRO_VALUE_ATTR);
         
@@ -70,49 +104,22 @@ function parseContentEditable(element: HTMLElement): MappingExpression {
           }
         }
       } else {
-        // Рекурсивно обрабатываем вложенные элементы
-        const nestedTokens = parseContentEditable(el);
-        tokens.push(...nestedTokens);
+        // Рекурсивно обрабатываем дочерние узлы
+        el.childNodes.forEach(child => parseNode(child));
       }
     }
   }
 
+  element.childNodes.forEach(child => parseNode(child));
+
   return normalizeExpression(tokens);
-}
-
-/**
- * Рендеринг токенов в HTML для contentEditable
- */
-function renderTokensToHtml(tokens: MappingExpression): string {
-  if (tokens.length === 0) {
-    return '';
-  }
-
-  return tokens.map((token, index) => {
-    if (token.type === 'text') {
-      // Экранируем HTML в тексте
-      return token.value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-    } else if (token.type === 'field') {
-      return `<span ${MACRO_DATA_ATTR}="${index}" ${MACRO_TYPE_ATTR}="field" ${MACRO_VALUE_ATTR}="${token.value}" contenteditable="false" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 text-xs font-mono cursor-default">\u007b\u007b ${token.value} \u007d\u007d</span>`;
-    } else if (token.type === 'function') {
-      const args = token.args?.join(', ') || '';
-      return `<span ${MACRO_DATA_ATTR}="${index}" ${MACRO_TYPE_ATTR}="function" ${MACRO_VALUE_ATTR}="${token.value}" data-macro-args='${JSON.stringify(token.args || [])}' contenteditable="false" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 text-xs font-mono cursor-default">\u007b\u007b ${token.value}(${args}) \u007d\u007d</span>`;
-    } else if (token.type === 'llm') {
-      const configStr = JSON.stringify(token.llmConfig || {});
-      return `<span ${MACRO_DATA_ATTR}="${index}" ${MACRO_TYPE_ATTR}="llm" ${MACRO_VALUE_ATTR}="AI генерация" data-macro-config='${configStr.replace(/'/g, '&#39;')}' contenteditable="false" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 text-xs font-mono cursor-pointer">\u2728 AI генерация</span>`;
-    }
-    return '';
-  }).join('');
 }
 
 export function ExpressionInput({
   value,
   onChange,
   availableFields,
-  placeholder = "Введите выражение или выберите поле...",
+  placeholder = "Введите текст или нажмите Ctrl+Space для вставки полей...",
   disabled = false,
   error = false,
   className,
@@ -121,62 +128,45 @@ export function ExpressionInput({
   const [isFunctionPopupOpen, setIsFunctionPopupOpen] = useState(false);
   const safeValue = Array.isArray(value) ? value : [];
   const editorRef = useRef<HTMLDivElement>(null);
-  const isUpdatingRef = useRef(false);
+  const isInternalUpdateRef = useRef(false);
+  const lastValueRef = useRef<MappingExpression>(safeValue);
 
-  // HTML представление токенов
-  const htmlContent = useMemo(() => {
-    if (safeValue.length === 0) {
-      return '';
-    }
-    return renderTokensToHtml(safeValue);
-  }, [safeValue]);
-
-  // Инициализация содержимого при первом рендере
+  // Синхронизация contenteditableс value извне (только если изменение пришло снаружи)
   useEffect(() => {
-    if (editorRef.current && editorRef.current.innerHTML.trim() === '' && htmlContent) {
-      editorRef.current.innerHTML = htmlContent;
-    } else if (editorRef.current && editorRef.current.innerHTML.trim() === '' && safeValue.length === 0) {
-      // Устанавливаем пустое содержимое для показа placeholder
-      editorRef.current.innerHTML = '';
-    }
-  }, []);
-
-  // Обновляем contentEditable при изменении value извне
-  useEffect(() => {
-    if (!editorRef.current || isUpdatingRef.current) {
+    if (!editorRef.current || isInternalUpdateRef.current) {
+      isInternalUpdateRef.current = false;
       return;
     }
 
-    const currentHtml = editorRef.current.innerHTML.trim();
-    const newHtml = safeValue.length === 0 ? '' : renderTokensToHtml(safeValue);
+    // Проверяем, действительно ли value изменился
+    const valueChanged = JSON.stringify(lastValueRef.current) !== JSON.stringify(safeValue);
     
-    // Сравниваем без пробелов и переносов строк
-    const normalizedCurrent = currentHtml.replace(/\s+/g, ' ').trim();
-    const normalizedNew = newHtml.replace(/\s+/g, ' ').trim();
-    
-    if (normalizedCurrent !== normalizedNew) {
-      const selection = window.getSelection();
-      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (valueChanged) {
+      const newHtml = safeValue.length === 0 ? '' : renderTokensToHtml(safeValue);
       
-      // Сохраняем позицию курсора относительно текста
+      // Сохраняем позицию курсора
+      const selection = window.getSelection();
       let cursorOffset = 0;
-      if (range && editorRef.current.contains(range.startContainer)) {
-        const textBefore = getTextBeforeCursor(editorRef.current, range);
-        cursorOffset = textBefore.length;
+      let isFocused = false;
+      
+      if (selection && selection.rangeCount > 0 && editorRef.current.contains(selection.focusNode)) {
+        isFocused = true;
+        cursorOffset = getTextOffsetBeforeCursor(editorRef.current, selection.getRangeAt(0));
       }
 
       editorRef.current.innerHTML = newHtml || '';
+      lastValueRef.current = safeValue;
 
       // Восстанавливаем курсор
-      if (selection && cursorOffset >= 0) {
+      if (isFocused && selection) {
         try {
-          const newRange = setCursorAtOffset(editorRef.current, cursorOffset);
+          const newRange = setCursorAtTextOffset(editorRef.current, cursorOffset);
           if (newRange) {
             selection.removeAllRanges();
             selection.addRange(newRange);
           }
-        } catch {
-          // Если не удалось восстановить, просто ставим курсор в конец
+        } catch (e) {
+          // Если не удалось восстановить позицию, просто ставим курсор в конец
           const range = document.createRange();
           range.selectNodeContents(editorRef.current);
           range.collapse(false);
@@ -185,59 +175,60 @@ export function ExpressionInput({
         }
       }
     }
-  }, [htmlContent, safeValue]);
+  }, [safeValue]);
 
-  // Получить текст до курсора
-  function getTextBeforeCursor(root: HTMLElement, range: Range): string {
-    const text: string[] = [];
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  // Получить текстовое смещение курсора (игнорируя макросы)
+  function getTextOffsetBeforeCursor(root: HTMLElement, range: Range): number {
+    let offset = 0;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ALL);
+    
     let node: Node | null;
-
     while ((node = walker.nextNode())) {
       if (node === range.startContainer) {
         if (node.nodeType === Node.TEXT_NODE) {
-          text.push(node.textContent?.substring(0, range.startOffset) || '');
+          offset += range.startOffset;
         }
         break;
       }
-
+      
       if (node.nodeType === Node.TEXT_NODE) {
-        text.push(node.textContent || '');
+        offset += (node.textContent || '').length;
       } else if (node.nodeType === Node.ELEMENT_NODE) {
         const el = node as HTMLElement;
-        if (el.hasAttribute(MACRO_DATA_ATTR)) {
-          // Макросы не добавляем в текст для подсчета позиции
+        // Макросы не добавляем в подсчет
+        if (el.hasAttribute && !el.hasAttribute(MACRO_DATA_ATTR) && el.tagName === 'BR') {
+          offset += 1; // <br> считаем как 1 символ
         }
       }
     }
-
-    return text.join('');
+    
+    return offset;
   }
 
-  // Установить курсор на позицию
-  function setCursorAtOffset(root: HTMLElement, offset: number): Range | null {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  // Установить курсор на текстовое смещение
+  function setCursorAtTextOffset(root: HTMLElement, targetOffset: number): Range | null {
+    let offset = 0;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ALL);
+    
     let node: Node | null;
-    let currentOffset = 0;
-
     while ((node = walker.nextNode())) {
       if (node.nodeType === Node.TEXT_NODE) {
-        const textLength = node.textContent?.length || 0;
-        if (currentOffset + textLength >= offset) {
+        const textLength = (node.textContent || '').length;
+        if (offset + textLength >= targetOffset) {
           const range = document.createRange();
-          range.setStart(node, offset - currentOffset);
+          range.setStart(node, Math.min(targetOffset - offset, textLength));
           range.collapse(true);
           return range;
         }
-        currentOffset += textLength;
+        offset += textLength;
       } else if (node.nodeType === Node.ELEMENT_NODE) {
         const el = node as HTMLElement;
-        if (el.hasAttribute(MACRO_DATA_ATTR)) {
-          // Макросы пропускаем
+        if (el.hasAttribute && !el.hasAttribute(MACRO_DATA_ATTR) && el.tagName === 'BR') {
+          offset += 1;
         }
       }
     }
-
+    
     // Если не нашли, ставим в конец
     const range = document.createRange();
     range.selectNodeContents(root);
@@ -245,28 +236,16 @@ export function ExpressionInput({
     return range;
   }
 
-
-  // Обработка изменений в contentEditable
+  // Обработка изменений в contentEditable (ввод текста, удаление)
   const handleInput = useCallback(() => {
-    if (!editorRef.current || isUpdatingRef.current) {
+    if (!editorRef.current) {
       return;
     }
 
-    // Предотвращаем редактирование макросов
-    const macros = editorRef.current.querySelectorAll(`[${MACRO_DATA_ATTR}]`);
-    macros.forEach((macro) => {
-      (macro as HTMLElement).contentEditable = 'false';
-    });
-
-    isUpdatingRef.current = true;
-    try {
-      const tokens = parseContentEditable(editorRef.current);
-      onChange(tokens);
-    } finally {
-      setTimeout(() => {
-        isUpdatingRef.current = false;
-      }, 0);
-    }
+    const tokens = parseContentEditable(editorRef.current);
+    isInternalUpdateRef.current = true;
+    lastValueRef.current = tokens;
+    onChange(tokens);
   }, [onChange]);
 
   // Вставка токена в текущую позицию курсора
@@ -274,50 +253,122 @@ export function ExpressionInput({
     if (!editorRef.current) return;
 
     const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return;
-
-    const range = selection.getRangeAt(0);
-    range.deleteContents();
-
-    // Создаем элемент для макроса
-    const macroSpan = document.createElement('span');
-    macroSpan.setAttribute(MACRO_DATA_ATTR, Date.now().toString());
-    
-    if (token.type === 'field') {
-      macroSpan.setAttribute(MACRO_TYPE_ATTR, 'field');
-      macroSpan.setAttribute(MACRO_VALUE_ATTR, token.value);
-      macroSpan.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 text-xs font-mono cursor-default';
-      macroSpan.contentEditable = 'false';
-      macroSpan.textContent = `{{ ${token.value} }}`;
-    } else if (token.type === 'function') {
-      macroSpan.setAttribute(MACRO_TYPE_ATTR, 'function');
-      macroSpan.setAttribute(MACRO_VALUE_ATTR, token.value);
-      macroSpan.setAttribute('data-macro-args', JSON.stringify(token.args || []));
-      macroSpan.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 text-xs font-mono cursor-default';
-      macroSpan.contentEditable = 'false';
-      const args = token.args?.join(', ') || '';
-      macroSpan.textContent = `{{ ${token.value}(${args}) }}`;
-    } else if (token.type === 'llm') {
-      macroSpan.setAttribute(MACRO_TYPE_ATTR, 'llm');
-      macroSpan.setAttribute(MACRO_VALUE_ATTR, 'AI генерация');
-      macroSpan.setAttribute('data-macro-config', JSON.stringify(token.llmConfig || {}));
-      macroSpan.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 text-xs font-mono cursor-pointer';
-      macroSpan.contentEditable = 'false';
-      macroSpan.innerHTML = '✨ AI генерация';
+    if (!selection || selection.rangeCount === 0) {
+      // Если нет выделения, добавляем в конец
+      const newTokens = [...safeValue, token];
+      isInternalUpdateRef.current = true;
+      lastValueRef.current = newTokens;
+      onChange(newTokens);
+      
+      // Обновляем HTML и ставим курсор в конец
+      setTimeout(() => {
+        if (editorRef.current) {
+          editorRef.current.innerHTML = renderTokensToHtml(newTokens);
+          const range = document.createRange();
+          range.selectNodeContents(editorRef.current);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          editorRef.current.focus();
+        }
+      }, 0);
+      return;
     }
 
-    range.insertNode(macroSpan);
+    const range = selection.getRangeAt(0);
     
-    // Ставим курсор после вставленного элемента
-    const newRange = document.createRange();
-    newRange.setStartAfter(macroSpan);
-    newRange.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(newRange);
-
-    // Триггерим обновление
-    handleInput();
-  }, [handleInput]);
+    // Находим текстовое смещение курсора
+    const textOffset = getTextOffsetBeforeCursor(editorRef.current, range);
+    
+    // Парсим текущее содержимое в токены
+    const currentTokens = parseContentEditable(editorRef.current);
+    
+    // Находим позицию в массиве токенов, куда надо вставить новый токен
+    let tokenOffset = 0;
+    let insertIndex = 0;
+    
+    for (let i = 0; i < currentTokens.length; i++) {
+      const token = currentTokens[i];
+      if (token.type === 'text') {
+        const textLength = token.value.length;
+        if (tokenOffset + textLength >= textOffset) {
+          // Курсор внутри этого текстового токена
+          const offsetInToken = textOffset - tokenOffset;
+          
+          if (offsetInToken === 0) {
+            // В начале токена - вставляем перед ним
+            insertIndex = i;
+          } else if (offsetInToken === textLength) {
+            // В конце токена - вставляем после него
+            insertIndex = i + 1;
+          } else {
+            // В середине - разбиваем текстовый токен
+            const before = token.value.substring(0, offsetInToken);
+            const after = token.value.substring(offsetInToken);
+            const newTokens = [
+              ...currentTokens.slice(0, i),
+              createTextToken(before),
+              token,
+              createTextToken(after),
+              ...currentTokens.slice(i + 1),
+            ];
+            insertIndex = i + 1;
+            // Обновляем currentTokens для вставки
+            currentTokens.splice(i, 1, createTextToken(before), createTextToken(after));
+            tokenOffset += textLength;
+            break;
+          }
+          tokenOffset += textLength;
+          break;
+        }
+        tokenOffset += textLength;
+      } else {
+        // Макрос - не добавляем к смещению, но увеличиваем индекс
+        insertIndex = i + 1;
+      }
+    }
+    
+    // Если курсор в конце, вставляем в конец
+    if (insertIndex === 0 && currentTokens.length > 0) {
+      insertIndex = currentTokens.length;
+    }
+    
+    // Вставляем новый токен
+    const newTokens = [
+      ...currentTokens.slice(0, insertIndex),
+      token,
+      ...currentTokens.slice(insertIndex),
+    ];
+    
+    isInternalUpdateRef.current = true;
+    lastValueRef.current = newTokens;
+    onChange(newTokens);
+    
+    // Обновляем HTML и ставим курсор после вставленного токена
+    setTimeout(() => {
+      if (editorRef.current && selection) {
+        editorRef.current.innerHTML = renderTokensToHtml(newTokens);
+        
+        // Ставим курсор после вставленного макроса
+        const newOffset = textOffset;
+        try {
+          const newRange = setCursorAtTextOffset(editorRef.current, newOffset);
+          if (newRange) {
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+          }
+        } catch {
+          // Просто ставим курсор в конец
+          const range = document.createRange();
+          range.selectNodeContents(editorRef.current);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        editorRef.current.focus();
+      }
+    }, 0);
+  }, [safeValue, onChange]);
 
   // Вставка токена поля
   const handleFieldSelect = useCallback((fieldPath: string) => {
@@ -366,70 +417,18 @@ export function ExpressionInput({
       setIsFunctionPopupOpen(false);
       return;
     }
-
-    // Backspace на макросе - удаляем его
-    if (e.key === 'Backspace' && editorRef.current) {
-      const selection = window.getSelection();
-      if (selection && selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        const startContainer = range.startContainer;
-        
-        // Проверяем, если курсор сразу после макроса
-        if (startContainer.nodeType === Node.TEXT_NODE && range.startOffset === 0) {
-          const prevSibling = startContainer.previousSibling;
-          if (prevSibling && (prevSibling as HTMLElement).hasAttribute?.(MACRO_DATA_ATTR)) {
-            e.preventDefault();
-            prevSibling.remove();
-            handleInput();
-            return;
-          }
-        }
-        
-        // Если выделен макрос целиком
-        if (range.startContainer === range.endContainer) {
-          const parent = range.startContainer.parentElement;
-          if (parent && parent.hasAttribute(MACRO_DATA_ATTR)) {
-            e.preventDefault();
-            parent.remove();
-            handleInput();
-            return;
-          }
-        }
-      }
-    }
-
-    // Delete на макросе - удаляем его
-    if (e.key === 'Delete' && editorRef.current) {
-      const selection = window.getSelection();
-      if (selection && selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        
-        // Если выделен макрос целиком
-        if (range.startContainer === range.endContainer) {
-          const parent = range.startContainer.parentElement;
-          if (parent && parent.hasAttribute(MACRO_DATA_ATTR)) {
-            e.preventDefault();
-            parent.remove();
-            handleInput();
-            return;
-          }
-        }
-      }
-    }
-  }, [disabled, handleInput]);
+  }, [disabled]);
 
   // Клик для открытия popup
-  const handleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+  const handleClick = useCallback(() => {
     if (disabled) return;
     
-    const target = e.target as HTMLElement;
-    // Если клик на макросе - не открываем popup
-    if (target.hasAttribute(MACRO_DATA_ATTR) || target.closest(`[${MACRO_DATA_ATTR}]`)) {
-      return;
+    // Открываем popup при клике в любое место input
+    if (!isFieldPopupOpen && !isFunctionPopupOpen) {
+      setIsFunctionPopupOpen(false);
+      setIsFieldPopupOpen(true);
     }
-    
-    // Если клик не на макросе, можно открыть popup (но не делаем это автоматически)
-  }, [disabled]);
+  }, [disabled, isFieldPopupOpen, isFunctionPopupOpen]);
 
   // Определяем, какой попап показывать
   const isAnyPopupOpen = isFieldPopupOpen || isFunctionPopupOpen;
@@ -460,11 +459,15 @@ export function ExpressionInput({
               disabled && "cursor-not-allowed opacity-50",
               error && "border-destructive",
               !disabled && "cursor-text",
-              "[&:empty]:before:content-[attr(data-placeholder)]",
-              "[&:empty]:before:text-muted-foreground",
+              "empty:before:content-[attr(data-placeholder)]",
+              "empty:before:text-muted-foreground",
+              "empty:before:pointer-events-none",
             )}
             data-placeholder={placeholder}
-            style={{ whiteSpace: 'pre-wrap' }}
+            style={{ 
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
           />
         </PopoverTrigger>
         
