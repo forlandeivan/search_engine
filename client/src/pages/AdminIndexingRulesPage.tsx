@@ -38,7 +38,7 @@ import {
   type IndexingRulesDto,
 } from "@shared/indexing-rules";
 import {
-  useKnowledgeBaseIndexingPolicy,
+  useGlobalKnowledgeBaseIndexingPolicy,
   useUpdateKnowledgeBaseIndexingPolicy,
 } from "@/hooks/useKnowledgeBaseIndexingPolicy";
 import {
@@ -678,7 +678,7 @@ export default function AdminIndexingRulesPage() {
 }
 
 function KnowledgeBaseIndexingPolicyTab() {
-  const { data, isLoading, isError, error, refetch } = useKnowledgeBaseIndexingPolicy();
+  const { data, isLoading, isError, error, refetch } = useGlobalKnowledgeBaseIndexingPolicy();
   const updateMutation = useUpdateKnowledgeBaseIndexingPolicy();
   const providersQuery = useEmbeddingProviders();
   const { toast } = useToast();
