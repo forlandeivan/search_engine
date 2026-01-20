@@ -9,6 +9,7 @@ import { getQdrantClient } from "./qdrant";
 import { ensureCollectionCreatedIfNeeded } from "./qdrant-collections";
 import type { CollectionSchemaFieldInput } from "@shared/vectorization";
 import { renderLiquidTemplate, castValueToType, normalizeArrayValue } from "@shared/vectorization";
+import { ExpressionInterpreter } from "./services/expression-interpreter";
 import { buildVectorPayload } from "./qdrant-utils";
 import type { Schemas } from "@qdrant/js-client-rest";
 import { fetchAccessToken } from "./llm-access-token";
@@ -18,7 +19,7 @@ import { log } from "./vite";
 import fs from "fs";
 import path from "path";
 import { db, pool } from "./db";
-import { knowledgeDocuments } from "@shared/schema";
+import { knowledgeDocuments, knowledgeNodes } from "@shared/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { applyTlsPreferences, type NodeFetchOptions } from "./http-utils";
 import fetch, { Headers } from "node-fetch";
@@ -52,22 +53,241 @@ function removeUndefinedDeep<T>(value: T): T {
   return value;
 }
 
-function buildCustomPayloadFromSchema(
+async function buildCustomPayloadFromSchema(
   fields: CollectionSchemaFieldInput[],
   context: Record<string, unknown>,
-): Record<string, unknown> {
-  return fields.reduce<Record<string, unknown>>((acc, field) => {
-    try {
-      const rendered = renderLiquidTemplate(field.template ?? "", context);
-      const typedValue = castValueToType(rendered, field.type);
-      acc[field.name] = normalizeArrayValue(typedValue, field.isArray);
-    } catch (error) {
-      workerLog(`Не удалось обработать поле схемы "${field.name}": ${error instanceof Error ? error.message : String(error)}`);
-      acc[field.name] = null;
+  workspaceId: string,
+): Promise<Record<string, unknown>> {
+  const result: Record<string, unknown> = {};
+  
+  // Проверяем, есть ли LLM токены в шаблонах
+  const hasLlmTokens = fields.some((field) => {
+    const template = field.template ?? "";
+    return template.includes("{{LLM:") || template.includes("LLM:");
+  });
+
+  // Если есть LLM токены, используем ExpressionInterpreter
+  if (hasLlmTokens) {
+    const interpreter = new ExpressionInterpreter(workspaceId);
+    
+    for (const field of fields) {
+      try {
+        const template = field.template ?? "";
+        
+        // Парсим шаблон в expression
+        const expression = parseTemplateToExpressionFromString(template);
+        
+        if (expression.length > 0) {
+          // Вычисляем выражение через interpreter
+          const evaluationResult = await interpreter.evaluate(expression, context);
+          const rendered = evaluationResult.success ? evaluationResult.value : "";
+          const typedValue = castValueToType(rendered, field.type);
+          result[field.name] = normalizeArrayValue(typedValue, field.isArray);
+        } else {
+          result[field.name] = null;
+        }
+      } catch (error) {
+        workerLog(`Не удалось обработать поле схемы "${field.name}": ${error instanceof Error ? error.message : String(error)}`);
+        result[field.name] = null;
+      }
+    }
+  } else {
+    // Если нет LLM токенов, используем простой renderLiquidTemplate
+    for (const field of fields) {
+      try {
+        const rendered = renderLiquidTemplate(field.template ?? "", context);
+        const typedValue = castValueToType(rendered, field.type);
+        result[field.name] = normalizeArrayValue(typedValue, field.isArray);
+      } catch (error) {
+        workerLog(`Не удалось обработать поле схемы "${field.name}": ${error instanceof Error ? error.message : String(error)}`);
+        result[field.name] = null;
+      }
+    }
+  }
+  
+  return result;
+}
+
+/**
+ * Парсит строковый шаблон в MappingExpression (упрощённая версия для сервера)
+ */
+function parseTemplateToExpressionFromString(template: string): import("@shared/json-import").MappingExpression {
+  if (!template || template.trim().length === 0) {
+    return [];
+  }
+
+  const { createFieldToken, createTextToken, createFunctionToken, createLlmToken } = require("@shared/json-import");
+  const tokens: import("@shared/json-import").ExpressionToken[] = [];
+  
+  // Regex для парсинга {{field}}, {{FUNC(...)}}, {{LLM:...}} и текста
+  const regex = /\{\{([^}]+)\}\}|([^{]+)/g;
+  let match;
+  let lastIndex = 0;
+
+  while ((match = regex.exec(template)) !== null) {
+    // Если есть текст перед макросом
+    if (match.index > lastIndex) {
+      const textBefore = template.slice(lastIndex, match.index);
+      if (textBefore) {
+        const unescaped = textBefore.replace(/\\\{/g, "{").replace(/\\\}/g, "}");
+        tokens.push(createTextToken(unescaped));
+      }
     }
 
-    return acc;
-  }, {});
+    if (match[1]) {
+      // Это макрос {{...}}
+      const content = match[1].trim();
+      
+      // Проверяем LLM токен
+      if (content.startsWith("LLM:")) {
+        try {
+          const configStr = content.slice(4);
+          const config = JSON.parse(configStr);
+          tokens.push(createLlmToken(config, "LLM"));
+        } catch {
+          // Если не удалось распарсить, игнорируем
+        }
+      }
+      // Проверяем функцию
+      else {
+        const functionMatch = parseFunctionCall(content);
+        if (functionMatch) {
+          tokens.push(createFunctionToken(functionMatch.name, functionMatch.args));
+        } else {
+          tokens.push(createFieldToken(content));
+        }
+      }
+    } else if (match[2]) {
+      const unescaped = match[2].replace(/\\\{/g, "{").replace(/\\\}/g, "}");
+      tokens.push(createTextToken(unescaped));
+    }
+
+    lastIndex = regex.lastIndex;
+  }
+
+  // Добавляем оставшийся текст
+  if (lastIndex < template.length) {
+    const remainingText = template.slice(lastIndex);
+    if (remainingText) {
+      const unescaped = remainingText.replace(/\\\{/g, "{").replace(/\\\}/g, "}");
+      tokens.push(createTextToken(unescaped));
+    }
+  }
+
+  return tokens.length > 0 ? tokens : [];
+}
+
+/**
+ * Парсит вызов функции с поддержкой вложенных макросов
+ */
+function parseFunctionCall(content: string): { name: string; args: string[] } | null {
+  const funcMatch = content.match(/^(\w+)\s*\(/);
+  if (!funcMatch) {
+    return null;
+  }
+
+  const funcName = funcMatch[1];
+  const argsStart = funcMatch[0].length;
+  
+  // Находим закрывающую скобку
+  let depth = 1;
+  let i = argsStart;
+  let inString = false;
+  let stringChar: string | null = null;
+  
+  while (i < content.length && depth > 0) {
+    const char = content[i];
+    
+    if (!inString && (char === '"' || char === "'")) {
+      inString = true;
+      stringChar = char;
+    } else if (inString && char === stringChar) {
+      inString = false;
+      stringChar = null;
+    } else if (!inString) {
+      if (char === "(") {
+        depth++;
+      } else if (char === ")") {
+        depth--;
+      }
+    }
+    
+    i++;
+  }
+  
+  if (depth !== 0) {
+    return null;
+  }
+  
+  const argsStr = content.slice(argsStart, i - 1);
+  const args = parseFunctionArgs(argsStr);
+  
+  return { name: funcName, args };
+}
+
+/**
+ * Парсит аргументы функции
+ */
+function parseFunctionArgs(argsStr: string): string[] {
+  if (!argsStr.trim()) {
+    return [];
+  }
+  
+  const args: string[] = [];
+  let currentArg = "";
+  let depth = 0;
+  let inString = false;
+  let stringChar: string | null = null;
+  let inMacro = false;
+  let macroDepth = 0;
+  
+  for (let i = 0; i < argsStr.length; i++) {
+    const char = argsStr[i];
+    const nextChar = argsStr[i + 1];
+    
+    if (!inString && !inMacro && (char === '"' || char === "'")) {
+      inString = true;
+      stringChar = char;
+      currentArg += char;
+    } else if (inString && char === stringChar) {
+      inString = false;
+      stringChar = null;
+      currentArg += char;
+    } else if (!inString && char === "{" && nextChar === "{") {
+      inMacro = true;
+      macroDepth = 1;
+      currentArg += char + nextChar;
+      i++;
+    } else if (inMacro && char === "}") {
+      if (nextChar === "}") {
+        macroDepth--;
+        currentArg += char + nextChar;
+        i++;
+        if (macroDepth === 0) {
+          inMacro = false;
+        }
+      } else {
+        currentArg += char;
+      }
+    } else if (!inString && !inMacro && char === "(") {
+      depth++;
+      currentArg += char;
+    } else if (!inString && !inMacro && char === ")") {
+      depth--;
+      currentArg += char;
+    } else if (!inString && !inMacro && depth === 0 && char === ",") {
+      args.push(currentArg.trim());
+      currentArg = "";
+    } else {
+      currentArg += char;
+    }
+  }
+  
+  if (currentArg.trim()) {
+    args.push(currentArg.trim());
+  }
+  
+  return args;
 }
 
 async function fetchEmbeddingVectorForChunk(
@@ -632,6 +852,26 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       return;
     }
 
+    // Получаем metadata и slug из базы данных
+    const [documentMetadataRow] = await db
+      .select({
+        metadata: knowledgeDocuments.metadata,
+        slug: knowledgeNodes.slug,
+      })
+      .from(knowledgeDocuments)
+      .innerJoin(knowledgeNodes, eq(knowledgeNodes.id, knowledgeDocuments.nodeId))
+      .where(
+        and(
+          eq(knowledgeDocuments.id, job.documentId),
+          eq(knowledgeDocuments.baseId, job.baseId),
+          eq(knowledgeDocuments.workspaceId, job.workspaceId),
+        ),
+      )
+      .limit(1);
+    
+    const documentMetadata = (documentMetadataRow?.metadata as Record<string, unknown>) ?? {};
+    const documentSlug = documentMetadataRow?.slug ?? null;
+
     workerLog(`got node detail for job ${job.id}, fetching config...`);
     
     // Получаем action для проверки кастомного config
@@ -1163,7 +1403,10 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
         }
       : null;
 
-    const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
+    // Обрабатываем чанки с поддержкой async операций (LLM токены)
+    const points: Schemas["PointStruct"][] = [];
+    
+    for (const result of embeddingResults) {
       const { chunk, vector, usageTokens, embeddingId, index } = result;
       const resolvedChunkId = chunk.id ?? `${nodeDetail.id}-chunk-${index + 1}`;
       const vectorId = chunk.vectorId;
@@ -1172,6 +1415,19 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       }
 
       const templateContext = removeUndefinedDeep({
+        // Добавляем переменные для контекста индексации
+        title: nodeDetail.title ?? "",
+        documentId: nodeDetail.id,
+        nodeSlug: documentSlug,
+        chunk_text: chunk.text,
+        chunk_index: index,
+        chunk_ordinal: chunk.chunkOrdinal ?? index + 1,
+        versionId: version?.id ?? "",
+        versionNumber: version?.number ?? 0,
+        knowledgeBaseId: base.id,
+        knowledgeBaseName: base.name ?? "",
+        metadata: documentMetadata,
+        // Старые поля для обратной совместимости
         document: {
           id: nodeDetail.id,
           title: nodeDetail.title ?? null,
@@ -1292,7 +1548,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
         },
       };
 
-      const customPayload = hasCustomSchema ? buildCustomPayloadFromSchema(schemaFields, templateContext) : null;
+      // Обрабатываем кастомную схему с поддержкой LLM токенов
+      const customPayload = hasCustomSchema ? await buildCustomPayloadFromSchema(schemaFields, templateContext, job.workspaceId) : null;
       const payloadSource = customPayload ?? rawPayload;
       const payload = removeUndefinedDeep({
         ...(payloadSource as Record<string, unknown>),
@@ -1312,12 +1569,12 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
         embeddingProvider!.qdrantConfig?.vectorFieldName,
       ) as Schemas["PointStruct"]["vector"];
 
-      return {
+      points.push({
         id: vectorId,
         vector: pointVectorPayload,
         payload,
-      };
-    });
+      });
+    }
 
     logToFile(
       `upsert start doc=${job.documentId} revision=${revisionId} collection=${collectionName} points=${points.length}`,

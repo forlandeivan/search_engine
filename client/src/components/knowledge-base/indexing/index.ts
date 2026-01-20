@@ -5,3 +5,4 @@ export { EmbeddingsConfigStep } from "./EmbeddingsConfigStep";
 export { SchemaFieldsStep } from "./SchemaFieldsStep";
 export { SchemaFieldEditor } from "./SchemaFieldEditor";
 export { IndexingConfirmStep } from "./IndexingConfirmStep";
+export { SuggestFieldsDialog } from "./SuggestFieldsDialog";

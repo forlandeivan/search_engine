@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -10,6 +10,7 @@ import type { SchemaFieldConfig } from "@shared/knowledge-base-indexing";
 import { DEFAULT_SCHEMA_FIELDS, COLLECTION_FIELD_TYPES } from "@shared/knowledge-base-indexing";
 import { createFieldToken } from "@shared/json-import";
 import { SchemaFieldEditor } from "./SchemaFieldEditor";
+import { SuggestFieldsDialog } from "./SuggestFieldsDialog";
 
 interface SchemaFieldsStepProps {
   config: {
@@ -38,6 +39,7 @@ export function SchemaFieldsStep({
   const [fields, setFields] = useState<SchemaFieldConfig[]>(config.schemaFields);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [showSuggestDialog, setShowSuggestDialog] = useState(false);
+  const queryClient = useQueryClient();
 
   // Загрузка ключей метаданных для автоподбора
   const { data: metadataKeys, isLoading: metadataLoading } = useQuery<string[]>({
@@ -117,9 +119,27 @@ export function SchemaFieldsStep({
 
   // Автоподбор полей
   const handleSuggestFields = async () => {
-    // TODO: Реализовать логику автоподбора
-    // Пока просто показываем заглушку
+    // Загружаем ключи метаданных
+    await queryClient.fetchQuery({
+      queryKey: ["knowledge-base-metadata-keys", baseId, workspaceId],
+      queryFn: async () => {
+        const res = await apiRequest("GET", `/api/knowledge/bases/${baseId}/metadata-keys`, undefined, undefined, {
+          workspaceId,
+        });
+        if (!res.ok) {
+          return [];
+        }
+        return (await res.json()) as string[];
+      },
+    });
     setShowSuggestDialog(true);
+  };
+
+  const handleAcceptSuggestedFields = (newFields: SchemaFieldConfig[]) => {
+    const newFieldsList = [...fields, ...newFields];
+    setFields(newFieldsList);
+    onChange({ schemaFields: newFieldsList });
+    setShowSuggestDialog(false);
   };
 
   // Поле для векторизации (обязательное)
@@ -229,9 +249,18 @@ export function SchemaFieldsStep({
       {fields.length >= 50 && (
         <Alert>
           <AlertTriangle className="h-4 w-4" />
-          <AlertDescription>Достигнут лимит полей (50). Удалите некоторые поля перед добавлением новых.</AlertDescription>
+          <AlertDescription>Достигнут лимит полей (50). Удалите некоторые поля перед добавлением новых.          </AlertDescription>
         </Alert>
       )}
+
+      {/* Диалог автоподбора полей */}
+      <SuggestFieldsDialog
+        open={showSuggestDialog}
+        onOpenChange={setShowSuggestDialog}
+        metadataKeys={metadataKeys}
+        onAccept={handleAcceptSuggestedFields}
+        existingFields={fields}
+      />
     </div>
   );
 }

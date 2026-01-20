@@ -17,6 +17,9 @@
 import { Router, type Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { storage } from '../storage';
+import { db } from '../db';
+import { knowledgeDocuments } from '@shared/schema';
+import { and, eq } from 'drizzle-orm';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import {
@@ -692,9 +695,33 @@ knowledgeBaseRouter.get('/bases/:baseId/metadata-keys', asyncHandler(async (req,
     return res.status(404).json({ error: 'База знаний не найдена' });
   }
 
-  // TODO: Реализовать получение уникальных ключей метаданных из документов базы
-  // Пока возвращаем пустой массив
-  res.json([]);
+  // Получаем все документы базы знаний с метаданными
+  const documents = await db
+    .select({
+      metadata: knowledgeDocuments.metadata,
+    })
+    .from(knowledgeDocuments)
+    .where(
+      and(
+        eq(knowledgeDocuments.baseId, baseId),
+        eq(knowledgeDocuments.workspaceId, workspaceId),
+      ),
+    )
+    .limit(1000); // Ограничиваем для производительности
+
+  // Собираем уникальные ключи из метаданных
+  const metadataKeys = new Set<string>();
+  
+  for (const doc of documents) {
+    if (doc.metadata && typeof doc.metadata === "object" && !Array.isArray(doc.metadata)) {
+      const metadata = doc.metadata as Record<string, unknown>;
+      for (const key of Object.keys(metadata)) {
+        metadataKeys.add(key);
+      }
+    }
+  }
+
+  res.json(Array.from(metadataKeys).sort());
 }));
 
 /**
