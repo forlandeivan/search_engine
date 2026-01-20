@@ -331,6 +331,32 @@ export async function generatePresignedPartUrls(
   return urls;
 }
 
+export async function uploadJsonImportPart(
+  workspaceId: string,
+  fileKey: string,
+  uploadId: string,
+  partNumber: number,
+  partData: Buffer | Readable,
+): Promise<string> {
+  const bucket = await ensureWorkspaceBucketExists(workspaceId);
+
+  const command = new UploadPartCommand({
+    Bucket: bucket,
+    Key: fileKey,
+    UploadId: uploadId,
+    PartNumber: partNumber,
+    Body: partData,
+  });
+
+  const response = await minioClient.send(command);
+  if (!response.ETag) {
+    throw new Error(`Failed to upload part ${partNumber}`);
+  }
+
+  // Remove quotes from ETag if present
+  return response.ETag.replace(/^"|"$/g, "");
+}
+
 export async function completeJsonImportMultipartUpload(
   workspaceId: string,
   fileKey: string,

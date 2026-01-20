@@ -16,6 +16,7 @@
 
 import { Router, type Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
 import { storage } from '../storage';
 import { db } from '../db';
 import { knowledgeDocuments } from '@shared/schema';
@@ -52,7 +53,7 @@ import type {
 import { isMappingConfigV2, migrateMappingConfigV1ToV2 } from '@shared/json-import';
 import {
   initJsonImportMultipartUpload,
-  generatePresignedPartUrls,
+  uploadJsonImportPart,
   completeJsonImportMultipartUpload,
   abortJsonImportMultipartUpload,
 } from '../workspace-storage-service';
@@ -61,6 +62,14 @@ import { analyzeJsonStructure } from '../json-import/structure-analyzer';
 const logger = createLogger('knowledge-base');
 
 export const knowledgeBaseRouter = Router();
+
+// Multer для загрузки частей файла
+const uploadPart = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB per part
+  },
+});
 
 // ============================================================================
 // Helper Functions
@@ -833,28 +842,59 @@ knowledgeBaseRouter.post('/json-import/upload/init', asyncHandler(async (req, re
       payload.contentType,
     );
 
-    const presignedUrls = await generatePresignedPartUrls(
-      workspaceId,
-      result.fileKey,
-      result.uploadId,
-      result.totalParts,
-    );
-
+    // Не возвращаем presigned URLs - клиент будет загружать через бэкенд
     res.json({
       uploadId: result.uploadId,
       fileKey: result.fileKey,
       partSize: result.partSize,
       totalParts: result.totalParts,
-      presignedUrls: presignedUrls.map(p => ({
-        partNumber: p.partNumber,
-        url: p.url,
-        expiresAt: p.expiresAt,
-      })),
     });
   } catch (error) {
     logger.error('Failed to init multipart upload', { error, workspaceId, fileName: payload.fileName });
     res.status(500).json({ 
       error: error instanceof Error ? error.message : 'Не удалось инициализировать загрузку файла' 
+    });
+  }
+}));
+
+/**
+ * POST /json-import/upload/part
+ * Upload a single part of multipart upload
+ */
+knowledgeBaseRouter.post('/json-import/upload/part', uploadPart.single('part'), asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const uploadId = req.body.uploadId as string;
+  const fileKey = req.body.fileKey as string;
+  const partNumber = Number(req.body.partNumber);
+
+  if (!uploadId || !fileKey || !partNumber || partNumber < 1) {
+    return res.status(400).json({ error: 'Необходимы uploadId, fileKey и partNumber' });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'Необходима часть файла в теле запроса' });
+  }
+
+  try {
+    const etag = await uploadJsonImportPart(
+      workspaceId,
+      fileKey,
+      uploadId,
+      partNumber,
+      req.file.buffer,
+    );
+
+    res.json({
+      partNumber,
+      etag,
+    });
+  } catch (error) {
+    logger.error('Failed to upload part', { error, workspaceId, uploadId, partNumber });
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Не удалось загрузить часть файла' 
     });
   }
 }));

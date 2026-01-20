@@ -14,11 +14,6 @@ interface InitUploadResponse {
   fileKey: string;
   partSize: number;
   totalParts: number;
-  presignedUrls: Array<{
-    partNumber: number;
-    url: string;
-    expiresAt: string;
-  }>;
 }
 
 interface CompleteUploadResponse {
@@ -62,7 +57,7 @@ export function useJsonImportUpload(workspaceId: string) {
 
         const initData = (await initResponse.json()) as InitUploadResponse;
 
-        // Step 2: Upload parts
+        // Step 2: Upload parts through backend
         const parts: Array<{ partNumber: number; etag: string }> = [];
         const partSize = initData.partSize;
         const totalParts = initData.totalParts;
@@ -76,30 +71,28 @@ export function useJsonImportUpload(workspaceId: string) {
           const end = Math.min(start + partSize, file.size);
           const part = file.slice(start, end);
 
-          const presignedUrl = initData.presignedUrls.find((p) => p.partNumber === partNumber);
-          if (!presignedUrl) {
-            throw new Error(`Не найден presigned URL для части ${partNumber}`);
-          }
+          // Upload part through backend instead of directly to MinIO
+          const formData = new FormData();
+          formData.append("part", part);
+          formData.append("uploadId", initData.uploadId);
+          formData.append("fileKey", initData.fileKey);
+          formData.append("partNumber", partNumber.toString());
 
-          // Upload part
-          const uploadResponse = await fetch(presignedUrl.url, {
-            method: "PUT",
-            body: part,
-            signal: controller.signal,
-          });
+          const uploadResponse = await apiRequest(
+            "POST",
+            "/api/knowledge/json-import/upload/part",
+            formData,
+            undefined,
+            { workspaceId, signal: controller.signal },
+          );
 
           if (!uploadResponse.ok) {
-            throw new Error(`Ошибка загрузки части ${partNumber}`);
+            const errorData = await uploadResponse.json().catch(() => ({ error: "Unknown error" }));
+            throw new Error(errorData.error || `Ошибка загрузки части ${partNumber}`);
           }
 
-          const etag = uploadResponse.headers.get("ETag");
-          if (!etag) {
-            throw new Error(`Не получен ETag для части ${partNumber}`);
-          }
-
-          // Remove quotes from ETag if present
-          const cleanEtag = etag.replace(/^"|"$/g, "");
-          parts.push({ partNumber, etag: cleanEtag });
+          const uploadResult = (await uploadResponse.json()) as { partNumber: number; etag: string };
+          parts.push({ partNumber: uploadResult.partNumber, etag: uploadResult.etag });
 
           // Update progress
           const uploadedBytes = end;
