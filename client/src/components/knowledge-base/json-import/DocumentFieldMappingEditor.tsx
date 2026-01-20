@@ -140,9 +140,16 @@ export function DocumentFieldMappingEditor({
     onConfigChange(newConfig);
   };
 
-  // Автоматическое предложение маппинга
-  const handleApplySuggestions = () => {
-    const suggestions = suggestMappingV2(analysis.fields);
+  // Автоматическое предложение маппинга для основных полей
+  const handleApplyDocumentSuggestions = () => {
+    const suggestions = suggestDocumentFields(analysis.fields, config);
+    setConfig(suggestions);
+    onConfigChange(suggestions);
+  };
+
+  // Автоматическое предложение маппинга для метаданных
+  const handleApplyMetadataSuggestions = () => {
+    const suggestions = suggestMetadataFields(analysis.fields, config);
     setConfig(suggestions);
     onConfigChange(suggestions);
   };
@@ -162,17 +169,11 @@ export function DocumentFieldMappingEditor({
   return (
     <div className="space-y-6">
       {/* Заголовок */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">Настройка маппинга полей</h3>
-          <p className="text-sm text-muted-foreground">
-            Укажите, какие поля JSON соответствуют полям документа
-          </p>
-        </div>
-        <Button type="button" variant="outline" onClick={handleApplySuggestions}>
-          <Sparkles className="mr-2 h-4 w-4" />
-          Автоматически
-        </Button>
+      <div>
+        <h3 className="text-lg font-semibold">Настройка маппинга полей</h3>
+        <p className="text-sm text-muted-foreground">
+          Укажите, какие поля JSON соответствуют полям документа
+        </p>
       </div>
 
       {/* Ошибки валидации */}
@@ -192,10 +193,23 @@ export function DocumentFieldMappingEditor({
       {/* Основные поля документа */}
       <Card>
         <CardHeader>
-          <CardTitle>Поля документа</CardTitle>
-          <CardDescription>
-            Для каждого поля укажите выражение. Кликните на поле ввода, чтобы выбрать поле JSON.
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Поля документа</CardTitle>
+              <CardDescription>
+                Для каждого поля укажите выражение. Кликните на поле ввода, чтобы выбрать поле JSON.
+              </CardDescription>
+            </div>
+            <Button 
+              type="button" 
+              variant="outline" 
+              size="sm"
+              onClick={handleApplyDocumentSuggestions}
+            >
+              <Sparkles className="mr-2 h-4 w-4" />
+              Автоподстановка
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           {DOCUMENT_FIELDS.map((field) => (
@@ -224,10 +238,23 @@ export function DocumentFieldMappingEditor({
       {/* Метаданные */}
       <Card>
         <CardHeader>
-          <CardTitle>Метаданные</CardTitle>
-          <CardDescription>
-            Дополнительные поля, которые будут сохранены в метаданных документа
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Метаданные</CardTitle>
+              <CardDescription>
+                Дополнительные поля, которые будут сохранены в метаданных документа
+              </CardDescription>
+            </div>
+            <Button 
+              type="button" 
+              variant="outline" 
+              size="sm"
+              onClick={handleApplyMetadataSuggestions}
+            >
+              <Sparkles className="mr-2 h-4 w-4" />
+              Автоподстановка
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <MetadataFieldsEditor
@@ -261,18 +288,18 @@ export function DocumentFieldMappingEditor({
 }
 
 /**
- * Автоматическое предложение маппинга на основе имён полей
+ * Автоматическое предложение маппинга для основных полей документа
  */
-function suggestMappingV2(fields: FieldInfo[]): MappingConfigV2 {
+function suggestDocumentFields(fields: FieldInfo[], currentConfig: MappingConfigV2): MappingConfigV2 {
   const TITLE_PATTERNS = ['title', 'name', 'header', 'subject', 'heading', 'название', 'заголовок'];
   const CONTENT_PATTERNS = ['content', 'text', 'body', 'description', 'article', 'контент', 'текст'];
   const ID_PATTERNS = ['id', '_id', 'uuid', 'key', 'identifier'];
 
   const config: MappingConfigV2 = {
+    ...currentConfig,
     version: 2,
     title: { expression: [] },
     content: { expression: [], required: true },
-    metadata: [],
   };
 
   for (const field of fields) {
@@ -291,8 +318,60 @@ function suggestMappingV2(fields: FieldInfo[]): MappingConfigV2 {
       if (config.content.expression.length === 0) {
         config.content = { expression: [createFieldToken(field.path)], required: true };
       }
-    } else {
-      // Остальные поля — в метаданные
+    }
+  }
+
+  return config;
+}
+
+/**
+ * Автоматическое предложение маппинга для метаданных
+ */
+function suggestMetadataFields(fields: FieldInfo[], currentConfig: MappingConfigV2): MappingConfigV2 {
+  const TITLE_PATTERNS = ['title', 'name', 'header', 'subject', 'heading', 'название', 'заголовок'];
+  const CONTENT_PATTERNS = ['content', 'text', 'body', 'description', 'article', 'контент', 'текст'];
+  const ID_PATTERNS = ['id', '_id', 'uuid', 'key', 'identifier'];
+
+  const config: MappingConfigV2 = {
+    ...currentConfig,
+    metadata: [],
+  };
+
+  // Определяем, какие поля уже использованы в основных полях документа
+  const usedPaths = new Set<string>();
+  
+  // Извлекаем пути из основных полей
+  const extractPaths = (expression: MappingExpression) => {
+    expression.forEach(token => {
+      if (token.type === 'field') {
+        usedPaths.add(token.value);
+      }
+    });
+  };
+
+  if (currentConfig.id) extractPaths(currentConfig.id.expression);
+  extractPaths(currentConfig.title.expression);
+  extractPaths(currentConfig.content.expression);
+  if (currentConfig.contentHtml) extractPaths(currentConfig.contentHtml.expression);
+  if (currentConfig.contentMd) extractPaths(currentConfig.contentMd.expression);
+
+  // Добавляем в метаданные все остальные поля
+  for (const field of fields) {
+    const lowerName = field.key.toLowerCase();
+    const lowerPath = field.path.toLowerCase();
+
+    // Пропускаем поля, которые используются в основных полях
+    if (usedPaths.has(field.path)) {
+      continue;
+    }
+
+    // Пропускаем поля, которые явно похожи на основные
+    const isMainField = 
+      ID_PATTERNS.some((p) => lowerName.includes(p) || lowerPath.includes(p)) ||
+      TITLE_PATTERNS.some((p) => lowerName.includes(p) || lowerPath.includes(p)) ||
+      CONTENT_PATTERNS.some((p) => lowerName.includes(p) || lowerPath.includes(p));
+
+    if (!isMainField) {
       config.metadata.push({
         key: field.key,
         expression: [createFieldToken(field.path)],

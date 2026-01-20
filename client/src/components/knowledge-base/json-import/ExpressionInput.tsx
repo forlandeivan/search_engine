@@ -3,6 +3,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { FieldTokenPopup } from "./FieldTokenPopup";
 import { FunctionTokenPopup } from "./FunctionTokenPopup";
+import { LLMTokenConfigModal } from "./LLMTokenConfigModal";
 import type { MappingExpression, FieldInfo, LLMTokenConfig, ExpressionToken as ExpressionTokenType } from "@shared/json-import";
 import { createFieldToken, createFunctionToken, createTextToken, createLlmToken } from "@shared/json-import";
 import { normalizeExpression } from "@/lib/expression-utils";
@@ -126,6 +127,7 @@ export function ExpressionInput({
 }: ExpressionInputProps) {
   const [isFieldPopupOpen, setIsFieldPopupOpen] = useState(false);
   const [isFunctionPopupOpen, setIsFunctionPopupOpen] = useState(false);
+  const [editingLlmTokenIndex, setEditingLlmTokenIndex] = useState<number | null>(null);
   const safeValue = Array.isArray(value) ? value : [];
   const editorRef = useRef<HTMLDivElement>(null);
   const isInternalUpdateRef = useRef(false);
@@ -419,9 +421,21 @@ export function ExpressionInput({
     }
   }, [disabled]);
 
-  // Клик для открытия popup
-  const handleClick = useCallback(() => {
+  // Клик для открытия popup или редактирования макроса
+  const handleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (disabled) return;
+    
+    const target = e.target as HTMLElement;
+    
+    // Проверяем, клик по AI макросу
+    if (target.hasAttribute(MACRO_DATA_ATTR) && target.getAttribute(MACRO_TYPE_ATTR) === 'llm') {
+      const macroId = target.getAttribute(MACRO_DATA_ATTR);
+      if (macroId) {
+        const index = parseInt(macroId, 10);
+        setEditingLlmTokenIndex(index);
+        return;
+      }
+    }
     
     // Открываем popup при клике в любое место input
     if (!isFieldPopupOpen && !isFunctionPopupOpen) {
@@ -429,6 +443,27 @@ export function ExpressionInput({
       setIsFieldPopupOpen(true);
     }
   }, [disabled, isFieldPopupOpen, isFunctionPopupOpen]);
+
+  // Обновление LLM токена после редактирования
+  const handleLlmTokenUpdate = useCallback((config: LLMTokenConfig) => {
+    if (editingLlmTokenIndex === null) return;
+    
+    const updatedTokens = [...safeValue];
+    const token = updatedTokens[editingLlmTokenIndex];
+    
+    if (token && token.type === 'llm') {
+      updatedTokens[editingLlmTokenIndex] = {
+        ...token,
+        llmConfig: config,
+      };
+      
+      isInternalUpdateRef.current = true;
+      lastValueRef.current = updatedTokens;
+      onChange(updatedTokens);
+    }
+    
+    setEditingLlmTokenIndex(null);
+  }, [editingLlmTokenIndex, safeValue, onChange]);
 
   // Определяем, какой попап показывать
   const isAnyPopupOpen = isFieldPopupOpen || isFunctionPopupOpen;
@@ -493,6 +528,17 @@ export function ExpressionInput({
           )}
         </PopoverContent>
       </Popover>
+
+      {/* Модальное окно редактирования LLM токена */}
+      {editingLlmTokenIndex !== null && safeValue[editingLlmTokenIndex]?.type === 'llm' && (
+        <LLMTokenConfigModal
+          open={true}
+          onOpenChange={(open) => !open && setEditingLlmTokenIndex(null)}
+          availableFields={availableFields}
+          initialConfig={safeValue[editingLlmTokenIndex].llmConfig}
+          onSave={handleLlmTokenUpdate}
+        />
+      )}
     </div>
   );
 }

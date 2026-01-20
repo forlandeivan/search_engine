@@ -1,5 +1,4 @@
 import { useState, useCallback } from "react";
-import { apiRequest } from "@/lib/queryClient";
 import type { MappingExpression } from "@shared/json-import";
 
 interface TestExpressionResponse {
@@ -28,27 +27,33 @@ export function useLlmTestGeneration({ workspaceId }: UseLlmTestGenerationOption
     setResult(null);
 
     try {
-      const response = await apiRequest<TestExpressionResponse>(
-        "/api/llm/test-expression",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            workspaceId,
-            prompt,
-            sampleRecord,
-            temperature,
-          }),
-        }
-      );
+      const response = await fetch("/api/llm/test-expression", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Workspace-Id": workspaceId,
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          workspaceId,
+          prompt,
+          sampleRecord,
+          temperature,
+        }),
+      });
 
-      if (response.success && response.result) {
-        setResult(response.result);
-        return response.result;
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+
+      const data = await response.json() as TestExpressionResponse;
+
+      if (data.success && data.result) {
+        setResult(data.result);
+        return data.result;
       } else {
-        setError(response.error || "Ошибка генерации");
+        setError(data.error || "Ошибка генерации");
         return null;
       }
     } catch (err) {
