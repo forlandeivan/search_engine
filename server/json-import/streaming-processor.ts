@@ -36,6 +36,7 @@ interface ImportContext {
   onError: (error: ImportRecordError) => void;
   folderCache?: Map<string, string>; // Кэш папок: key = "parentId|folderName", value = folderId
   folderCreationLocks?: Map<string, Promise<string>>; // Блокировки создания папок: key = "parentId|folderName", value = Promise<folderId>
+  baseParentId?: string | null; // базовый parentId для всех документов
 }
 
 /**
@@ -160,17 +161,20 @@ async function resolveParentFolder(
   config: HierarchyConfig,
   context: ImportContext,
 ): Promise<string | null> {
+  // Если задан baseParentId, используем его как базовый parentId
+  const baseParentId = context.baseParentId ?? config.baseParentId ?? null;
+
   if (config.mode === "flat") {
-    // Если задана rootFolderName, создаём/находим корневую папку
+    // Если задана rootFolderName, создаём/находим корневую папку внутри baseParentId
     if (config.rootFolderName) {
-      return await ensureFolder(context.baseId, context.workspaceId, null, config.rootFolderName, context.folderCache, context.folderCreationLocks);
+      return await ensureFolder(context.baseId, context.workspaceId, baseParentId, config.rootFolderName, context.folderCache, context.folderCreationLocks);
     }
-    return null;
+    return baseParentId;
   }
 
   // Режим grouped
   if (!config.groupByField) {
-    return null;
+    return baseParentId;
   }
 
   const groupValue = getNestedValue(record, config.groupByField);
@@ -184,16 +188,16 @@ async function resolveParentFolder(
     }
     if (config.emptyValueStrategy === "folder_uncategorized") {
       const folderName = config.uncategorizedFolderName ?? "Без категории";
-      return await ensureFolder(context.baseId, context.workspaceId, null, folderName, context.folderCache, context.folderCreationLocks);
+      return await ensureFolder(context.baseId, context.workspaceId, baseParentId, folderName, context.folderCache, context.folderCreationLocks);
     }
-    // root
-    return null;
+    // root (или baseParentId если задан)
+    return baseParentId;
   }
 
   // Создаём/находим папку для группы
   const parentId = config.rootFolderName
-    ? await ensureFolder(context.baseId, context.workspaceId, null, config.rootFolderName, context.folderCache, context.folderCreationLocks)
-    : null;
+    ? await ensureFolder(context.baseId, context.workspaceId, baseParentId, config.rootFolderName, context.folderCache, context.folderCreationLocks)
+    : baseParentId;
 
   return await ensureFolder(context.baseId, context.workspaceId, parentId, groupName, context.folderCache, context.folderCreationLocks);
 }

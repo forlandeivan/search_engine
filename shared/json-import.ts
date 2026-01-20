@@ -39,6 +39,9 @@ export interface HierarchyConfig {
 
   // Общая родительская папка
   rootFolderName?: string; // если задано, все документы/папки внутри
+  
+  // Базовый parentId для импорта (если указан, все документы создаются в этой папке)
+  baseParentId?: string | null;
 }
 
 export interface JsonImportJobProgress {
@@ -92,6 +95,7 @@ export interface CreateJsonImportRequest {
   fileSize: number; // размер файла в байтах
   mappingConfig: MappingConfig;
   hierarchyConfig: HierarchyConfig;
+  parentId?: string | null; // родительская папка для импорта (если указана, все документы создаются в ней)
 }
 
 export interface CreateJsonImportResponse {

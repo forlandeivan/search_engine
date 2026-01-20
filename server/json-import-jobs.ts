@@ -41,6 +41,7 @@ async function processJob(job: JsonImportJob): Promise<void> {
         workspaceId: job.workspaceId,
         mappingConfig,
         hierarchyConfig,
+        baseParentId: hierarchyConfig.baseParentId ?? null,
       },
       async (stats) => {
         // Обновляем прогресс в БД

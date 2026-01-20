@@ -3177,6 +3177,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         parentLabel={documentDialogParentTitle}
         isSubmitting={createDocumentMutation.isPending || crawlDocumentMutation.isPending}
         onSubmit={handleCreateDocumentSubmit}
+        workspaceId={workspaceId}
+        baseId={selectedBase?.id}
+        onJsonImportStarted={(jobId) => {
+          setActiveJsonImportJobId(jobId);
+        }}
       />
       <Dialog
         open={Boolean(hierarchyDialogState)}

@@ -824,7 +824,9 @@ const createJsonImportSchema = z.object({
     emptyValueStrategy: z.enum(["folder_uncategorized", "root", "skip"]).optional(),
     uncategorizedFolderName: z.string().optional(),
     rootFolderName: z.string().optional(),
+    baseParentId: z.string().uuid().nullable().optional(), // базовый parentId для импорта
   }),
+  parentId: z.string().uuid().nullable().optional(), // устаревшее поле, используется для обратной совместимости
 });
 
 knowledgeBaseRouter.post('/bases/:baseId/json-import', asyncHandler(async (req, res) => {
@@ -844,12 +846,18 @@ knowledgeBaseRouter.post('/bases/:baseId/json-import', asyncHandler(async (req, 
   // Определяем формат файла по расширению
   const fileFormat = payload.fileName.toLowerCase().endsWith('.jsonl') ? 'jsonl' : 'json';
 
+  // Если передан parentId из старого формата запроса, добавляем его в hierarchyConfig
+  const hierarchyConfig = payload.hierarchyConfig as Record<string, unknown>;
+  if (payload.parentId !== undefined) {
+    hierarchyConfig.baseParentId = payload.parentId;
+  }
+
   const job = await storage.createJsonImportJob({
     workspaceId,
     baseId,
     status: 'pending',
     mappingConfig: payload.mappingConfig as Record<string, unknown>,
-    hierarchyConfig: payload.hierarchyConfig as Record<string, unknown>,
+    hierarchyConfig: hierarchyConfig,
     sourceFileKey: payload.fileKey,
     sourceFileName: payload.fileName,
     sourceFileSize: payload.fileSize,
