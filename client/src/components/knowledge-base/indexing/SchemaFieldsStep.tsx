@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Plus, Sparkles, AlertTriangle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
-import { randomUUID } from "@/lib/utils";
+import { createRandomId } from "@/lib/knowledge-base";
 import type { SchemaFieldConfig } from "@shared/knowledge-base-indexing";
 import { DEFAULT_SCHEMA_FIELDS, COLLECTION_FIELD_TYPES } from "@shared/knowledge-base-indexing";
 import { createFieldToken } from "@shared/json-import";
@@ -99,7 +99,7 @@ export function SchemaFieldsStep({
       return;
     }
     const newField: SchemaFieldConfig = {
-      id: randomUUID(),
+      id: createRandomId(),
       name: "",
       type: "keyword",
       isArray: false,

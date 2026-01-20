@@ -16,7 +16,7 @@ import { Sparkles, CheckCircle2 } from "lucide-react";
 import type { SchemaFieldConfig } from "@shared/knowledge-base-indexing";
 import { COLLECTION_FIELD_TYPES } from "@shared/knowledge-base-indexing";
 import { createFieldToken } from "@shared/json-import";
-import { randomUUID } from "@/lib/utils";
+import { createRandomId } from "@/lib/knowledge-base";
 
 interface SuggestedField {
   name: string;
@@ -110,7 +110,7 @@ export function SuggestFieldsDialog({
     const selectedFields: SchemaFieldConfig[] = suggestedFields
       .filter((field) => selectedKeys.has(field.name))
       .map((field) => ({
-        id: randomUUID(),
+        id: createRandomId(),
         name: field.name,
         type: field.type,
         isArray: false,
