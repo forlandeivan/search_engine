@@ -2479,6 +2479,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const indexingStatus = indexingSummary?.status ?? null;
   const hasIndexingDocuments = indexingSummary ? (indexingSummary.totalDocuments ?? 0) > 0 : null;
   const isIndexingInProgress = indexingStatus === "indexing";
+  const isIndexingUpToDate = indexingStatus === "up_to_date";
+  const isIndexingNotIndexed = indexingStatus === "not_indexed";
   const indexingButtonDisabledReason = (() => {
     if (!indexingSummary) {
       if (indexingSummaryQuery.isError) {
@@ -2492,7 +2494,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     if (isIndexingInProgress) {
       return "Индексация выполняется";
     }
-    // Убираем проверку up_to_date — в визарде можно выбрать режим "full"
+    if (isIndexingUpToDate) {
+      return "База знаний актуальна, все документы проиндексированы";
+    }
+    if (isIndexingNotIndexed) {
+      return "В базе знаний нет документов для индексации";
+    }
     return null;
   })();
 
@@ -2550,6 +2557,26 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 История индексаций
               </Button>
             </div>
+            {/* Информация о статусе индексации */}
+            {indexingSummary && !activeIndexingActionForBase && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                {isIndexingUpToDate && (
+                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800">
+                    База знаний актуальна
+                  </Badge>
+                )}
+                {isIndexingNotIndexed && hasIndexingDocuments && (
+                  <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-950 dark:text-yellow-300 dark:border-yellow-800">
+                    Требуется индексация
+                  </Badge>
+                )}
+                {!hasIndexingDocuments && (
+                  <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-950 dark:text-gray-300 dark:border-gray-800">
+                    Нет документов
+                  </Badge>
+                )}
+              </div>
+            )}
             {activeIndexingActionForBase && (
               <div className="flex flex-col gap-1.5 w-full sm:w-auto mt-1">
                 <div className="flex items-center gap-2">
