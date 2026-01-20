@@ -1945,6 +1945,62 @@ export async function createKnowledgeDocument(
   } satisfies CreateKnowledgeDocumentResponse;
 }
 
+export type BulkDocumentInput = {
+  title: string;
+  content: string;
+  parentId?: string | null;
+  sourceType?: 'manual' | 'import';
+  importFileName?: string | null;
+};
+
+export type BulkCreateResult = {
+  created: string[];
+  failed: string[];
+  errors: Array<{ title: string; error: string }>;
+};
+
+export async function bulkCreateDocuments(
+  workspaceId: string,
+  baseId: string,
+  documents: BulkDocumentInput[],
+): Promise<BulkCreateResult> {
+  const base = await fetchBase(baseId, workspaceId);
+  if (!base) {
+    throw new KnowledgeBaseError("База знаний не найдена", 404);
+  }
+
+  const created: string[] = [];
+  const failed: string[] = [];
+  const errors: Array<{ title: string; error: string }> = [];
+
+  // Обработка батчами по 50 документов для избежания перегрузки
+  const batchSize = 50;
+  for (let i = 0; i < documents.length; i += batchSize) {
+    const batch = documents.slice(i, i + batchSize);
+    
+    await Promise.all(batch.map(async (doc) => {
+      try {
+        const result = await createKnowledgeDocument(baseId, workspaceId, {
+          title: doc.title,
+          content: doc.content,
+          parentId: doc.parentId ?? null,
+          sourceType: doc.sourceType ?? 'import',
+          importFileName: doc.importFileName ?? null,
+        });
+        created.push(result.id);
+      } catch (error) {
+        failed.push(doc.title);
+        errors.push({
+          title: doc.title,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }));
+  }
+
+  return { created, failed, errors };
+}
+
 export async function updateKnowledgeDocument(
   baseId: string,
   nodeId: string,

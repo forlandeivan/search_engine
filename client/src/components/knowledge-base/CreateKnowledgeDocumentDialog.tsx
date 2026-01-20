@@ -45,6 +45,8 @@ import {
   FileJson,
 } from "lucide-react";
 import { JsonImportPanel } from "./import/JsonImportPanel";
+import { FileImportPanel, type FileImportMode } from "./import/FileImportPanel";
+import { useBulkDocumentImport } from "@/hooks/useBulkDocumentImport";
 
 const ROOT_PARENT_VALUE = "__root__";
 const MAX_CONTENT_LENGTH = 20_000_000;
@@ -127,8 +129,19 @@ export function CreateKnowledgeDocumentDialog({
   const [isReadingFile, setIsReadingFile] = useState(false);
   const [hasTitleBeenEdited, setHasTitleBeenEdited] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
+  
+  // Множественный импорт файлов
+  const [importFiles, setImportFiles] = useState<File[]>([]);
+  const [fileImportMode, setFileImportMode] = useState<FileImportMode>("single");
+  const [isBulkImporting, setIsBulkImporting] = useState(false);
+  const [bulkImportProgress, setBulkImportProgress] = useState<{ current: number; total: number } | undefined>();
+  const [bulkImportResult, setBulkImportResult] = useState<{ created: number; failed: number; errors: Array<{ title: string; error: string }> } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  
+  // Bulk import hook
+  const resolvedWorkspaceId = workspaceId ?? "";
+  const bulkImportMutation = useBulkDocumentImport(resolvedWorkspaceId, baseId ?? "");
 
   const folderOptions = useMemo(() => buildFolderOptions(structure), [structure]);
 
@@ -148,6 +161,11 @@ export function CreateKnowledgeDocumentDialog({
       setIsReadingFile(false);
       setHasTitleBeenEdited(false);
       setIsDragActive(false);
+      setImportFiles([]);
+      setFileImportMode("single");
+      setIsBulkImporting(false);
+      setBulkImportProgress(undefined);
+      setBulkImportResult(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -326,6 +344,12 @@ export function CreateKnowledgeDocumentDialog({
     if (mode === "json_import") {
       return;
     }
+    
+    // Bulk import обрабатывается отдельно
+    if (mode === "import" && (fileImportMode === "multiple" || fileImportMode === "archive")) {
+      await handleBulkImport();
+      return;
+    }
 
     const trimmedTitle = title.trim();
     const parentId = parentValue === ROOT_PARENT_VALUE ? null : parentValue;
@@ -430,9 +454,11 @@ export function CreateKnowledgeDocumentDialog({
   const submitLabel =
     mode === "crawl"
       ? "Импортировать страницу"
-      : mode === "import"
-        ? "Импортировать файл"
-        : "Создать документ";
+      : mode === "import" && (fileImportMode === "multiple" || fileImportMode === "archive")
+        ? `Импортировать ${importFiles.length} ${importFiles.length === 1 ? "файл" : importFiles.length < 5 ? "файла" : "файлов"}`
+        : mode === "import"
+          ? "Импортировать файл"
+          : "Создать документ";
   const submitPendingLabel =
     mode === "crawl"
       ? "Импорт..."
@@ -651,69 +677,178 @@ export function CreateKnowledgeDocumentDialog({
               </div>
             ) : mode === "import" ? (
               <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="knowledge-document-file">Файл документа</Label>
-                  <div
-                    className={cn(
-                      "flex flex-col gap-3 rounded-md border border-dashed p-4 text-sm transition",
-                      isDragActive ? "border-primary bg-primary/5" : "border-muted-foreground/30",
-                    )}
-                    onDragOver={handleDragOver}
-                    onDragEnter={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleFileDrop}
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Input
-                        ref={fileInputRef}
-                        id="knowledge-document-file"
-                        type="file"
-                        accept={ACCEPTED_FILE_TYPES}
-                        onChange={handleFileChange}
-                        disabled={isSubmitting || isReadingFile}
-                      />
-                      {isReadingFile && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Перетащите файл сюда или выберите на компьютере. Максимальный размер — 20 МБ.
-                    </p>
-                    {importFile && (
-                      <div className="flex flex-wrap items-center gap-3 rounded-md border border-muted-foreground/20 bg-muted/40 p-3 text-xs text-muted-foreground">
-                        <FileText className="h-4 w-4" />
-                        <span>
-                          {importFile.name} · {(importFile.size / 1024).toFixed(1)} КБ
-                        </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleRemoveFile}
-                          className="h-7 px-2"
-                        >
-                          <Trash2 className="mr-1 h-3.5 w-3.5" /> Удалить
-                        </Button>
-                      </div>
-                    )}
-                    {importError && (
-                      <p className="flex items-center gap-2 text-xs text-destructive">
-                        <AlertCircle className="h-4 w-4" /> {importError}
-                      </p>
-                    )}
+                {/* Toggle режима импорта */}
+                <div className="flex items-center gap-4">
+                  <Label>Режим импорта:</Label>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant={fileImportMode === "single" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => {
+                        setFileImportMode("single");
+                        setImportFiles([]);
+                        setBulkImportResult(null);
+                      }}
+                      disabled={isSubmitting || isBulkImporting}
+                    >
+                      Один файл
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={fileImportMode === "multiple" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => {
+                        setFileImportMode("multiple");
+                        setImportFile(null);
+                        setImportHtml("");
+                        setImportDetectedTitle(null);
+                        setBulkImportResult(null);
+                      }}
+                      disabled={isSubmitting || isBulkImporting}
+                    >
+                      Несколько файлов
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={fileImportMode === "archive" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => {
+                        setFileImportMode("archive");
+                        setImportFile(null);
+                        setImportHtml("");
+                        setImportDetectedTitle(null);
+                        setBulkImportResult(null);
+                      }}
+                      disabled={isSubmitting || isBulkImporting}
+                    >
+                      ZIP-архив
+                    </Button>
                   </div>
                 </div>
-
-                {importHtml && (
-                  <div className="space-y-2">
-                    <Label>Предпросмотр содержимого</Label>
-                    <div className="prose prose-sm max-h-64 overflow-auto rounded-md border bg-muted/40 p-3">
+                
+                {fileImportMode === "single" ? (
+                  // Одиночный импорт (старая логика)
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="knowledge-document-file">Файл документа</Label>
                       <div
-                        dangerouslySetInnerHTML={{
-                          __html: applyTitleToImportedHtml(
-                            importHtml,
-                            title.trim() || importDetectedTitle || "Документ",
-                          ),
-                        }}
-                      />
+                        className={cn(
+                          "flex flex-col gap-3 rounded-md border border-dashed p-4 text-sm transition",
+                          isDragActive ? "border-primary bg-primary/5" : "border-muted-foreground/30",
+                        )}
+                        onDragOver={handleDragOver}
+                        onDragEnter={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleFileDrop}
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Input
+                            ref={fileInputRef}
+                            id="knowledge-document-file"
+                            type="file"
+                            accept={ACCEPTED_FILE_TYPES}
+                            onChange={handleFileChange}
+                            disabled={isSubmitting || isReadingFile}
+                          />
+                          {isReadingFile && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Перетащите файл сюда или выберите на компьютере. Максимальный размер — 20 МБ.
+                        </p>
+                        {importFile && (
+                          <div className="flex flex-wrap items-center gap-3 rounded-md border border-muted-foreground/20 bg-muted/40 p-3 text-xs text-muted-foreground">
+                            <FileText className="h-4 w-4" />
+                            <span>
+                              {importFile.name} · {(importFile.size / 1024).toFixed(1)} КБ
+                            </span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={handleRemoveFile}
+                              className="h-7 px-2"
+                            >
+                              <Trash2 className="mr-1 h-3.5 w-3.5" /> Удалить
+                            </Button>
+                          </div>
+                        )}
+                        {importError && (
+                          <p className="flex items-center gap-2 text-xs text-destructive">
+                            <AlertCircle className="h-4 w-4" /> {importError}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {importHtml && (
+                      <div className="space-y-2">
+                        <Label>Предпросмотр содержимого</Label>
+                        <div className="prose prose-sm max-h-64 overflow-auto rounded-md border bg-muted/40 p-3">
+                          <div
+                            dangerouslySetInnerHTML={{
+                              __html: applyTitleToImportedHtml(
+                                importHtml,
+                                title.trim() || importDetectedTitle || "Документ",
+                              ),
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  // Множественный импорт или архив
+                  <FileImportPanel
+                    mode={fileImportMode}
+                    onModeChange={setFileImportMode}
+                    files={importFiles}
+                    onFilesChange={setImportFiles}
+                    isProcessing={isBulkImporting}
+                    processingProgress={bulkImportProgress}
+                    error={formError}
+                    disabled={isSubmitting || isBulkImporting}
+                    allowArchives={true}
+                  />
+                )}
+                
+                {/* Результат bulk импорта */}
+                {bulkImportResult && (
+                  <div className="space-y-2 rounded-md border p-4">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      {bulkImportResult.failed === 0 ? (
+                        <>
+                          <AlertCircle className="h-4 w-4 text-green-500" />
+                          Импорт завершён успешно
+                        </>
+                      ) : (
+                        <>
+                          <AlertCircle className="h-4 w-4 text-yellow-500" />
+                          Импорт завершён с ошибками
+                        </>
+                      )}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      <p>Импортировано: {bulkImportResult.created} документов</p>
+                      {bulkImportResult.failed > 0 && (
+                        <>
+                          <p>Ошибок: {bulkImportResult.failed}</p>
+                          {bulkImportResult.errors.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {bulkImportResult.errors.slice(0, 5).map((err, idx) => (
+                                <p key={idx} className="text-xs text-destructive">
+                                  {err.title}: {err.error}
+                                </p>
+                              ))}
+                              {bulkImportResult.errors.length > 5 && (
+                                <p className="text-xs text-muted-foreground">
+                                  ... и ещё {bulkImportResult.errors.length - 5} ошибок
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
@@ -778,16 +913,21 @@ export function CreateKnowledgeDocumentDialog({
                   type="button"
                   variant="outline"
                   onClick={() => onOpenChange(false)}
-                  disabled={isSubmitting || isReadingFile}
+                  disabled={isSubmitting || isReadingFile || isBulkImporting}
                 >
                   Отмена
                 </Button>
                 <Button
                   type="submit"
-                  disabled={isSubmitting || isReadingFile}
+                  disabled={
+                    isSubmitting || 
+                    isReadingFile || 
+                    isBulkImporting ||
+                    (mode === "import" && (fileImportMode === "multiple" || fileImportMode === "archive") && importFiles.length === 0)
+                  }
                   className="min-w-[10rem]"
                 >
-                  {isSubmitting ? (
+                  {(isSubmitting || isBulkImporting) ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {submitPendingLabel}
                     </>

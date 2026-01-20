@@ -121,6 +121,16 @@ const createDocumentSchema = z.object({
   parentId: z.string().trim().min(1).nullable().optional(),
 });
 
+const bulkCreateDocumentsSchema = z.object({
+  documents: z.array(z.object({
+    title: z.string().trim().min(1).max(500),
+    content: z.string().max(20_000_000),
+    parentId: z.string().uuid().nullable().optional(),
+    sourceType: z.enum(['manual', 'import']).optional().default('import'),
+    importFileName: z.string().nullable().optional(),
+  })).min(1).max(1000),
+});
+
 const updateNodeSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   content: z.string().optional(),
@@ -316,6 +326,28 @@ knowledgeBaseRouter.post('/bases/:baseId/documents', asyncHandler(async (req, re
   });
   
   res.status(201).json({ document });
+}));
+
+/**
+ * POST /bases/:baseId/documents/bulk
+ * Bulk create documents in existing knowledge base
+ */
+knowledgeBaseRouter.post('/bases/:baseId/documents/bulk', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const payload = bulkCreateDocumentsSchema.parse(req.body);
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const { baseId } = req.params;
+
+  const result = await bulkCreateDocuments(workspaceId, baseId, payload.documents);
+
+  res.status(201).json({
+    success: true,
+    created: result.created,
+    failed: result.failed,
+    errors: result.errors,
+  });
 }));
 
 /**
