@@ -3,36 +3,36 @@
 @tailwind utilities;
 
 @font-face {
-  font-family: "Geist";
+  font-family: "Inter";
   src:
-    url("/fonts/Geist-Regular.woff2") format("woff2");
+    url("/fonts/Inter-Regular.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: "Geist";
+  font-family: "Inter";
   src:
-    url("/fonts/Geist-Medium.woff2") format("woff2");
+    url("/fonts/Inter-Medium.woff2") format("woff2");
   font-weight: 500;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: "Geist";
+  font-family: "Inter";
   src:
-    url("/fonts/Geist-SemiBold.woff2") format("woff2");
+    url("/fonts/Inter-SemiBold.woff2") format("woff2");
   font-weight: 600;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: "Geist";
+  font-family: "Inter";
   src:
-    url("/fonts/Geist-Bold.woff2") format("woff2");
+    url("/fonts/Inter-Bold.woff2") format("woff2");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
@@ -112,7 +112,7 @@
   --chart-4: 43 74% 66%;
   --chart-5: 27 87% 67%;
 
-  --font-sans: "Geist", system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-serif: Georgia, 'Times New Roman', Times, serif;
   --font-mono: 'Courier New', Courier, 'Liberation Mono', Menlo, monospace;
   --radius: .5rem; /* 8px */
@@ -246,7 +246,11 @@
     border-color: hsl(var(--border));
   }
 
-  html,
+  html {
+    height: 100%;
+    overflow: hidden; /* Prevent double scroll: html never scrolls, only body or descendants */
+  }
+
   body,
   #root {
     height: 100%;
@@ -258,8 +262,6 @@
     -moz-osx-font-smoothing: grayscale;
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
-    min-height: 100%;
-    overflow-y: auto;
   }
 
 body.chat-scroll-locked {

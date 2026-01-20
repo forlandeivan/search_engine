@@ -322,9 +322,9 @@ function LazyRouteWrapper({ children }: { children: React.ReactNode }) {
 function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
   return (
     <SidebarProvider>
-      <div className="flex h-screen w-full">
+      <div className="flex h-screen w-full overflow-hidden">
         <AdminSidebar user={user} workspace={workspace} />
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex h-12 items-center px-2 md:hidden">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
           </div>
@@ -340,9 +340,9 @@ function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: Works
 function MainAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
   return (
     <SidebarProvider>
-      <div className="flex h-screen w-full">
+      <div className="flex h-screen w-full overflow-hidden">
         <MainSidebar showAdminLink={user.role === "admin"} user={user} workspace={workspace} />
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex h-12 items-center px-2 md:hidden">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
           </div>

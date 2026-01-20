@@ -6,7 +6,6 @@ import { zodResolver } from "@/lib/zod-resolver";
 import { z } from "zod";
 import { Sparkles, Plus, Pencil, Loader2, Copy, Ellipsis, ArrowUpDown, Search } from "lucide-react";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -174,6 +173,7 @@ type SkillFormProps = {
   isGeneratingCallbackToken?: boolean;
   onSkillPatched?: (skill: Skill) => void;
   onEnsureNoCodeMode?: () => Promise<void>;
+  filesTabContent?: React.ReactNode;
 };
 
 export function SkillFormContent({
@@ -200,6 +200,7 @@ export function SkillFormContent({
   isGeneratingCallbackToken = false,
   onSkillPatched,
   onEnsureNoCodeMode,
+  filesTabContent,
 }: SkillFormProps) {
   const [internalTab, setInternalTab] = useState<SkillSettingsTab>("main");
   const form = useForm<SkillFormValues>({
@@ -226,7 +227,7 @@ export function SkillFormContent({
   const [showCallbackTokenModal, setShowCallbackTokenModal] = useState(false);
 
   const handleTabChange = (tab: string) => {
-    const next: SkillSettingsTab = tab === "transcription" || tab === "actions" ? tab : "main";
+    const next: SkillSettingsTab = tab === "transcription" || tab === "actions" || tab === "files" ? tab : "main";
     if (onTabChange) {
       onTabChange(next);
     } else {
@@ -671,46 +672,48 @@ export function SkillFormContent({
   };
 
   return (
-    <div className="space-y-6">
-      {!hideHeader && isSystemSkill && (
-        <Alert variant="default">
-          <AlertTitle>Системный навык</AlertTitle>
-          <AlertDescription>{systemSkillDescription}</AlertDescription>
-        </Alert>
-      )}
+    <>
       <Form {...form}>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <Tabs value={currentTab} onValueChange={handleTabChange} className="space-y-4">
-            <div className="mx-auto w-full max-w-6xl px-6">
-              <TabsList className="inline-flex h-9 w-full items-center justify-start rounded-lg bg-muted p-[3px] overflow-x-auto">
-                <TabsTrigger value="main" data-testid="skill-settings-tab-main" className="whitespace-nowrap">
-                  Основное
-                </TabsTrigger>
-                <TabsTrigger value="transcription" data-testid="skill-settings-tab-transcription" className="whitespace-nowrap">
-                  Транскрипция
-                </TabsTrigger>
-                <TabsTrigger value="actions" className="whitespace-nowrap">
-                  Действия
-                </TabsTrigger>
-              </TabsList>
+        <form onSubmit={handleSubmit} className="flex flex-col">
+          <Tabs value={currentTab} onValueChange={handleTabChange}>
+            {/* Sticky Tabs Header */}
+            <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm">
+              <div className="mx-auto w-full max-w-4xl px-4 md:px-6">
+                {!hideHeader && isSystemSkill && (
+                  <Alert variant="default" className="mt-3 mb-4 md:mt-4">
+                    <AlertTitle>Системный навык</AlertTitle>
+                    <AlertDescription>{systemSkillDescription}</AlertDescription>
+                  </Alert>
+                )}
+                <TabsList variant="line">
+                  <TabsTrigger variant="line" value="main" data-testid="skill-settings-tab-main">
+                    Основное
+                  </TabsTrigger>
+                  <TabsTrigger variant="line" value="transcription" data-testid="skill-settings-tab-transcription">
+                    Транскрипция
+                  </TabsTrigger>
+                  <TabsTrigger variant="line" value="actions">
+                    Действия
+                  </TabsTrigger>
+                  <TabsTrigger variant="line" value="files">
+                    Файлы навыка
+                  </TabsTrigger>
+                </TabsList>
+              </div>
             </div>
 
-            <TabsContent value="main" className="space-y-6">
-              <div className="mx-auto w-full max-w-6xl px-6 py-6">
-                <fieldset disabled={controlsDisabled} className="space-y-6">
-                  <div className="grid gap-6 md:grid-cols-2">
-                <Card>
-                  <CardHeader className="px-6 grid gap-2">
-                    <CardTitle className="text-base font-semibold">Метаданные</CardTitle>
-                  </CardHeader>
-                  <CardContent className="px-6 pb-6">
-                    <div className="grid gap-4" data-testid="skill-icon-name-row">
+            <TabsContent value="main" className="mx-auto w-full max-w-4xl px-4 py-4 md:px-6 md:py-6">
+              <div className="space-y-8">
+                <fieldset disabled={controlsDisabled} className="space-y-8">
+                  <div className="space-y-4">
+                    <h3 className="text-base font-semibold text-foreground">Метаданные</h3>
+                    <div className="space-y-4" data-testid="skill-icon-name-row">
                       <FormField
                         control={form.control}
                         name="icon"
                         render={({ field }) => (
-                          <FormItem className="grid gap-1.5">
-                            <FormLabel>Иконка</FormLabel>
+                          <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
+                            <FormLabel className="pt-2.5 text-sm font-medium">Иконка</FormLabel>
                             <FormControl>
                               <div className="flex items-center gap-3">
                                 <IconPicker
@@ -732,16 +735,18 @@ export function SkillFormContent({
                         control={form.control}
                         name="name"
                         render={({ field }) => (
-                          <FormItem className="grid gap-1.5">
-                            <FormLabel>Название</FormLabel>
-                            <FormControl>
-                              <Input
-                                {...field}
-                                placeholder="Например: Бизнес-процессы"
-                                data-testid="skill-name-input"
-                              />
-                            </FormControl>
-                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
+                            <FormLabel className="pt-2.5 text-sm font-medium">Название</FormLabel>
+                            <div className="space-y-2">
+                              <FormControl>
+                                <Input
+                                  {...field}
+                                  placeholder="Например: Бизнес-процессы"
+                                  data-testid="skill-name-input"
+                                />
+                              </FormControl>
+                              <FormMessage className="text-xs text-destructive leading-tight" />
+                            </div>
                           </FormItem>
                         )}
                       />
@@ -749,99 +754,109 @@ export function SkillFormContent({
                         control={form.control}
                         name="description"
                         render={({ field }) => (
-                          <FormItem className="grid gap-1.5">
-                            <FormLabel>Описание</FormLabel>
-                            <FormControl>
-                              <Textarea
-                                {...field}
-                                placeholder="Когда использовать навык и чем он помогает"
-                                rows={3}
-                                data-testid="skill-description-input"
-                              />
-                            </FormControl>
-                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
+                            <FormLabel className="pt-2.5 text-sm font-medium">Описание</FormLabel>
+                            <div className="space-y-2">
+                              <FormControl>
+                                <Textarea
+                                  {...field}
+                                  placeholder="Когда использовать навык и чем он помогает"
+                                  rows={3}
+                                  data-testid="skill-description-input"
+                                />
+                              </FormControl>
+                              <FormMessage className="text-xs text-destructive leading-tight" />
+                            </div>
                           </FormItem>
                         )}
                       />
                     </div>
-                  </CardContent>
-                </Card>
-                  <Card>
-                    <CardHeader className="px-6 grid gap-2">
-                      <CardTitle className="text-base font-semibold">Режим выполнения</CardTitle>
-                      <CardDescription className="text-sm text-muted-foreground">
+                  </div>
+
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-foreground">Режим выполнения</h3>
+                      <p className="text-sm text-muted-foreground mt-1">
                         Определяет, где выполняется логика обработки сообщений.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="px-6 pb-6">
+                      </p>
+                    </div>
+                    <div>
                       <FormField
                         control={form.control}
                         name="executionMode"
                         render={({ field }) => (
-                          <FormItem className="space-y-4">
-                            <RadioGroup value={field.value} onValueChange={controlsDisabled ? undefined : field.onChange} className="grid gap-3 md:grid-cols-2">
-                              <label className="flex w-full">
-                                <RadioGroupItem
-                                  value="standard"
-                                  className="peer sr-only"
-                                  disabled={controlsDisabled}
-                                  data-testid="execution-mode-standard"
-                                />
-                                <div
-                                  className="flex w-full cursor-pointer items-start gap-3 rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-accent/40 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2"
-                                >
-                                  <div className="flex h-5 w-5 items-center justify-center rounded-full border border-muted peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary peer-focus-visible:border-primary" aria-hidden="true">
-                                    <span className="h-2 w-2 rounded-full bg-transparent peer-data-[state=checked]:bg-white" />
-                                  </div>
-                                  <div>
-                                    <p className="text-sm font-medium">Стандартный</p>
-                                    <p className="text-xs text-muted-foreground">Обработка внутри платформы.</p>
-                                  </div>
-                                </div>
-                              </label>
-                              <label className="flex w-full">
-                                <RadioGroupItem
-                                  value="no_code"
-                                  className="peer sr-only"
-                                  disabled={noCodeDisabled}
-                                  data-testid="execution-mode-no-code"
-                                />
-                                <div
-                                  className="flex w-full cursor-pointer items-start gap-3 rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-accent/40 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2"
-                                >
-                                  <div className="flex h-5 w-5 items-center justify-center rounded-full border border-muted peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary peer-focus-visible:border-primary" aria-hidden="true">
-                                    <span className="h-2 w-2 rounded-full bg-transparent peer-data-[state=checked]:bg-white" />
-                                  </div>
-                                  <div>
-                                    <p className="text-sm font-medium">No-code</p>
-                                    <p className="text-xs text-muted-foreground">
-                                      Обработка во внешнем сценарии (оркестрация настраивается отдельно).
+                          <FormItem>
+                            <FormControl>
+                              <RadioGroup 
+                                value={field.value} 
+                                onValueChange={controlsDisabled ? undefined : field.onChange} 
+                                className="grid gap-3 md:grid-cols-2"
+                              >
+                                <label className="relative flex cursor-pointer">
+                                  <RadioGroupItem
+                                    value="standard"
+                                    className="peer sr-only"
+                                    disabled={controlsDisabled}
+                                    data-testid="execution-mode-standard"
+                                  />
+                                  <div className="flex w-full flex-col gap-3 rounded-lg border-2 border-muted bg-background p-4 shadow-sm transition-all hover:border-muted-foreground/50 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-accent/50">
+                                    <div className="flex items-center gap-3">
+                                      <div className="flex h-4 w-4 items-center justify-center">
+                                        <div className="h-2 w-2 rounded-full bg-transparent peer-data-[state=checked]:bg-primary" />
+                                      </div>
+                                      <div className="font-semibold">Стандартный</div>
+                                    </div>
+                                    <p className="text-sm text-muted-foreground">
+                                      Обработка внутри платформы с использованием LLM и RAG
                                     </p>
-                                    {!allowNoCodeFlow && (
-                                      <span className="text-xs font-normal text-muted-foreground">Доступно на премиум-тарифе.</span>
-                                    )}
                                   </div>
-                                </div>
-                              </label>
-                            </RadioGroup>
+                                </label>
+
+                                <label className="relative flex cursor-pointer">
+                                  <RadioGroupItem
+                                    value="no_code"
+                                    className="peer sr-only"
+                                    disabled={noCodeDisabled}
+                                    data-testid="execution-mode-no-code"
+                                  />
+                                  <div className="flex w-full flex-col gap-3 rounded-lg border-2 border-muted bg-background p-4 shadow-sm transition-all hover:border-muted-foreground/50 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-accent/50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50">
+                                    <div className="flex items-center gap-3">
+                                      <div className="flex h-4 w-4 items-center justify-center">
+                                        <div className="h-2 w-2 rounded-full bg-transparent peer-data-[state=checked]:bg-primary" />
+                                      </div>
+                                      <div className="font-semibold">No-code</div>
+                                      {!allowNoCodeFlow && (
+                                        <Badge variant="secondary" className="ml-auto text-xs">Premium</Badge>
+                                      )}
+                                    </div>
+                                    <p className="text-sm text-muted-foreground">
+                                      Обработка во внешнем сценарии через webhook
+                                    </p>
+                                  </div>
+                                </label>
+                              </RadioGroup>
+                            </FormControl>
                           </FormItem>
                         )}
                       />
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
 
                 {isStandardMode ? (
-                  <div className="md:col-span-2 grid gap-6 md:grid-cols-2">
-                      <Card className="md:col-span-2">
-                      <CardHeader className="px-6 grid gap-2">
-                        <CardTitle className="text-base font-semibold">Инструкция</CardTitle>
-                      </CardHeader>
-                      <CardContent className="px-6 pb-6">
+                  <>
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="text-base font-semibold text-foreground">Инструкция</h3>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Системный промпт для модели LLM
+                        </p>
+                      </div>
+                      <div className="space-y-4">
                         <FormField
                           control={form.control}
                           name="systemPrompt"
                           render={({ field }) => (
-                            <FormItem className="grid gap-1.5">
+                            <FormItem className="space-y-2">
                               <FormLabel className="sr-only">Инструкция</FormLabel>
                               <FormControl>
                                 <Textarea
@@ -858,47 +873,53 @@ export function SkillFormContent({
                             </FormItem>
                           )}
                         />
-                      </CardContent>
-                    </Card>
-                    <Card>
-                      <CardHeader className="px-6 grid gap-2">
-                        <CardTitle className="text-base font-semibold">Модель LLM</CardTitle>
-                      </CardHeader>
-                      <CardContent className="px-6 pb-6 space-y-4">
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="text-base font-semibold text-foreground">Модель LLM</h3>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Используется для генеративных ответов навыка
+                        </p>
+                      </div>
+                      <div className="space-y-4">
                         <FormField
                           control={form.control}
                           name="llmKey"
                           render={({ field }) => (
-                            <FormItem className="grid gap-1.5">
-                              <FormLabel>LLM провайдер и модель</FormLabel>
-                              <FormControl>
-                                <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled || controlsDisabled}>
-                                  <SelectTrigger data-testid="llm-model-select">
-                                    <SelectValue placeholder="Выберите модель" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {effectiveLlmOptions.map((option) => (
-                                      <SelectItem key={option.key} value={option.key} disabled={option.disabled}>
-                                        <div className="flex flex-col gap-0.5">
-                                          <div className="flex items-center gap-2">
-                                            <span className="font-medium">{option.label}</span>
-                                            <Badge variant="outline" className="uppercase tracking-wide">
-                                              {costLevelLabel[option.costLevel]}
-                                            </Badge>
+                            <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
+                              <FormLabel className="pt-2.5 text-sm font-medium">LLM провайдер и модель</FormLabel>
+                              <div className="space-y-2">
+                                <FormControl>
+                                  <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled || controlsDisabled}>
+                                    <SelectTrigger data-testid="llm-model-select">
+                                      <SelectValue placeholder="Выберите модель" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {effectiveLlmOptions.map((option) => (
+                                        <SelectItem key={option.key} value={option.key} disabled={option.disabled}>
+                                          <div className="flex flex-col gap-0.5">
+                                            <div className="flex items-center gap-2">
+                                              <span className="font-medium">{option.label}</span>
+                                              <Badge variant="outline" className="uppercase tracking-wide">
+                                                {costLevelLabel[option.costLevel]}
+                                              </Badge>
+                                            </div>
+                                            {!option.providerIsActive && (
+                                              <span className="text-xs text-muted-foreground">Провайдер отключён</span>
+                                            )}
                                           </div>
-                                          {!option.providerIsActive && (
-                                            <span className="text-xs text-muted-foreground">Провайдер отключён</span>
-                                          )}
-                                        </div>
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </FormControl>
-                              <p className="text-xs text-muted-foreground leading-tight">
-                                Используется для генеративных ответов навыка.
-                              </p>
-                              <FormMessage className="text-xs text-destructive leading-tight" />
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </FormControl>
+                                <p className="text-xs text-muted-foreground leading-tight">
+                                  Используется для генеративных ответов навыка.
+                                </p>
+                                <FormMessage className="text-xs text-destructive leading-tight" />
+                              </div>
                             </FormItem>
                           )}
                         />
@@ -968,18 +989,17 @@ export function SkillFormContent({
                           </AccordionItem>
                           </Accordion>
                         )}
-                      </CardContent>
-                    </Card>
+                      </div>
+                    </div>
                     {showRagUi ? (
-                    <Card className="md:col-span-2">
-                      <CardHeader className="px-6 grid gap-2">
-                        <CardTitle className="text-base font-semibold">Источники</CardTitle>
-                        <CardDescription className="text-sm text-muted-foreground">
-                          Навык будет искать ответы в выбранных базах знаний и загруженных файлах (если они есть).
-                          {form.watch("mode") === "rag" && " Режим RAG активен."}
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="px-6 pb-6 space-y-6">
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="text-base font-semibold text-foreground">Источники знаний</h3>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Базы знаний и файлы для поиска информации{form.watch("mode") === "rag" && " (режим RAG активен)"}
+                        </p>
+                      </div>
+                      <div className="space-y-6">
                         {executionMode !== "no_code" && (
                           <div className="grid gap-6">
                             <FormField
@@ -1039,46 +1059,47 @@ export function SkillFormContent({
                             />
                           </div>
                         )}
-                      </CardContent>
-                    </Card>
+                      </div>
+                    </div>
                     ) : null}
-                  </div>
+                  </>
                 ) : null}
+
                 {isNoCodeMode ? (
-                  <div className="md:col-span-2 grid gap-6 md:grid-cols-2">
-                    <Card className="md:col-span-2">
-                      <CardHeader className="px-6 grid gap-2">
-                        <CardTitle className="text-base font-semibold">No-code подключение</CardTitle>
-                        <CardDescription className="text-sm text-muted-foreground">
+                  <>
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="text-base font-semibold text-foreground">No-code подключение</h3>
+                        <p className="text-sm text-muted-foreground mt-1">
                           {allowNoCodeFlow
-                            ? "Укажите URL и авторизацию, чтобы платформа перенаправляла события во внешний сценарий."
-                            : "Доступно только на премиум-тарифе."}
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="px-6 pb-6">
-                        <div className="grid gap-6 md:grid-cols-2">
-                          <div className="space-y-6">
+                            ? "URL и авторизация для внешнего сценария"
+                            : "Доступно только на премиум-тарифе"}
+                        </p>
+                      </div>
+                      <div className="space-y-4">
                             <FormField
                               control={form.control}
                               name="noCodeEndpointUrl"
                               render={({ field }) => (
-                                <FormItem className="grid gap-1.5">
-                                  <FormLabel>URL сценария</FormLabel>
-                                  <FormControl>
-                                    <Input
-                                      {...field}
-                                      placeholder="https://example.com/no-code"
-                                      disabled={noCodeDisabled}
-                                      data-testid="skill-no-code-endpoint-input"
-                                      className="h-9"
-                                    />
-                                  </FormControl>
-                                  <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                    {noCodeDisabled
-                                      ? "Доступно только на премиум-тарифе."
-                                      : "Сюда будет приходить запрос, когда выбранно выполнение в no-code режиме."}
-                                  </FormDescription>
-                                  <FormMessage className="text-xs text-destructive leading-tight" />
+                                <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
+                                  <FormLabel className="pt-2.5 text-sm font-medium">URL сценария</FormLabel>
+                                  <div className="space-y-2">
+                                    <FormControl>
+                                      <Input
+                                        {...field}
+                                        placeholder="https://example.com/no-code"
+                                        disabled={noCodeDisabled}
+                                        data-testid="skill-no-code-endpoint-input"
+                                        className="h-9"
+                                      />
+                                    </FormControl>
+                                    <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                      {noCodeDisabled
+                                        ? "Доступно только на премиум-тарифе."
+                                        : "Сюда будет приходить запрос, когда выбранно выполнение в no-code режиме."}
+                                    </FormDescription>
+                                    <FormMessage className="text-xs text-destructive leading-tight" />
+                                  </div>
                                 </FormItem>
                               )}
                             />
@@ -1086,72 +1107,74 @@ export function SkillFormContent({
                               control={form.control}
                               name="noCodeFileStorageProviderId"
                               render={({ field }) => (
-                                <FormItem className="grid gap-1.5">
-                                  <FormLabel>File Storage Provider</FormLabel>
-                                  <Select
-                                    value={field.value ?? WORKSPACE_DEFAULT_PROVIDER_VALUE}
-                                    onValueChange={noCodeDisabled ? undefined : field.onChange}
-                                    disabled={noCodeDisabled || isFileStorageProvidersLoading}
-                                  >
-                                    <FormControl>
-                                      <SelectTrigger className="h-9">
-                                        <SelectValue placeholder="Выберите провайдера" />
-                                      </SelectTrigger>
-                                    </FormControl>
-                                    <SelectContent>
-                                      <SelectItem value={WORKSPACE_DEFAULT_PROVIDER_VALUE}>
-                                        {workspaceDefaultProvider
-                                          ? `Использовать дефолт воркспейса (${workspaceDefaultProvider.name})`
-                                          : "Использовать дефолт воркспейса (не задан)"}
-                                      </SelectItem>
-                                      {fileStorageProviders.map((provider) => (
-                                        <SelectItem key={provider.id} value={provider.id}>
-                                          {provider.name} · {provider.authType === "bearer" ? "Bearer" : "Без авторизации"}
+                                <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
+                                  <FormLabel className="pt-2.5 text-sm font-medium">File Storage Provider</FormLabel>
+                                  <div className="space-y-2">
+                                    <Select
+                                      value={field.value ?? WORKSPACE_DEFAULT_PROVIDER_VALUE}
+                                      onValueChange={noCodeDisabled ? undefined : field.onChange}
+                                      disabled={noCodeDisabled || isFileStorageProvidersLoading}
+                                    >
+                                      <FormControl>
+                                        <SelectTrigger className="h-9">
+                                          <SelectValue placeholder="Выберите провайдера" />
+                                        </SelectTrigger>
+                                      </FormControl>
+                                      <SelectContent>
+                                        <SelectItem value={WORKSPACE_DEFAULT_PROVIDER_VALUE}>
+                                          {workspaceDefaultProvider
+                                            ? `Использовать дефолт воркспейса (${workspaceDefaultProvider.name})`
+                                            : "Использовать дефолт воркспейса (не задан)"}
                                         </SelectItem>
-                                      ))}
-                                      {providerNotFound ? (
-                                        <SelectItem value={providerNotFound}>
-                                          Неизвестный провайдер ({providerNotFound})
-                                        </SelectItem>
-                                      ) : null}
-                                    </SelectContent>
-                                  </Select>
-                                  <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                    Выберите провайдера хранения файлов или оставьте дефолт воркспейса.
-                                  </FormDescription>
-                                  <FormMessage className="text-xs text-destructive leading-tight" />
-                                  {isFileStorageProvidersLoading ? (
-                                    <p className="text-xs text-muted-foreground">Загружаем провайдеры…</p>
-                                  ) : null}
-                                  {fileStorageProvidersError ? (
-                                    <p className="text-xs text-destructive">{fileStorageProvidersError.message}</p>
-                                  ) : null}
-                                  {providerNotFound && !isFileStorageProvidersLoading ? (
-                                    <Alert variant="destructive">
-                                      <AlertTitle>Сохранённый провайдер недоступен</AlertTitle>
-                                      <AlertDescription>
-                                        Выберите активный провайдер или дефолт воркспейса, чтобы продолжить.
-                                      </AlertDescription>
-                                    </Alert>
-                                  ) : null}
-                                  {effectiveProvider ? (
-                                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                      <Badge variant="secondary" className="text-[10px] uppercase">
-                                        {effectiveProviderSource === "workspace_default" ? "Дефолт воркспейса" : "Выбран в навыке"}
-                                      </Badge>
-                                      <span>
-                                        {effectiveProvider.name} · {effectiveProvider.authType === "bearer" ? "Bearer" : "Без авторизации"}
-                                      </span>
-                                    </div>
-                                  ) : null}
-                                  {effectiveProviderSource === "none" && !isFileStorageProvidersLoading ? (
-                                    <Alert variant="destructive">
-                                      <AlertTitle>Нет активного провайдера</AlertTitle>
-                                      <AlertDescription>
-                                        Воркспейс не имеет дефолта, выберите провайдера вручную.
-                                      </AlertDescription>
-                                    </Alert>
-                                  ) : null}
+                                        {fileStorageProviders.map((provider) => (
+                                          <SelectItem key={provider.id} value={provider.id}>
+                                            {provider.name} · {provider.authType === "bearer" ? "Bearer" : "Без авторизации"}
+                                          </SelectItem>
+                                        ))}
+                                        {providerNotFound ? (
+                                          <SelectItem value={providerNotFound}>
+                                            Неизвестный провайдер ({providerNotFound})
+                                          </SelectItem>
+                                        ) : null}
+                                      </SelectContent>
+                                    </Select>
+                                    <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                      Выберите провайдера хранения файлов или оставьте дефолт воркспейса.
+                                    </FormDescription>
+                                    <FormMessage className="text-xs text-destructive leading-tight" />
+                                    {isFileStorageProvidersLoading ? (
+                                      <p className="text-xs text-muted-foreground">Загружаем провайдеры…</p>
+                                    ) : null}
+                                    {fileStorageProvidersError ? (
+                                      <p className="text-xs text-destructive">{fileStorageProvidersError.message}</p>
+                                    ) : null}
+                                    {providerNotFound && !isFileStorageProvidersLoading ? (
+                                      <Alert variant="destructive">
+                                        <AlertTitle>Сохранённый провайдер недоступен</AlertTitle>
+                                        <AlertDescription>
+                                          Выберите активный провайдер или дефолт воркспейса, чтобы продолжить.
+                                        </AlertDescription>
+                                      </Alert>
+                                    ) : null}
+                                    {effectiveProvider ? (
+                                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                        <Badge variant="secondary" className="text-[10px] uppercase">
+                                          {effectiveProviderSource === "workspace_default" ? "Дефолт воркспейса" : "Выбран в навыке"}
+                                        </Badge>
+                                        <span>
+                                          {effectiveProvider.name} · {effectiveProvider.authType === "bearer" ? "Bearer" : "Без авторизации"}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    {effectiveProviderSource === "none" && !isFileStorageProvidersLoading ? (
+                                      <Alert variant="destructive">
+                                        <AlertTitle>Нет активного провайдера</AlertTitle>
+                                        <AlertDescription>
+                                          Воркспейс не имеет дефолта, выберите провайдера вручную.
+                                        </AlertDescription>
+                                      </Alert>
+                                    ) : null}
+                                  </div>
                                 </FormItem>
                               )}
                             />
@@ -1292,9 +1315,8 @@ export function SkillFormContent({
                                 )}
                               />
                             )}
-                          </div>
-                          <div className="space-y-6">
-                            <div className="rounded-lg border border-border bg-background/60 p-4 space-y-2">
+
+                        <div className="rounded-lg border border-border bg-background/60 p-4 space-y-3">
                               <div className="flex items-center justify-between">
                                 <p className="text-sm font-semibold">Callback-ссылка</p>
                                 <Badge variant={callbackLink ? "default" : "outline"}>
@@ -1326,32 +1348,29 @@ export function SkillFormContent({
                                   Сохраните навык в режиме No-code, чтобы получить ссылку.
                                 </p>
                               )}
-                              <p className="text-xs text-muted-foreground">
-                                Используйте ваш bearer token из профиля в заголовке <code className="text-xs bg-muted px-1 py-0.5 rounded">Authorization: Bearer &lt;ваш_token&gt;</code> для авторизации запросов.
-                              </p>
-                            </div>
-                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Используйте ваш bearer token из профиля в заголовке <code className="text-xs bg-muted px-1 py-0.5 rounded">Authorization: Bearer &lt;ваш_token&gt;</code> для авторизации запросов.
+                          </p>
                         </div>
-                      </CardContent>
-                    </Card>
-                  </div>
+                      </div>
+                    </div>
+                  </>
                 ) : null}
-                </div>
               </fieldset>
               </div>
             </TabsContent>
 
-            <TabsContent value="transcription" className="space-y-6">
-              <div className="mx-auto w-full max-w-6xl px-6">
-                <fieldset disabled={controlsDisabled} className="space-y-6">
-                  <Card>
-                    <CardHeader className="px-6 grid gap-2">
-                      <CardTitle className="text-base font-semibold">Маршрут транскрибации</CardTitle>
-                      <CardDescription className="text-sm text-muted-foreground">
-                        Влияет только на обработку файлов/транскрибации. Стандартный сценарий чата остаётся прежним.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="px-6 pb-6 space-y-4">
+            <TabsContent value="transcription" className="mx-auto w-full max-w-4xl px-4 py-4 md:px-6 md:py-6">
+              <div className="space-y-8">
+                <fieldset disabled={controlsDisabled} className="space-y-8">
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-foreground">Маршрут транскрибации</h3>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Обработка файлов и транскрипций (не влияет на чат)
+                      </p>
+                    </div>
+                    <div className="space-y-4">
                       <FormField
                         control={form.control}
                         name="transcriptionFlowMode"
@@ -1401,19 +1420,18 @@ export function SkillFormContent({
                           </FormItem>
                         )}
                       />
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
 
                   {isTranscriptionNoCode ? (
-                    <Card>
-                      <CardHeader className="px-6 grid gap-2">
-                        <CardTitle className="text-base font-semibold">Callback для транскриптов</CardTitle>
-                        <CardDescription className="text-sm text-muted-foreground">
-                          Ссылка для no-code сценария: отправляйте POST на /api/no-code/callback/transcripts с fullText,
-                          а затем используйте transcriptId в карточке чата.
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="px-6 pb-6 space-y-3">
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="text-base font-semibold text-foreground">Callback для транскриптов</h3>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          No-code сценарий для обработки транскриптов
+                        </p>
+                      </div>
+                      <div className="space-y-3">
                         <div className="rounded-lg border border-border bg-background/60 p-4 space-y-2">
                           <div className="flex items-center justify-between">
                             <p className="text-sm font-semibold">Callback-ссылка для транскриптов</p>
@@ -1446,30 +1464,31 @@ export function SkillFormContent({
                             {`{ "workspaceId": "...", "chatId": "...", "fullText": "...", "title": "...", "previewText": "..." }`}.
                           </p>
                         </div>
-                      </CardContent>
-                    </Card>
+                      </div>
+                    </div>
                   ) : null}
 
-                  <Card>
-                    <CardHeader className="px-6 grid gap-2">
-                      <CardTitle className="text-base font-semibold">Поведение при транскрибировании аудио</CardTitle>
-                      <CardDescription className="text-sm text-muted-foreground">
-                        Оставить сырую стенограмму или автоматически запустить действие после транскрипции.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="px-6 pb-6 space-y-4">
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-foreground">Поведение при транскрибировании</h3>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Сырая стенограмма или автозапуск действия
+                      </p>
+                    </div>
+                    <div className="space-y-4">
                       <FormField
                         control={form.control}
                         name="onTranscriptionMode"
                         render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Режим</FormLabel>
-                            <FormControl>
-                              <RadioGroup
-                                value={field.value}
-                                onValueChange={controlsDisabled ? undefined : field.onChange}
-                                className="grid gap-3 md:grid-cols-2"
-                              >
+                          <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
+                            <FormLabel className="pt-2.5 text-sm font-medium">Режим</FormLabel>
+                            <div className="space-y-2">
+                              <FormControl>
+                                <RadioGroup
+                                  value={field.value}
+                                  onValueChange={controlsDisabled ? undefined : field.onChange}
+                                  className="grid gap-3 md:grid-cols-2"
+                                >
                                 <div className="rounded-lg border p-3">
                                   <label className="flex items-start gap-3 text-sm font-medium leading-tight">
                                     <RadioGroupItem
@@ -1502,9 +1521,10 @@ export function SkillFormContent({
                                     </span>
                                   </label>
                                 </div>
-                              </RadioGroup>
-                            </FormControl>
-                            <FormMessage className="text-xs text-destructive leading-tight" />
+                                </RadioGroup>
+                              </FormControl>
+                              <FormMessage className="text-xs text-destructive leading-tight" />
+                            </div>
                           </FormItem>
                         )}
                       />
@@ -1514,10 +1534,11 @@ export function SkillFormContent({
                           control={form.control}
                           name="onTranscriptionAutoActionId"
                           render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Действие для авто-запуска</FormLabel>
-                              {skill ? (
-                                <FormControl>
+                            <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
+                              <FormLabel className="pt-2.5 text-sm font-medium">Действие для авто-запуска</FormLabel>
+                              <div className="space-y-2">
+                                {skill ? (
+                                  <FormControl>
                                   <Select
                                     value={field.value ?? ""}
                                     onValueChange={field.onChange}
@@ -1545,34 +1566,35 @@ export function SkillFormContent({
                                 </FormControl>
                               ) : (
                                 <div className="rounded-md border border-dashed bg-slate-50 p-3 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
-                                  Доступно после сохранения навыка. Сначала создайте навык, затем выберите авто-действие.
-                                </div>
-                              )}
+                                Доступно после сохранения навыка. Сначала создайте навык, затем выберите авто-действие.
+                              </div>
+                            )}
                               <FormDescription className="text-xs text-muted-foreground leading-tight">
                                 Покажем превью обработанного результата и откроем вкладку действия при просмотре стенограммы.
                               </FormDescription>
                               <FormMessage className="text-xs text-destructive leading-tight" />
-                            </FormItem>
-                          )}
-                        />
-                      ) : null}
-                    </CardContent>
-                  </Card>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+                    ) : null}
+                    </div>
+                  </div>
                 </fieldset>
               </div>
             </TabsContent>
 
-            <TabsContent value="actions" className="space-y-6">
-              <div className="mx-auto w-full max-w-6xl px-6">
-                <fieldset disabled={controlsDisabled} className="space-y-6">
-                  <Card>
-                    <CardHeader className="px-6 grid gap-2">
-                      <CardTitle className="text-base font-semibold">Действия</CardTitle>
-                      <CardDescription className="text-xs text-muted-foreground leading-tight">
-                        Настройте, какие действия доступны в навыке и где они отображаются (холст, сообщения, панель ввода).
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="px-6 pb-6">
+            <TabsContent value="actions" className="mx-auto w-full max-w-4xl px-4 py-4 md:px-6 md:py-6">
+              <div className="space-y-8">
+                <fieldset disabled={controlsDisabled}>
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-foreground">Действия</h3>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Настройка доступных действий и их отображения
+                      </p>
+                    </div>
+                    <div>
                       {isSystemSkill ? (
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
                           Настройка действий недоступна для системных навыков.
@@ -1582,33 +1604,61 @@ export function SkillFormContent({
                       ) : (
                         <ActionsPreviewForNewSkill />
                       )}
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
                 </fieldset>
               </div>
             </TabsContent>
+
+            <TabsContent value="files" className="mx-auto w-full max-w-4xl px-4 py-4 md:px-6 md:py-6">
+              {filesTabContent || (
+                <div className="space-y-8">
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-foreground">Файлы навыка</h3>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Загрузите документы для обучения навыка
+                      </p>
+                    </div>
+                    <div>
+                      <div className="text-sm text-muted-foreground">
+                        {skill?.id ? "Файлы доступны после сохранения навыка" : "Сначала создайте навык"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </TabsContent>
           </Tabs>
 
-          {isDirty ? (
-            <div className="mx-auto w-full max-w-6xl px-6">
-              <div className="sticky bottom-0 z-10 -mx-6 mt-6 border-t border-border bg-background/80 px-6 py-3 backdrop-blur">
-                <div className="flex justify-end gap-2">
-                  <Button type="button" variant="secondary" className="h-9" onClick={handleReset} disabled={isSubmitting}>
+          {/* Sticky Footer - Always visible */}
+          <div className="sticky bottom-0 z-20 border-t bg-background/95 backdrop-blur-sm">
+            <div className="mx-auto w-full max-w-4xl px-4 py-3 md:px-6 md:py-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-sm text-muted-foreground">
+                  {isDirty ? "Есть несохраненные изменения" : "Все изменения сохранены"}
+                </div>
+                <div className="flex gap-3">
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={handleReset} 
+                    disabled={!isDirty || isSubmitting}
+                  >
                     Отмена
                   </Button>
                   <Button
                     type="submit"
-                    className="h-9"
-                    disabled={isSubmitting || isSystemSkill}
+                    disabled={!isDirty || isSubmitting || isSystemSkill}
                     data-testid="save-button"
                   >
-                    {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
                     {isSystemSkill ? "Недоступно" : "Сохранить"}
                   </Button>
                 </div>
               </div>
             </div>
-          ) : null}
+          </div>
         </form>
       </Form>
       <Dialog
@@ -1654,7 +1704,7 @@ export function SkillFormContent({
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
 

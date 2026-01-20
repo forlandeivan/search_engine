@@ -89,4 +89,4 @@ export type SkillFormProps = {
   onEnsureNoCodeMode?: () => Promise<void>;
 };
 
-export type SkillSettingsTab = "main" | "transcription" | "actions";
+export type SkillSettingsTab = "main" | "transcription" | "actions" | "files";

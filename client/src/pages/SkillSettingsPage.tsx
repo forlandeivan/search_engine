@@ -7,14 +7,6 @@ import * as LucideIcons from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useCreateSkill, useGenerateCallbackToken, useSkills, useUpdateSkill } from "@/hooks/useSkills";
@@ -64,7 +56,7 @@ const parseTab = (search: string | null | undefined): SkillSettingsTab | null =>
   if (!search) return null;
   const params = new URLSearchParams(search.startsWith("?") ? search : `?${search}`);
   const tab = params.get("tab");
-  if (tab === "transcription" || tab === "actions" || tab === "main") {
+  if (tab === "transcription" || tab === "actions" || tab === "main" || tab === "files") {
     return tab;
   }
   if (tab === "llm" || tab === "rag") {
@@ -126,7 +118,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   }, [location, activeTab]);
 
   const handleTabChange = (value: string) => {
-    const next: SkillSettingsTab = value === "transcription" || value === "actions" ? value : "main";
+    const next: SkillSettingsTab = value === "transcription" || value === "actions" || value === "files" ? value : "main";
     setActiveTab(next);
     const base = location.split("?")[0];
     navigate(`${base}?tab=${next}`, { replace: true });
@@ -439,41 +431,20 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   }, [currentSkill, updateSkill]);
 
   return (
-    <div className="space-y-6 pb-10">
-      <div className="mx-auto w-full max-w-6xl px-6 pt-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <Button variant="ghost" size="sm" onClick={goBack} className="shrink-0">
-              <ArrowLeft className="h-4 w-4 mr-1" />
+    <div>
+      <div className="px-6 pt-6 pb-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <Button variant="outline" size="sm" onClick={goBack} className="shrink-0">
+              <ArrowLeft className="h-4 w-4" />
               Назад
             </Button>
-            <div className="flex flex-col gap-1">
-              <Breadcrumb className="text-sm text-muted-foreground">
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink asChild>
-                      <Link href="/skills">Навыки</Link>
-                    </BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>{skillName}</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Настройки</BreadcrumbPage>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-              <h1 className="text-base font-semibold" data-testid="skill-title">
-                Настройки навыка
-              </h1>
-            </div>
+            <h1 className="text-3xl font-semibold" data-testid="skill-title">
+              {isNew ? "Новый навык" : `Настройка навыка «${skillName}»`}
+            </h1>
           </div>
         </div>
       </div>
-
-      <div className="mx-auto w-full max-w-6xl px-6">
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Загружаем данные...
@@ -489,42 +460,39 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
             <AlertDescription>Проверьте ссылку и попробуйте снова.</AlertDescription>
           </Alert>
         ) : (
-          <>
-            <SkillFormContent
-              knowledgeBases={knowledgeBases}
-              embeddingProviders={embeddingProviders}
-              isEmbeddingProvidersLoading={isEmbeddingProvidersLoading}
-              fileStorageProviders={fileStorageProviders}
-              workspaceDefaultFileStorageProvider={workspaceDefaultFileStorageProvider}
-              isFileStorageProvidersLoading={isFileStorageProvidersLoading}
-              fileStorageProvidersError={fileStorageProvidersError ?? null}
-              hasSkillFiles={hasSkillFiles}
-              isSkillFilesReady={isSkillFilesReady}
-              llmOptions={llmOptions}
-              onSubmit={handleSubmit}
-              isSubmitting={isUpdating || isCreating}
-              skill={isNew ? null : currentSkill}
-              allowNoCodeFlow={allowNoCodeFlow}
-              getIconComponent={getIconComponent}
-              isOpen
-              activeTab={activeTab}
-              onTabChange={handleTabChange}
-              onGenerateCallbackToken={(skillId) => generateCallbackToken({ skillId })}
-              isGeneratingCallbackToken={isGeneratingCallbackToken}
-              onEnsureNoCodeMode={ensureNoCodeMode}
-            />
-            {canEditSkillFiles ? (
-              <div className="mt-6">
+          <SkillFormContent
+            knowledgeBases={knowledgeBases}
+            embeddingProviders={embeddingProviders}
+            isEmbeddingProvidersLoading={isEmbeddingProvidersLoading}
+            fileStorageProviders={fileStorageProviders}
+            workspaceDefaultFileStorageProvider={workspaceDefaultFileStorageProvider}
+            isFileStorageProvidersLoading={isFileStorageProvidersLoading}
+            fileStorageProvidersError={fileStorageProvidersError ?? null}
+            hasSkillFiles={hasSkillFiles}
+            isSkillFilesReady={isSkillFilesReady}
+            llmOptions={llmOptions}
+            onSubmit={handleSubmit}
+            isSubmitting={isUpdating || isCreating}
+            skill={isNew ? null : currentSkill}
+            allowNoCodeFlow={allowNoCodeFlow}
+            getIconComponent={getIconComponent}
+            isOpen
+            activeTab={activeTab}
+            onTabChange={handleTabChange}
+            onGenerateCallbackToken={(skillId) => generateCallbackToken({ skillId })}
+            isGeneratingCallbackToken={isGeneratingCallbackToken}
+            onEnsureNoCodeMode={ensureNoCodeMode}
+            filesTabContent={
+              canEditSkillFiles ? (
                 <SkillFilesSection
                   canEdit
                   workspaceId={workspaceId}
                   skillId={currentSkill?.id ?? null}
                 />
-              </div>
-            ) : null}
-          </>
+              ) : undefined
+            }
+          />
         )}
-      </div>
     </div>
   );
 }
