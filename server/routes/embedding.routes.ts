@@ -13,11 +13,10 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
-import { listEmbeddingProvidersWithStatus } from '../embedding-provider-registry';
 import { fetchAccessToken } from '../llm-access-token';
 import { listModels } from '../model-service';
 import { storage } from '../storage';
-import type { PublicUser, EmbeddingProvider } from '@shared/schema';
+import type { PublicUser, EmbeddingProvider, PublicEmbeddingProvider } from '@shared/schema';
 
 const logger = createLogger('embedding');
 
@@ -78,8 +77,19 @@ embeddingRouter.get('/services', asyncHandler(async (req, res) => {
   if (!user) return;
 
   const workspaceId = getRequestWorkspace(req);
-  const providers = await listEmbeddingProvidersWithStatus(workspaceId);
-  res.json({ providers });
+  // Получаем полные объекты провайдеров, а не только статус
+  const fullProviders = await storage.listEmbeddingProviders(workspaceId);
+  
+  // Преобразуем в PublicEmbeddingProvider (скрываем authorizationKey)
+  const publicProviders: PublicEmbeddingProvider[] = fullProviders.map(provider => {
+    const { authorizationKey, ...rest } = provider;
+    return {
+      ...rest,
+      hasAuthorizationKey: typeof authorizationKey === 'string' && authorizationKey.trim().length > 0,
+    };
+  });
+  
+  res.json({ providers: publicProviders });
 }));
 
 /**

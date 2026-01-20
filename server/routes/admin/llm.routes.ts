@@ -371,7 +371,8 @@ adminLlmRouter.put('/embeddings/providers/:id', asyncHandler(async (req, res) =>
  * GET /embeddings/providers/:providerId/models
  */
 adminLlmRouter.get('/embeddings/providers/:providerId/models', asyncHandler(async (req, res) => {
-  const modelsInfo = await resolveEmbeddingProviderModels(req.params.providerId);
+  const workspace = getRequestWorkspace(req);
+  const modelsInfo = await resolveEmbeddingProviderModels(req.params.providerId, workspace?.id);
   if (!modelsInfo) {
     return res.status(404).json({ message: 'Provider not found' });
   }

@@ -14,14 +14,13 @@ import { Database, ChevronRight, ChevronLeft, RotateCcw, AlertTriangle } from "l
 import { useStartKnowledgeBaseIndexing } from "@/hooks/useKnowledgeBaseIndexing";
 import type { IndexingWizardConfig } from "@shared/knowledge-base-indexing";
 import { IndexingModeSelector } from "./IndexingModeSelector";
-import { ChunkingConfigStep } from "./ChunkingConfigStep";
-import { EmbeddingsConfigStep } from "./EmbeddingsConfigStep";
+import { EmbeddingsAndChunkingStep } from "./EmbeddingsAndChunkingStep";
 import { SchemaFieldsStep } from "./SchemaFieldsStep";
 import { IndexingConfirmStep } from "./IndexingConfirmStep";
 import { cn } from "@/lib/utils";
 
 type WizardMode = "select" | "express" | "advanced";
-type WizardStep = "chunking" | "embeddings" | "schema" | "confirm";
+type WizardStep = "embeddings-and-chunking" | "schema" | "confirm";
 
 interface IndexingWizardModalProps {
   open: boolean;
@@ -86,14 +85,14 @@ export function IndexingWizardModal({
       // Показываем предупреждение
       if (confirm("Вы уверены? Изменения будут потеряны.")) {
         setMode("select");
-        setStep("chunking");
+        setStep("embeddings-and-chunking");
         setConfig(initialConfig ?? defaultConfig);
         setHasChanges(false);
         onOpenChange(false);
       }
     } else {
       setMode("select");
-      setStep("chunking");
+      setStep("embeddings-and-chunking");
       setConfig(initialConfig ?? defaultConfig);
       setHasChanges(false);
       onOpenChange(false);
@@ -135,9 +134,7 @@ export function IndexingWizardModal({
 
   // Навигация по шагам
   const handleNext = useCallback(() => {
-    if (step === "chunking") {
-      setStep("embeddings");
-    } else if (step === "embeddings") {
+    if (step === "embeddings-and-chunking") {
       setStep("schema");
     } else if (step === "schema") {
       setStep("confirm");
@@ -149,9 +146,7 @@ export function IndexingWizardModal({
     if (step === "confirm") {
       setStep("schema");
     } else if (step === "schema") {
-      setStep("embeddings");
-    } else if (step === "embeddings") {
-      setStep("chunking");
+      setStep("embeddings-and-chunking");
     }
   }, [step]);
 
@@ -214,8 +209,7 @@ export function IndexingWizardModal({
 
   // Индикатор шагов
   const steps = [
-    { id: "chunking", label: "Чанкование" },
-    { id: "embeddings", label: "Эмбеддинги" },
+    { id: "embeddings-and-chunking", label: "Эмбеддинги" },
     { id: "schema", label: "Схема" },
     { id: "confirm", label: "Запуск" },
   ] as const;
@@ -270,21 +264,13 @@ export function IndexingWizardModal({
 
               {/* Контент шага */}
               <div className="min-h-[400px]">
-                {step === "chunking" && (
-                  <ChunkingConfigStep
-                    config={{ chunkSize: config.chunkSize, chunkOverlap: config.chunkOverlap }}
-                    onChange={(newConfig) => {
-                      setConfig({ ...config, ...newConfig });
-                      checkChanges();
-                    }}
-                    disabled={isSubmitting}
-                  />
-                )}
-                {step === "embeddings" && (
-                  <EmbeddingsConfigStep
+                {step === "embeddings-and-chunking" && (
+                  <EmbeddingsAndChunkingStep
                     config={{
                       embeddingsProvider: config.embeddingsProvider,
                       embeddingsModel: config.embeddingsModel,
+                      chunkSize: config.chunkSize,
+                      chunkOverlap: config.chunkOverlap,
                     }}
                     onChange={(newConfig) => {
                       setConfig({ ...config, ...newConfig });
@@ -296,6 +282,8 @@ export function IndexingWizardModal({
                         ? {
                             embeddingsProvider: initialConfig.embeddingsProvider,
                             embeddingsModel: initialConfig.embeddingsModel,
+                            chunkSize: initialConfig.chunkSize,
+                            chunkOverlap: initialConfig.chunkOverlap,
                           }
                         : undefined
                     }
@@ -351,7 +339,7 @@ export function IndexingWizardModal({
         <DialogFooter>
           <div className="flex items-center justify-between w-full">
             <div className="flex gap-2">
-              {mode === "advanced" && step !== "chunking" && (
+              {mode === "advanced" && step !== "embeddings-and-chunking" && (
                 <Button variant="outline" onClick={handleBack} disabled={isSubmitting}>
                   <ChevronLeft className="mr-2 h-4 w-4" />
                   Назад

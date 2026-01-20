@@ -301,14 +301,11 @@ export default function AdminIndexingRulesPage() {
                             disabled={providerFieldDisabled}
                             value={field.value}
                             onValueChange={(value) => {
+                              // Устанавливаем значения без валидации
+                              form.setValue("embeddingsProvider", value, { shouldValidate: false, shouldDirty: true });
+                              form.setValue("embeddingsModel", "", { shouldValidate: false, shouldDirty: true });
                               form.clearErrors("embeddingsProvider");
                               form.clearErrors("embeddingsModel");
-                              form.setValue("embeddingsModel", "", { shouldValidate: false, shouldDirty: true });
-                              field.onChange(value);
-                              // Сбрасываем ошибки валидации после установки значения
-                              setTimeout(() => {
-                                form.clearErrors();
-                              }, 0);
                             }}
                           >
                             <SelectTrigger id="indexing-embeddings-provider">
