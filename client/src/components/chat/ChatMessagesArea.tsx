@@ -375,18 +375,40 @@ function ChatBubble({
   // Извлечь citations из metadata
   const citations = useMemo(() => {
     const raw = message.metadata?.citations;
+    
+    // Логирование для отладки
+    if (message.role === "assistant") {
+      console.log('[ChatCitations Debug]', {
+        messageId: message.id,
+        hasMetadata: !!message.metadata,
+        rawCitations: raw,
+        isArray: Array.isArray(raw),
+        citationsType: typeof raw,
+      });
+    }
+    
     if (!Array.isArray(raw)) {
       return [];
     }
     // Валидация структуры
-    return raw.filter(
+    const filtered = raw.filter(
       (item): item is RagChunk =>
         typeof item === "object" &&
         item !== null &&
         typeof item.chunk_id === "string" &&
         typeof item.doc_id === "string"
     );
-  }, [message.metadata?.citations]);
+    
+    if (message.role === "assistant" && filtered.length !== raw.length) {
+      console.warn('[ChatCitations] Some citations were filtered out', {
+        original: raw.length,
+        filtered: filtered.length,
+        sample: raw[0],
+      });
+    }
+    
+    return filtered;
+  }, [message.metadata?.citations, message.id, message.role]);
 
   // Не показывать источники во время стриминга
   const showCitations = !resolvedStreaming && citations.length > 0;

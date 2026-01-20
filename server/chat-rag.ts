@@ -1,4 +1,4 @@
-﻿import type { Request } from "express";
+import type { Request } from "express";
 import type { SkillDto } from "@shared/skills";
 import { mergeRagSearchSettings } from "@shared/knowledge-base-search";
 import { storage } from "./storage";
@@ -18,6 +18,7 @@ export type KnowledgeRagRequestPayload = {
   collection: string; // Оставляем для обратной совместимости
   collections?: string[]; // Новое поле для списка коллекций
   skill_id?: string;
+  workspace_id?: string; // Для получения настроек навыка в pipeline
   hybrid: {
     bm25: {
       weight?: number;
@@ -225,6 +226,7 @@ export async function buildSkillRagRequestPayload(options: {
     collection: vectorCollection, // Для обратной совместимости
     collections: vectorCollections, // Новое поле для списка коллекций
     skill_id: skill.id,
+    workspace_id: workspaceId, // Передаём для получения настроек навыка
     hybrid: {
       bm25: {
         weight: bm25Weight,

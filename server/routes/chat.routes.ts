@@ -20,7 +20,7 @@ import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import multer from 'multer';
 import { storage } from '../storage';
-import { createLogger } from '../lib/logger';
+import { createLogger, logger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { llmChatLimiter } from '../middleware/rate-limit';
 import { uploadFileToProvider, FileUploadToProviderError } from '../file-storage-provider-upload-service';
@@ -195,7 +195,6 @@ chatRouter.post('/sessions', asyncHandler(async (req, res) => {
     resolvedSkillId = systemSkill.id;
   }
 
-  logger.info({ userId: user.id, workspaceId, skillId: resolvedSkillId }, 'Creating chat session');
 
   const skill = await getSkillById(workspaceId, resolvedSkillId);
   if (!skill) {
@@ -443,7 +442,6 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       const execution = await skillExecutionLogService.startExecution(context);
       executionId = execution?.id ?? null;
     } catch (logError) {
-      logger.error({ err: logError }, `[chat] skill execution log start failed for chat=${req.params.chatId}`);
     }
   };
 
@@ -475,7 +473,6 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
         await skillExecutionLogService.finishExecution(executionId, status, extra);
       }
     } catch (logError) {
-      logger.error({ err: logError }, `[chat] skill execution finish failed chat=${req.params.chatId}`);
     }
   };
 
@@ -572,7 +569,6 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
         ragResult = await callRagForSkillChat({ req, skill: context.skillConfig, workspaceId, userMessage: payload.content, runPipeline: runKnowledgeBaseRagPipeline, stream: null }) as KnowledgeBaseRagPipelineResponse;
         await safeLogStep('CALL_RAG_PIPELINE', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { output: { answerPreview: ragResult.response.answer.slice(0, 160), knowledgeBaseId: ragResult.response.knowledgeBaseId, usage: ragResult.response.usage ?? null } });
       } catch (ragError) {
-        logger.error({ err: ragError }, `[CHAT RAG] ERROR in callRagForSkillChat`);
         const info = describeErrorForLog(ragError);
         await safeLogStep('CALL_RAG_PIPELINE', SKILL_EXECUTION_STEP_STATUS.ERROR, { errorCode: info.code, errorMessage: info.message, diagnosticInfo: info.diagnosticInfo, input: ragStepInput });
         if (ragError instanceof SkillRagConfigurationError) throw new ChatServiceError(ragError.message, 400);
@@ -582,9 +578,45 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       if (!ragResult) throw new Error('RAG pipeline returned empty result');
 
       const citations = Array.isArray(ragResult.response.citations) ? ragResult.response.citations : [];
+      
       // Проверяем настройку показа источников
       const showSources = context.skillConfig.ragConfig?.showSources ?? true;
+      
+      logger.info({
+        component: 'CHAT_RAG',
+        step: 'citations_processing',
+        chatId: req.params.chatId,
+        skillId: context.skill.id,
+        citationsCount: citations.length,
+        showSources,
+        ragConfig: context.skillConfig.ragConfig,
+        citationsSample: citations.length > 0 ? {
+          chunk_id: citations[0].chunk_id,
+          doc_id: citations[0].doc_id,
+          doc_title: citations[0].doc_title,
+          score: citations[0].score,
+        } : null,
+      }, `[CHAT RAG] Processing citations: ${citations.length} citations, showSources=${showSources}`);
+      
+      // Citations уже отфильтрованы в pipeline на основе allowSources (который учитывает настройку навыка)
+      // Но на всякий случай проверяем ещё раз настройку навыка для дополнительной безопасности
       const metadata = showSources && citations.length > 0 ? { citations } : undefined;
+      
+      if (metadata) {
+        logger.info({
+          component: 'CHAT_RAG',
+          step: 'metadata_created',
+          chatId: req.params.chatId,
+          citationsCount: metadata.citations.length,
+        }, `[CHAT RAG] Metadata created with ${metadata.citations.length} citations`);
+      } else {
+        logger.info({
+          component: 'CHAT_RAG',
+          step: 'metadata_skipped',
+          chatId: req.params.chatId,
+          reason: !showSources ? 'showSources=false' : citations.length === 0 ? 'no_citations' : 'unknown',
+        }, `[CHAT RAG] Metadata skipped (showSources=${showSources}, citations=${citations.length})`);
+      }
 
       if (wantsStream) {
         streamingResponseStarted = true;
@@ -604,6 +636,16 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
         }
 
         const assistantMessage = await writeAssistantMessage(req.params.chatId, workspaceId, user.id, answer, metadata);
+        
+        logger.info({
+          component: 'CHAT_RAG',
+          step: 'sse_done_sent',
+          chatId: req.params.chatId,
+          assistantMessageId: assistantMessage.id,
+          citationsInPayload: ragResult.response.citations.length,
+          metadataCitations: metadata?.citations?.length ?? 0,
+        }, `[CHAT RAG] SSE done event sent with ${ragResult.response.citations.length} citations in payload`);
+        
         sendSseEvent(res, 'done', { assistantMessageId: assistantMessage.id, userMessageId: userMessageRecord?.id ?? null, rag: { knowledgeBaseId: ragResult.response.knowledgeBaseId, normalizedQuery: ragResult.response.normalizedQuery, citations: ragResult.response.citations } });
         await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
         res.end();
@@ -648,7 +690,6 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
 
-      logger.info(`[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} streaming response`);
       await safeLogStep('STREAM_TO_CLIENT_START', SKILL_EXECUTION_STEP_STATUS.RUNNING, { input: { chatId: req.params.chatId, workspaceId, stream: true } });
 
       const completionPromise = executeLlmCompletion(context.provider, accessToken, requestBody, { stream: true });
@@ -678,7 +719,6 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
 
         if (forwarder) await forwarder;
         const assistantMessage = await writeAssistantMessage(req.params.chatId, workspaceId, user.id, completion.answer);
-        logger.info(`[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} streaming finished`);
         sendSseEvent(res, 'done', { assistantMessageId: assistantMessage.id, userMessageId: userMessageRecord?.id ?? null, usage: { llmTokens: llmUsageMeasurement?.quantityRaw ?? tokensTotal, llmUnits: llmUsageMeasurement?.quantity ?? null, llmUnit: llmUsageMeasurement?.unit ?? null, llmCredits: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null } });
         await safeLogStep('STREAM_TO_CLIENT_FINISH', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { output: { reason: 'completed' } });
         await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);

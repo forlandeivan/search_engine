@@ -223,7 +223,7 @@ app.use((req, res, next) => {
         logLine = logLine.slice(0, 79) + "…";
       }
 
-      log(logLine);
+      // Logging disabled - only RAG pipeline logs are written to dev.log
     }
   });
 

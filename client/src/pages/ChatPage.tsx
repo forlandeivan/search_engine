@@ -487,7 +487,54 @@ export default function ChatPage({ params }: ChatPageProps) {
                 ),
               );
             },
-            onDone: async () => {
+            onDone: async (payload) => {
+              // Извлечь citations из payload (если есть)
+              const ragPayload = payload as { rag?: { citations?: unknown[] } } | undefined;
+              const citations = Array.isArray(ragPayload?.rag?.citations)
+                ? ragPayload.rag.citations
+                : [];
+
+              debugLog("[CHAT RAG] onDone payload received", {
+                messageId: assistantMessage.id,
+                hasRagPayload: !!ragPayload?.rag,
+                citationsInPayload: citations.length,
+                payloadKeys: ragPayload ? Object.keys(ragPayload) : [],
+                ragKeys: ragPayload?.rag ? Object.keys(ragPayload.rag) : [],
+                citationsSample: citations.length > 0 ? {
+                  chunk_id: (citations[0] as any)?.chunk_id,
+                  doc_id: (citations[0] as any)?.doc_id,
+                  doc_title: (citations[0] as any)?.doc_title,
+                } : null,
+              });
+
+              // Обновить локальное сообщение с citations перед refetch (если есть)
+              if (citations.length > 0) {
+                setLocalMessages((prev) =>
+                  prev.map((message) =>
+                    message.id === assistantMessage.id
+                      ? {
+                          ...message,
+                          metadata: { ...message.metadata, citations },
+                        }
+                      : message
+                  )
+                );
+                debugLog("[CHAT RAG] Updated local message with citations", { 
+                  messageId: assistantMessage.id, 
+                  citationsCount: citations.length,
+                  citations: citations.slice(0, 2).map((c: any) => ({
+                    chunk_id: c.chunk_id,
+                    doc_id: c.doc_id,
+                    doc_title: c.doc_title,
+                  })),
+                });
+              } else {
+                debugLog("[CHAT RAG] No citations in payload", {
+                  messageId: assistantMessage.id,
+                  payload: ragPayload,
+                });
+              }
+
               // После завершения стрима убираем локальный ассистентский placeholder,
               // чтобы не осталось пустого bubble: сервер отдаст финальный ответ через refetch.
               setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));

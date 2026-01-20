@@ -163,6 +163,8 @@ import {
   SquareStack,
   Sparkles,
   Trash2,
+  Layers,
+  ExternalLink,
 } from "lucide-react";
 
 // Import from decomposed modules
@@ -2503,7 +2505,21 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     return null;
   })();
 
-  const renderOverview = (detail: Extract<KnowledgeBaseNodeDetail, { type: "base" }>) => (
+  // Функция для построения имени коллекции Qdrant для базы знаний
+  const buildKnowledgeCollectionName = useCallback((baseId: string, workspaceId: string): string => {
+    const sanitize = (source: string): string => {
+      const normalized = source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
+      return normalized.length > 0 ? normalized.slice(0, 60) : "default";
+    };
+    const baseSlug = sanitize(baseId);
+    const workspaceSlug = sanitize(workspaceId);
+    return `kb_${baseSlug}_ws_${workspaceSlug}`;
+  }, []);
+
+  const renderOverview = (detail: Extract<KnowledgeBaseNodeDetail, { type: "base" }>) => {
+    const collectionName = workspaceId && detail.id ? buildKnowledgeCollectionName(detail.id, workspaceId) : null;
+    
+    return (
     <Card>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
@@ -2684,6 +2700,19 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">{detail.description}</p>
+        {collectionName && (
+          <div className="flex items-center gap-2 text-sm">
+            <Layers className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">Коллекция Qdrant:</span>
+            <Link
+              href={`/vector/collections/${encodeURIComponent(collectionName)}`}
+              className="flex items-center text-primary hover:text-primary/80 transition-colors"
+              title="Перейти к коллекции в Qdrant"
+            >
+              <ExternalLink className="h-4 w-4" />
+            </Link>
+          </div>
+        )}
         <Separator />
         <div>
           <h3 className="text-sm font-semibold mb-2">Структура базы</h3>
@@ -2724,7 +2753,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         )}
       </CardContent>
     </Card>
-  );
+    );
+  };
 
   const renderContent = () => {
     if (nodeDetailQuery.isLoading) {

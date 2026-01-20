@@ -91,6 +91,7 @@ import {
   listAdminAsrExecutions,
 } from "./admin-asr-executions";
 import { skillExecutionLogService } from "./skill-execution-log-context";
+import { logger } from "./lib/logger";
 import { emailConfirmationTokenService, EmailConfirmationTokenError } from "./email-confirmation-token-service";
 import { registrationEmailService } from "./email-sender-registry";
 import { SmtpSendError } from "./smtp-email-sender";
@@ -3343,6 +3344,7 @@ const knowledgeRagRequestSchema = z.object({
   kb_id: z.string().trim().min(1, "Укажите базу знаний"),
   top_k: z.coerce.number().int().min(MIN_TOP_K).max(MAX_TOP_K).default(DEFAULT_INDEXING_RULES.topK),
   skill_id: z.string().trim().optional(),
+  workspace_id: z.string().trim().optional(),
   hybrid: z
     .object({
       bm25: z
@@ -3631,7 +3633,49 @@ async function runKnowledgeBaseRagPipeline(options: {
     let effectiveTopK = retrievalParams.topK;
     let effectiveMinScore = retrievalParams.minScore;
     let effectiveMaxContextTokens: number | null = indexingRules.maxContextTokens;
-    let allowSources = resolveAllowSources({ rulesCitationsEnabled: indexingRules.citationsEnabled });
+    
+    // Получаем настройку навыка для allowSources
+    let skillShowSources: boolean | null = null;
+    if (normalizedSkillId) {
+      try {
+        const workspaceId = typeof body.workspace_id === "string" ? body.workspace_id.trim() : null;
+        if (workspaceId) {
+          const skill = await getSkillById(workspaceId, normalizedSkillId);
+          if (skill) {
+            skillShowSources = skill.ragConfig?.showSources ?? null;
+            logger.info({
+              component: 'RAG_PIPELINE',
+              step: 'skill_config_check',
+              skillId: normalizedSkillId,
+              workspaceId,
+              skillShowSources,
+              ragConfig: skill.ragConfig,
+            }, '[RAG] Skill config loaded for showSources check');
+          }
+        }
+      } catch (error) {
+        logger.warn({
+          component: 'RAG_PIPELINE',
+          step: 'skill_config_check',
+          error: error instanceof Error ? error.message : String(error),
+        }, '[RAG] Failed to load skill for showSources check');
+      }
+    }
+    
+    let allowSources = resolveAllowSources({ 
+      rulesCitationsEnabled: indexingRules.citationsEnabled,
+      skillShowSources,
+    });
+    
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'allow_sources_resolution',
+      indexingRulesCitationsEnabled: indexingRules.citationsEnabled,
+      skillShowSources,
+      allowSources,
+      skillId: normalizedSkillId,
+    }, '[RAG] allowSources resolved');
+    
     let skillCollectionFilter: string[] = [];
 
   const pipelineLog: KnowledgeBaseAskAiPipelineStepLog[] = [];
@@ -3663,18 +3707,24 @@ async function runKnowledgeBaseRagPipeline(options: {
   }
   
   const knowledgeBaseId = knowledgeBaseIds[0]; // Для обратной совместимости
+  
+  logger.info({
+    component: 'RAG_PIPELINE',
+    step: 'start',
+    query: query.slice(0, 100),
+    kb_ids: knowledgeBaseIds,
+    skill_id: normalizedSkillId,
+    workspace_id: typeof body.workspace_id === "string" ? body.workspace_id : null,
+    top_k: body.top_k,
+    effectiveTopK,
+    effectiveMinScore,
+    hasStream: !!stream,
+    wantsLlmStream,
+    collections: Array.isArray(body.collections) ? body.collections : [body.collection].filter(Boolean),
+  }, `[RAG PIPELINE] START: query="${query.slice(0, 50)}...", kb_ids=[${knowledgeBaseIds.join(", ")}], skill_id=${normalizedSkillId || 'N/A'}`);
   const wantsLlmStream = Boolean(stream);
   
-  console.log(`[RAG PIPELINE] START: query="${query.slice(0, 50)}...", kb_ids=[${knowledgeBaseIds.join(", ")}]`);
-  console.log(`[RAG PIPELINE] stream param:`, stream ? 'PROVIDED' : 'NULL');
-  console.log(`[RAG PIPELINE] wantsLlmStream:`, wantsLlmStream);
-  console.log(`[RAG PIPELINE] body.collection=${body.collection}`);
-  console.log(`[RAG PIPELINE] body.collections=${Array.isArray(body.collections) ? body.collections.join(", ") : "N/A"}`);
-  console.log(`[RAG PIPELINE] body.top_k=${body.top_k}`);
-  console.log(`[RAG PIPELINE] body.hybrid.vector.collection=${body.hybrid?.vector?.collection}`);
-  console.log(`[RAG PIPELINE] body.hybrid.vector.collections=${Array.isArray(body.hybrid?.vector?.collections) ? body.hybrid.vector.collections.join(", ") : "N/A"}`);
-  console.log(`[RAG PIPELINE] body.hybrid.vector.embedding_provider_id=${body.hybrid?.vector?.embedding_provider_id}`);
-  console.log(`[RAG PIPELINE] effectiveTopK=${effectiveTopK}, effectiveMinScore=${effectiveMinScore}`);
+  // Логирование будет после определения knowledgeBaseIds
 
   if (!query) {
     throw new HttpError(400, "Укажите поисковый запрос");
@@ -4912,6 +4962,20 @@ async function runKnowledgeBaseRagPipeline(options: {
         }))
       : [];
 
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'citations_formation',
+      allowSources,
+      combinedResultsCount: combinedResults.length,
+      citationsCount: citations.length,
+      citations: citations.length > 0 ? citations.slice(0, 3).map(c => ({
+        chunk_id: c.chunk_id,
+        doc_id: c.doc_id,
+        doc_title: c.doc_title,
+        score: c.score,
+      })) : [],
+    }, `[RAG] Citations formed: ${citations.length} citations from ${combinedResults.length} results (allowSources=${allowSources})`);
+
     const responseChunks = allowSources
       ? combinedResults.map((item) => ({
           chunk_id: item.chunkId,
@@ -4966,6 +5030,15 @@ async function runKnowledgeBaseRagPipeline(options: {
       responseFormat,
     } as const;
 
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'response_ready',
+      citationsCount: response.citations.length,
+      chunksCount: response.chunks.length,
+      answerLength: response.answer.length,
+      allowSources,
+    }, `[RAG PIPELINE] Response ready: ${response.citations.length} citations, ${response.chunks.length} chunks`);
+
     if (!wantsLlmStream) {
       emitStreamEvent("delta", { text: response.answer });
     }
@@ -4982,6 +5055,12 @@ async function runKnowledgeBaseRagPipeline(options: {
       debug: response.debug,
       format: response.responseFormat,
     });
+      
+      logger.info({
+        component: 'RAG_PIPELINE',
+        step: 'sse_done_emitted',
+        citationsInEvent: response.citations.length,
+      }, `[RAG PIPELINE] SSE done event emitted with ${response.citations.length} citations`);
 
     if (workspaceId) {
       if (llmTokensForUsage > 0) {
