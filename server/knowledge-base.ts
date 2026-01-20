@@ -50,6 +50,9 @@ import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { knowledgeBaseIndexingActionsService } from "./knowledge-base-indexing-actions";
 import { knowledgeBaseIndexingStateService } from "./knowledge-base-indexing-state";
 import { knowledgeBaseIndexingPolicyService } from "./knowledge-base-indexing-policy";
+import type { StartIndexingWithConfigRequest } from "@shared/knowledge-base-indexing";
+import { indexingConfigSchema } from "@shared/knowledge-base-indexing";
+import { z } from "zod";
 import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
 import { resolveEmbeddingProviderStatus } from "./embedding-provider-registry";
 
@@ -1111,6 +1114,7 @@ export async function startKnowledgeBaseIndexing(
   workspaceId: string,
   mode: KnowledgeBaseIndexingMode = "full",
   userId?: string | null,
+  requestConfig?: StartIndexingWithConfigRequest["config"],
 ): Promise<{
   jobCount: number;
   actionId?: string;
@@ -1156,50 +1160,118 @@ export async function startKnowledgeBaseIndexing(
     // Получаем конфигурацию для сохранения в action и валидации
     let configPayload: Record<string, unknown> = {
       mode,
+      source: requestConfig ? "request" : "policy",
     };
     
     let validationError: string | null = null;
+    let resolvedConfig: {
+      embeddingsProvider: string;
+      embeddingsModel: string;
+      chunkSize: number;
+      chunkOverlap: number;
+      schemaFields?: Array<{ name: string; type: string; isArray: boolean; template: string; isEmbeddingField?: boolean }>;
+    } | null = null;
     
     try {
-      const policy = await knowledgeBaseIndexingPolicyService.get();
-      if (policy) {
-        const providerId = policy.embeddingsProvider;
+      // Если передан кастомный config — используем его
+      if (requestConfig) {
+        try {
+          // Валидация с Zod схемой
+          const validated = indexingConfigSchema.parse(requestConfig);
+          
+          resolvedConfig = {
+            embeddingsProvider: validated.embeddingsProvider,
+            embeddingsModel: validated.embeddingsModel,
+            chunkSize: validated.chunkSize,
+            chunkOverlap: validated.chunkOverlap,
+            schemaFields: validated.schemaFields,
+          };
+        } catch (error) {
+          if (error instanceof z.ZodError) {
+            validationError = `Некорректная конфигурация индексации: ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`;
+          } else {
+            validationError = `Ошибка валидации конфигурации: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        }
+      } else {
+        // Иначе — используем политику базы знаний
+        const policy = await knowledgeBaseIndexingPolicyService.get();
+        if (policy) {
+          resolvedConfig = {
+            embeddingsProvider: policy.embeddingsProvider,
+            embeddingsModel: policy.embeddingsModel,
+            chunkSize: policy.chunkSize,
+            chunkOverlap: policy.chunkOverlap,
+            schemaFields: Array.isArray(policy.defaultSchema) ? policy.defaultSchema : [],
+          };
+        } else {
+          validationError = "Не удалось получить политику индексации баз знаний";
+        }
+      }
+      
+      // Валидация провайдера эмбеддингов
+      if (resolvedConfig && !validationError) {
+        const providerId = resolvedConfig.embeddingsProvider;
         let providerName: string | null = null;
         
-        // Валидация конфигурации
         if (!providerId) {
-          validationError = "Сервис эмбеддингов не указан в политике индексации баз знаний. Проверьте настройки в админ-панели.";
+          validationError = "Сервис эмбеддингов не указан. Проверьте настройки.";
         } else {
           try {
-            const providerStatus = await resolveEmbeddingProviderStatus(providerId, undefined);
+            const providerStatus = await resolveEmbeddingProviderStatus(providerId, workspaceId);
             if (!providerStatus) {
               validationError = `Провайдер эмбеддингов '${providerId}' не найден. Проверьте настройки в админ-панели.`;
             } else if (!providerStatus.isConfigured) {
               validationError = `Провайдер эмбеддингов '${providerId}' не активирован. ${providerStatus.statusReason ? `Причина: ${providerStatus.statusReason}` : "Проверьте настройки в админ-панели."}`;
             } else {
-              const provider = await storage.getEmbeddingProvider(providerId, undefined);
+              const provider = await storage.getEmbeddingProvider(providerId, workspaceId);
               if (provider) {
                 providerName = provider.name;
+              }
+            }
+            
+            configPayload = {
+              ...configPayload,
+              providerId: providerId ?? null,
+              providerName: providerName ?? null,
+              model: resolvedConfig.embeddingsModel ?? null,
+              chunkSize: resolvedConfig.chunkSize ?? null,
+              chunkOverlap: resolvedConfig.chunkOverlap ?? null,
+              schemaFields: resolvedConfig.schemaFields ?? [],
+              schemaFieldCount: resolvedConfig.schemaFields?.length ?? 0,
+              saveToPolicy: requestConfig?.saveToPolicy ?? false,
+            };
+
+            // Сохранение в политику, если запрошено
+            if (requestConfig?.saveToPolicy && resolvedConfig) {
+              try {
+                await knowledgeBaseIndexingPolicyService.update(
+                  {
+                    embeddingsProvider: resolvedConfig.embeddingsProvider,
+                    embeddingsModel: resolvedConfig.embeddingsModel,
+                    chunkSize: resolvedConfig.chunkSize,
+                    chunkOverlap: resolvedConfig.chunkOverlap,
+                    defaultSchema: resolvedConfig.schemaFields.map((field) => ({
+                      name: field.name,
+                      type: field.type,
+                      isArray: field.isArray,
+                      template: field.template,
+                    })),
+                  },
+                  userId ?? null,
+                );
+              } catch (error) {
+                console.error(`[startKnowledgeBaseIndexing] Failed to save config to policy:`, error);
+                // Не прерываем индексацию, только логируем ошибку
               }
             }
           } catch (error) {
             validationError = `Ошибка проверки провайдера эмбеддингов: ${error instanceof Error ? error.message : String(error)}`;
           }
         }
-        
-        configPayload = {
-          ...configPayload,
-          providerId: providerId ?? null,
-          providerName: providerName ?? null,
-          model: policy.embeddingsModel ?? null,
-          chunkSize: policy.chunkSize ?? null,
-          chunkOverlap: policy.chunkOverlap ?? null,
-        };
-      } else {
-        validationError = "Не удалось получить политику индексации баз знаний";
       }
     } catch (error) {
-      validationError = `Ошибка получения политики индексации: ${error instanceof Error ? error.message : String(error)}`;
+      validationError = `Ошибка получения конфигурации индексации: ${error instanceof Error ? error.message : String(error)}`;
     }
     
     await knowledgeBaseIndexingActionsService.start(workspaceId, baseId, actionId, "initializing", userId);

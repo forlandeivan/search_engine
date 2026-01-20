@@ -632,19 +632,53 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       return;
     }
 
-    workerLog(`got node detail for job ${job.id}, fetching policy...`);
+    workerLog(`got node detail for job ${job.id}, fetching config...`);
+    
+    // Получаем action для проверки кастомного config
+    let actionConfig: {
+      embeddingsProvider?: string;
+      embeddingsModel?: string;
+      chunkSize?: number;
+      chunkOverlap?: number;
+      schemaFields?: Array<{ name: string; type: string; isArray: boolean; template: string; isEmbeddingField?: boolean }>;
+    } | null = null;
+    
+    // Получаем последний action для этой базы знаний (jobs создаются в рамках одного action)
+    try {
+      const action = await knowledgeBaseIndexingActionsService.getLatest(job.workspaceId, job.baseId);
+      if (action?.payload?.config) {
+        const config = action.payload.config as Record<string, unknown>;
+        if (config.source === "request") {
+          actionConfig = {
+            embeddingsProvider: config.providerId as string | undefined,
+            embeddingsModel: config.model as string | undefined,
+            chunkSize: config.chunkSize as number | undefined,
+            chunkOverlap: config.chunkOverlap as number | undefined,
+            schemaFields: Array.isArray(config.schemaFields) ? config.schemaFields as Array<{ name: string; type: string; isArray: boolean; template: string; isEmbeddingField?: boolean }> : undefined,
+          };
+          workerLog(`got custom config from action for job ${job.id}, providerId=${actionConfig.embeddingsProvider}, schemaFields=${actionConfig.schemaFields?.length ?? 0}`);
+        }
+      }
+    } catch (error) {
+      workerLog(`WARNING: failed to get action config for job ${job.id}: ${error instanceof Error ? error.message : String(error)}`);
+      // Продолжаем с политикой
+    }
+    
+    // Получаем политику (используется как fallback или для параметров, не переданных в config)
     let policy;
     try {
       policy = await knowledgeBaseIndexingPolicyService.get();
       workerLog(`got policy for job ${job.id}, providerId=${policy.embeddingsProvider}`);
-      await addIndexingActionEvent(
-        job.workspaceId,
-        job.baseId,
-        "initializing",
-        "Политика индексации получена",
-        undefined,
-        { providerId: policy.embeddingsProvider, model: policy.embeddingsModel },
-      );
+      if (!actionConfig) {
+        await addIndexingActionEvent(
+          job.workspaceId,
+          job.baseId,
+          "initializing",
+          "Политика индексации получена",
+          undefined,
+          { providerId: policy.embeddingsProvider, model: policy.embeddingsModel },
+        );
+      }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       workerLog(`ERROR getting policy for job ${job.id}: ${errorMsg}`);
@@ -660,11 +694,17 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       await markJobError(`Ошибка получения политики: ${errorMsg}`);
       return;
     }
+    
+    // Используем config из action, если он есть, иначе — политику
+    const resolvedProviderId = actionConfig?.embeddingsProvider ?? policy.embeddingsProvider;
+    const resolvedModel = actionConfig?.embeddingsModel ?? policy.embeddingsModel;
+    const resolvedChunkSize = actionConfig?.chunkSize ?? policy.chunkSize;
+    const resolvedChunkOverlap = actionConfig?.chunkOverlap ?? policy.chunkOverlap;
 
     await updateIndexingActionStatus(job.workspaceId, job.baseId, "initializing", "Инициализация...");
 
-    // Политика индексации для баз знаний глобальная, проверяем провайдер без workspaceId
-    const providerId = policy.embeddingsProvider;
+    // Используем resolved значения (из config или политики)
+    const providerId = resolvedProviderId;
     if (!providerId) {
       const message = "Сервис эмбеддингов не указан в политике индексации баз знаний";
       await updateIndexingActionStatus(
@@ -731,9 +771,23 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
 
       workerLog(`loaded provider ${providerId} for job ${job.id}, allowSelfSignedCertificate=${provider.allowSelfSignedCertificate}, embeddingsUrl=${provider.embeddingsUrl}`);
 
-      // Используем модель из политики баз знаний
-      const modelFromPolicy = policy.embeddingsModel;
-      embeddingProvider = modelFromPolicy ? { ...provider, model: modelFromPolicy } : provider;
+      // Используем модель из config или политики
+      embeddingProvider = resolvedModel ? { ...provider, model: resolvedModel } : provider;
+      
+      if (!embeddingProvider) {
+        const message = "Не удалось инициализировать провайдер эмбеддингов";
+        await updateIndexingActionStatus(
+          job.workspaceId,
+          job.baseId,
+          "error",
+          `Ошибка: ${message}`,
+          undefined,
+          message,
+          { documentId: job.documentId },
+        );
+        await markJobError(message);
+        return;
+      }
       
       workerLog(`final embeddingProvider for job ${job.id}, allowSelfSignedCertificate=${embeddingProvider.allowSelfSignedCertificate}, model=${embeddingProvider.model}`);
       
@@ -756,6 +810,22 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
         undefined,
         message,
         { documentId: job.documentId, providerId },
+      );
+      await markJobError(message);
+      return;
+    }
+
+    // Проверяем, что embeddingProvider был установлен
+    if (!embeddingProvider) {
+      const message = "Не удалось инициализировать провайдер эмбеддингов";
+      await updateIndexingActionStatus(
+        job.workspaceId,
+        job.baseId,
+        "error",
+        `Ошибка: ${message}`,
+        undefined,
+        message,
+        { documentId: job.documentId },
       );
       await markJobError(message);
       return;
@@ -835,8 +905,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
         nodeId,
         job.workspaceId,
         {
-          maxChars: policy.chunkSize,
-          overlapChars: policy.chunkOverlap,
+          maxChars: resolvedChunkSize,
+          overlapChars: resolvedChunkOverlap,
           splitByPages: false,
           respectHeadings: true,
           // useHtmlContent определяется автоматически по sourceType документа
@@ -913,14 +983,14 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
 
     // Получаем эмбеддинги
     const tokenStartedAt = Date.now();
-    logToFile(`access token start doc=${job.documentId} job=${job.id} provider=${embeddingProvider.id}`);
-    workerLog(`fetching access token for embedding provider ${embeddingProvider.id} for job ${job.id}...`);
+    logToFile(`access token start doc=${job.documentId} job=${job.id} provider=${embeddingProvider!.id}`);
+    workerLog(`fetching access token for embedding provider ${embeddingProvider!.id} for job ${job.id}...`);
     let accessToken;
     try {
       accessToken = await fetchAccessToken(embeddingProvider);
       workerLog(`got access token for job ${job.id}, token length=${accessToken?.length ?? 0}`);
       logToFile(
-        `access token done doc=${job.documentId} job=${job.id} provider=${embeddingProvider.id} durationMs=${Date.now() - tokenStartedAt}`,
+        `access token done doc=${job.documentId} job=${job.id} provider=${embeddingProvider!.id} durationMs=${Date.now() - tokenStartedAt}`,
       );
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -932,10 +1002,10 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
         job.workspaceId,
         job.baseId,
         "error",
-        `Ошибка получения токена доступа для провайдера '${embeddingProvider.name}': ${errorMsg}`,
+        `Ошибка получения токена доступа для провайдера '${embeddingProvider!.name}': ${errorMsg}`,
         undefined,
         errorMsg,
-        { documentId: job.documentId, documentTitle: nodeDetail.title, providerId: embeddingProvider.id },
+        { documentId: job.documentId, documentTitle: nodeDetail.title, providerId: embeddingProvider!.id },
       );
       await markJobError(`Ошибка получения токена доступа: ${errorMsg}`);
       return;
@@ -1075,8 +1145,13 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       { documentId: job.documentId, documentTitle: nodeDetail.title, collectionName, vectorCount: embeddingResults.length },
     );
 
-    // Подготавливаем payload с использованием schema из политики
-    const schemaFields: CollectionSchemaFieldInput[] = policy.defaultSchema as CollectionSchemaFieldInput[];
+    // Подготавливаем payload с использованием schema из config или политики
+    let schemaFields: CollectionSchemaFieldInput[] = [];
+    if (actionConfig?.schemaFields && Array.isArray(actionConfig.schemaFields)) {
+      schemaFields = actionConfig.schemaFields as CollectionSchemaFieldInput[];
+    } else if (policy.defaultSchema && Array.isArray(policy.defaultSchema)) {
+      schemaFields = policy.defaultSchema as CollectionSchemaFieldInput[];
+    }
     const hasCustomSchema = schemaFields.length > 0;
 
     // Получаем данные версии
@@ -1111,8 +1186,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           wordCount: chunk.wordCount ?? 0,
           excerpt: chunk.excerpt ?? null,
           totalChunks: chunkSet.chunks.length,
-          chunkSize: policy.chunkSize,
-          chunkOverlap: policy.chunkOverlap,
+          chunkSize: resolvedChunkSize,
+          chunkOverlap: resolvedChunkOverlap,
         },
         base: {
           id: base.id,
@@ -1127,8 +1202,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
             }
           : null,
         provider: {
-          id: embeddingProvider.id,
-          name: embeddingProvider.name,
+          id: embeddingProvider!.id,
+          name: embeddingProvider!.name,
         },
         revision: {
           id: revisionId,
@@ -1150,7 +1225,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           vectorId,
         },
         embedding: {
-          model: embeddingProvider.model,
+          model: embeddingProvider!.model,
           vectorSize: vector.length,
           tokens: usageTokens ?? null,
           id: embeddingId ?? null,
@@ -1179,8 +1254,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           wordCount: chunk.wordCount ?? 0,
           excerpt: chunk.excerpt ?? null,
           totalChunks: chunkSet.chunks.length,
-          chunkSize: policy.chunkSize,
-          chunkOverlap: policy.chunkOverlap,
+          chunkSize: resolvedChunkSize,
+          chunkOverlap: resolvedChunkOverlap,
         },
         base: {
           id: base.id,
@@ -1195,8 +1270,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
             }
           : null,
         provider: {
-          id: embeddingProvider.id,
-          name: embeddingProvider.name,
+          id: embeddingProvider!.id,
+          name: embeddingProvider!.name,
         },
         chunk: {
           id: resolvedChunkId,
@@ -1210,7 +1285,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           excerpt: chunk.excerpt ?? null,
         },
         embedding: {
-          model: embeddingProvider.model,
+          model: embeddingProvider!.model,
           vectorSize: vector.length,
           tokens: usageTokens ?? null,
           id: embeddingId ?? null,
@@ -1234,7 +1309,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
 
       const pointVectorPayload = buildVectorPayload(
         vector,
-        embeddingProvider.qdrantConfig?.vectorFieldName,
+        embeddingProvider!.qdrantConfig?.vectorFieldName,
       ) as Schemas["PointStruct"]["vector"];
 
       return {

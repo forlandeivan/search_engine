@@ -595,10 +595,49 @@ export function ExpressionInput({
     // Проверяем, клик по AI макросу
     if (target.hasAttribute(MACRO_DATA_ATTR) && target.getAttribute(MACRO_TYPE_ATTR) === 'llm') {
       const macroId = target.getAttribute(MACRO_DATA_ATTR);
+      const macroConfigStr = target.getAttribute('data-macro-config');
+      
       if (macroId) {
-        const index = parseInt(macroId, 10);
-        setEditingLlmTokenIndex(index);
-        return;
+        // Пробуем использовать индекс из атрибута
+        const indexFromAttr = parseInt(macroId, 10);
+        
+        // Проверяем, что индекс валидный и токен действительно LLM
+        if (indexFromAttr >= 0 && indexFromAttr < safeValue.length && safeValue[indexFromAttr]?.type === 'llm') {
+          setEditingLlmTokenIndex(indexFromAttr);
+          return;
+        }
+        
+        // Если индекс не валидный, пытаемся найти токен по содержимому config
+        if (macroConfigStr) {
+          try {
+            const configFromDom = JSON.parse(macroConfigStr) as LLMTokenConfig;
+            
+            // Ищем токен с таким же llmConfig
+            const matchingIndex = safeValue.findIndex(token => {
+              if (token.type !== 'llm' || !token.llmConfig) return false;
+              
+              // Сравниваем промпты
+              const promptMatch = JSON.stringify(token.llmConfig.prompt) === JSON.stringify(configFromDom.prompt);
+              const tempMatch = token.llmConfig.temperature === configFromDom.temperature;
+              
+              return promptMatch && tempMatch;
+            });
+            
+            if (matchingIndex !== -1) {
+              setEditingLlmTokenIndex(matchingIndex);
+              return;
+            }
+          } catch {
+            // Игнорируем ошибки парсинга
+          }
+        }
+        
+        // Если ничего не нашли, ищем первый LLM токен
+        const llmTokenIndex = safeValue.findIndex(token => token.type === 'llm');
+        if (llmTokenIndex !== -1) {
+          setEditingLlmTokenIndex(llmTokenIndex);
+          return;
+        }
       }
     }
     
@@ -607,20 +646,29 @@ export function ExpressionInput({
       setIsFunctionPopupOpen(false);
       setIsFieldPopupOpen(true);
     }
-  }, [disabled, isFieldPopupOpen, isFunctionPopupOpen]);
+  }, [disabled, isFieldPopupOpen, isFunctionPopupOpen, safeValue]);
 
   // Обновление LLM токена после редактирования
   const handleLlmTokenUpdate = useCallback((config: LLMTokenConfig) => {
-    if (editingLlmTokenIndex === null) return;
+    if (editingLlmTokenIndex === null || editingLlmTokenIndex < 0 || editingLlmTokenIndex >= safeValue.length) {
+      setEditingLlmTokenIndex(null);
+      return;
+    }
     
     const updatedTokens = [...safeValue];
     const token = updatedTokens[editingLlmTokenIndex];
     
     if (token && token.type === 'llm') {
-      updatedTokens[editingLlmTokenIndex] = {
+      // Создаем обновленный токен с новым llmConfig
+      const updatedToken: typeof token = {
         ...token,
-        llmConfig: config,
+        llmConfig: {
+          prompt: config.prompt,
+          temperature: config.temperature,
+        },
       };
+      
+      updatedTokens[editingLlmTokenIndex] = updatedToken;
       
       isInternalUpdateRef.current = true;
       lastValueRef.current = updatedTokens;
@@ -695,7 +743,7 @@ export function ExpressionInput({
       </Popover>
 
       {/* Модальное окно редактирования LLM токена */}
-      {editingLlmTokenIndex !== null && safeValue[editingLlmTokenIndex]?.type === 'llm' && (
+      {editingLlmTokenIndex !== null && editingLlmTokenIndex >= 0 && editingLlmTokenIndex < safeValue.length && safeValue[editingLlmTokenIndex]?.type === 'llm' && safeValue[editingLlmTokenIndex].llmConfig && (
         <LLMTokenConfigModal
           open={true}
           onOpenChange={(open) => !open && setEditingLlmTokenIndex(null)}

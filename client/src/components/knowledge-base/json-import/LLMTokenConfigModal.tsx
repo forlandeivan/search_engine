@@ -42,11 +42,19 @@ export function LLMTokenConfigModal({
     initialConfig?.temperature ?? LLM_TOKEN_DEFAULTS.temperature
   );
 
-  // Сброс состояния при открытии/закрытии
+  // Сброс состояния при открытии/закрытии или изменении initialConfig
   useEffect(() => {
     if (open) {
-      setPrompt(initialConfig?.prompt ?? []);
-      setTemperature(initialConfig?.temperature ?? LLM_TOKEN_DEFAULTS.temperature);
+      if (initialConfig) {
+        // Обновляем промпт
+        setPrompt(initialConfig.prompt ?? []);
+        // Обновляем температуру
+        setTemperature(initialConfig.temperature ?? LLM_TOKEN_DEFAULTS.temperature);
+      } else {
+        // Если модалка открыта, но initialConfig нет - сбрасываем на дефолты
+        setPrompt([]);
+        setTemperature(LLM_TOKEN_DEFAULTS.temperature);
+      }
     }
   }, [open, initialConfig]);
 

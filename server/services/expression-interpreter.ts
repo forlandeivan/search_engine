@@ -4,6 +4,7 @@ import { LLM_TOKEN_DEFAULTS } from "@shared/json-import";
 import { resolveUnicaChatProvider } from "../chat-title-generator";
 import { executeLlmCompletion } from "../llm-client";
 import { fetchAccessToken } from "../llm-access-token";
+import { recordLlmUsageEvent } from "../usage/usage-service";
 
 /**
  * Исполнитель функции
@@ -210,7 +211,32 @@ export class ExpressionInterpreter {
         // 5. Выполняем запрос
         const completion = await executeLlmCompletion(provider, accessToken, body);
 
-        // 6. Возвращаем ответ
+        // 6. Записываем токены в usage ledger
+        const tokensTotal = completion.usageTokens ?? null;
+        if (tokensTotal !== null && tokensTotal > 0) {
+          try {
+            const executionId = randomUUID();
+            const providerId = provider.id ?? provider.providerType ?? 'unknown';
+            const modelName = model?.trim() || provider.model?.trim() || 'unknown';
+            
+            await recordLlmUsageEvent({
+              workspaceId: this.workspaceId,
+              executionId,
+              provider: providerId,
+              model: modelName,
+              modelId: null, // modelId не доступен в этом контексте
+              tokensTotal,
+              appliedCreditsPerUnit: null,
+              creditsCharged: null,
+              occurredAt: new Date(),
+            });
+          } catch (usageError) {
+            // Логируем ошибку, но не прерываем выполнение
+            console.error('[expression-interpreter] Failed to record LLM usage:', usageError);
+          }
+        }
+
+        // 7. Возвращаем ответ
         const answer = completion.answer?.trim() ?? '';
         return answer;
 

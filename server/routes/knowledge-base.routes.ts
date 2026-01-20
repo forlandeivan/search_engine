@@ -34,6 +34,7 @@ import {
   startKnowledgeBaseIndexing,
   KnowledgeBaseError,
 } from '../knowledge-base';
+import { knowledgeBaseIndexingPolicyService } from '../knowledge-base-indexing-policy';
 import { crawlKnowledgeDocumentPage } from '../kb-crawler';
 import {
   previewKnowledgeDocumentChunks,
@@ -620,9 +621,80 @@ knowledgeBaseRouter.post('/bases/:baseId/index', asyncHandler(async (req, res) =
   if (!user) return;
 
   const { id: workspaceId } = getRequestWorkspace(req);
-  const mode = (req.query.mode === "changed" ? "changed" : "full") as "full" | "changed";
-  const result = await startKnowledgeBaseIndexing(req.params.baseId, workspaceId, mode, user.id);
+  
+  // Поддержка старого формата (mode в query) и нового (mode в body)
+  const mode = (req.body.mode ?? req.query.mode === "changed" ? "changed" : "full") as "full" | "changed";
+  const config = req.body.config;
+  
+  const result = await startKnowledgeBaseIndexing(
+    req.params.baseId,
+    workspaceId,
+    mode,
+    user.id,
+    config,
+  );
   res.json(result);
+}));
+
+/**
+ * GET /bases/:baseId/indexing-policy
+ * Get indexing policy for knowledge base
+ */
+knowledgeBaseRouter.get('/bases/:baseId/indexing-policy', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+
+  const base = await storage.getKnowledgeBase(baseId);
+  if (!base || base.workspaceId !== workspaceId) {
+    return res.status(404).json({ error: 'База знаний не найдена' });
+  }
+
+  // Получаем глобальную политику (пока политика глобальная)
+  const policy = await knowledgeBaseIndexingPolicyService.get();
+  
+  if (!policy) {
+    return res.json({
+      policy: null,
+      hasCustomPolicy: false,
+    });
+  }
+
+  res.json({
+    policy: {
+      embeddingsProvider: policy.embeddingsProvider,
+      embeddingsModel: policy.embeddingsModel,
+      chunkSize: policy.chunkSize,
+      chunkOverlap: policy.chunkOverlap,
+      defaultSchema: Array.isArray(policy.defaultSchema) ? policy.defaultSchema : [],
+      policyHash: policy.policyHash ?? null,
+      updatedAt: policy.updatedAt?.toISOString() ?? new Date().toISOString(),
+    },
+    hasCustomPolicy: true, // Пока всегда true, если политика существует
+  });
+}));
+
+/**
+ * GET /bases/:baseId/metadata-keys
+ * Get unique metadata keys from documents in knowledge base
+ */
+knowledgeBaseRouter.get('/bases/:baseId/metadata-keys', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+
+  const base = await storage.getKnowledgeBase(baseId);
+  if (!base || base.workspaceId !== workspaceId) {
+    return res.status(404).json({ error: 'База знаний не найдена' });
+  }
+
+  // TODO: Реализовать получение уникальных ключей метаданных из документов базы
+  // Пока возвращаем пустой массив
+  res.json([]);
 }));
 
 /**

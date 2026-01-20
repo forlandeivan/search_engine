@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { KnowledgeBaseIndexStatus } from "@shared/schema";
+import type { StartIndexingWithConfigRequest } from "@shared/knowledge-base-indexing";
 
 export type StartKnowledgeBaseIndexingMode = "full" | "changed";
 
@@ -17,14 +18,13 @@ export function useStartKnowledgeBaseIndexing() {
   return useMutation<
     StartKnowledgeBaseIndexingResponse,
     Error,
-    { baseId: string; mode?: StartKnowledgeBaseIndexingMode }
+    StartIndexingWithConfigRequest & { baseId: string }
   >({
-    mutationFn: async ({ baseId, mode }) => {
-      const url = new URL(`/api/knowledge/bases/${baseId}/index`, window.location.origin);
-      if (mode) {
-        url.searchParams.set("mode", mode);
-      }
-      const res = await apiRequest("POST", url.pathname + url.search);
+    mutationFn: async ({ baseId, mode, config }) => {
+      const res = await apiRequest("POST", `/api/knowledge/bases/${baseId}/index`, {
+        mode,
+        config,
+      });
       if (!res.ok) {
         const error = await res.json().catch(() => ({}));
         throw new Error(error.message ?? "Не удалось запустить индексацию");

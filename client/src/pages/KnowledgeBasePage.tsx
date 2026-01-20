@@ -48,6 +48,11 @@ import DocumentVectorizationProgress, {
 import { CreateKnowledgeBaseDialog } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
 import { JsonImportWizard } from "@/components/knowledge-base/JsonImportWizard";
 import { JsonImportCard } from "@/components/knowledge-base/JsonImportCard";
+import { IndexingWizardModal } from "@/components/knowledge-base/indexing";
+import { useKnowledgeBaseIndexingPolicy } from "@/hooks/useKnowledgeBaseIndexingPolicy";
+import { useIndexingRules } from "@/hooks/useIndexingRules";
+import { convertPolicyToWizardConfig, convertRulesToWizardConfig } from "@/lib/indexing-config-converter";
+import { DEFAULT_SCHEMA_FIELDS } from "@shared/knowledge-base-indexing";
 import { ragDefaults, searchDefaults } from "@/constants/searchSettings";
 import {
   mergeChunkSearchSettings,
@@ -250,6 +255,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [createBaseMode, setCreateBaseMode] = useState<KnowledgeBaseSourceType>("blank");
   const [isJsonImportWizardOpen, setIsJsonImportWizardOpen] = useState(false);
   const [activeJsonImportJobId, setActiveJsonImportJobId] = useState<string | null>(null);
+  const [isIndexingWizardOpen, setIsIndexingWizardOpen] = useState(false);
   const isDeleteDialogOpen = Boolean(deleteTarget);
   const [hierarchyDialogState, setHierarchyDialogState] = useState<{
     nodeId: string;
@@ -586,6 +592,38 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     selectedBase?.id ?? null,
     { enabled: Boolean(workspaceId && selectedBase?.id) },
   );
+
+  // Загрузка политики индексации базы знаний
+  const { data: policyData } = useKnowledgeBaseIndexingPolicy(selectedBase?.id ?? null, workspaceId ?? "");
+
+  // Загрузка глобальных правил индексации
+  const { data: globalRules } = useIndexingRules();
+
+  // Преобразование в конфиг визарда
+  const indexingPolicyConfig = useMemo(() => {
+    if (policyData?.hasCustomPolicy && policyData.policy) {
+      return convertPolicyToWizardConfig(policyData.policy);
+    }
+    return null;
+  }, [policyData]);
+
+  const globalIndexingConfig = useMemo(() => {
+    if (globalRules) {
+      return convertRulesToWizardConfig(globalRules);
+    }
+    // Fallback к дефолтным значениям
+    return {
+      chunkSize: 800,
+      chunkOverlap: 200,
+      embeddingsProvider: "openai",
+      embeddingsModel: "text-embedding-3-small",
+      topK: 6,
+      relevanceThreshold: 0.5,
+      maxContextTokens: 3000,
+      citationsEnabled: true,
+      schemaFields: DEFAULT_SCHEMA_FIELDS,
+    };
+  }, [globalRules]);
   const [isIndexingChangesOpen, setIsIndexingChangesOpen] = useState(false);
   const indexingChangesQuery = useKnowledgeBaseIndexingChanges(
     workspaceId,
@@ -2355,49 +2393,25 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     );
   };
 
-  const handleStartIndexing = useCallback(async () => {
-    if (!selectedBase) {
-      return;
-    }
+  // Обработчик успешного запуска индексации из визарда
+  const handleIndexingStarted = useCallback(
+    (actionId: string) => {
+      setIndexingActionId(actionId);
+      setIsIndexingWizardOpen(false);
 
-    try {
-      const result = await startIndexingMutation.mutateAsync({
-        baseId: selectedBase.id,
-        mode: "changed",
+      toast({
+        title: "Индексация запущена",
+        description: "Прогресс отображается на странице базы знаний",
       });
-      if (result.actionId) {
-        setIndexingActionId(result.actionId);
-      } else if (result.jobCount === 0 && result.status === "up_to_date") {
-        toast({
-          title: "База актуальна",
-          description: "Изменений для индексации не найдено.",
-        });
-      } else if (result.jobCount === 0 && result.status === "indexing") {
-        toast({
-          title: "Индексация уже выполняется",
-          description: "Дождитесь завершения текущего процесса.",
-        });
-      }
+
+      // Обновить данные
       void indexingSummaryQuery.refetch();
       if (isIndexingChangesOpen) {
         void indexingChangesQuery.refetch();
       }
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Не удалось запустить индексацию",
-        description: error instanceof Error ? error.message : "Попробуйте позже",
-      });
-      setIndexingActionId(null);
-    }
-  }, [
-    selectedBase,
-    startIndexingMutation,
-    toast,
-    indexingSummaryQuery,
-    indexingChangesQuery,
-    isIndexingChangesOpen,
-  ]);
+    },
+    [toast, indexingSummaryQuery, indexingChangesQuery, isIndexingChangesOpen],
+  );
 
   const handleOpenResetIndexDialog = useCallback(() => {
     setResetDeleteCollection(true);
@@ -2485,9 +2499,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     if (isIndexingInProgress) {
       return "Индексация выполняется";
     }
-    if (indexingStatus === "up_to_date") {
-      return "База актуальна";
-    }
+    // Убираем проверку up_to_date — в визарде можно выбрать режим "full"
     return null;
   })();
 
@@ -2521,7 +2533,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   indexingButtonDisabledReason ??
                   ((!detail.rootNodes || detail.rootNodes.length === 0) ? "Нет документов для индексации" : undefined)
                 }
-                onClick={handleStartIndexing}
+                onClick={() => setIsIndexingWizardOpen(true)}
               >
                 {startIndexingMutation.isPending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -3451,6 +3463,21 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           setIsJsonImportWizardOpen(false);
         }}
       />
+      {selectedBase && (
+        <IndexingWizardModal
+          open={isIndexingWizardOpen}
+          onOpenChange={setIsIndexingWizardOpen}
+          baseId={selectedBase.id}
+          workspaceId={workspaceId ?? ""}
+          initialConfig={indexingPolicyConfig ?? undefined}
+          defaultConfig={globalIndexingConfig}
+          onIndexingStarted={handleIndexingStarted}
+          baseInfo={{
+            name: selectedBase.name ?? "База знаний",
+            documentCount: indexingSummaryQuery.data?.totalDocuments ?? 0,
+          }}
+        />
+      )}
       {documentVectorizationProgress && (
         <DocumentVectorizationProgress
           title={`Векторизация: ${documentVectorizationProgress.documentTitle}`}
