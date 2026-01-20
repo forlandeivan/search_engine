@@ -235,3 +235,83 @@ export function createFunctionToken(functionName: string, args?: string[]): Expr
 export function createTextToken(text: string): ExpressionToken {
   return { type: 'text', value: text };
 }
+
+/**
+ * Конвертация старого формата маппинга в новый
+ */
+export function migrateMappingConfigV1ToV2(v1: MappingConfigV1): MappingConfigV2 {
+  const v2: MappingConfigV2 = {
+    version: 2,
+    title: { expression: [] },
+    content: { expression: [], required: true },
+    metadata: [],
+    contentJoinSeparator: v1.contentJoinSeparator,
+    titleFallback: v1.titleFallback,
+  };
+
+  const contentFields: FieldMapping[] = [];
+
+  for (const field of v1.fields) {
+    switch (field.role) {
+      case 'id':
+        if (!v2.id) {
+          v2.id = { expression: [{ type: 'field', value: field.sourcePath }] };
+        }
+        break;
+
+      case 'title':
+        if (v2.title.expression.length === 0) {
+          v2.title = { expression: [{ type: 'field', value: field.sourcePath }] };
+        }
+        break;
+
+      case 'content':
+        contentFields.push(field);
+        break;
+
+      case 'content_html':
+        if (!v2.contentHtml) {
+          v2.contentHtml = { expression: [{ type: 'field', value: field.sourcePath }] };
+        }
+        break;
+
+      case 'content_md':
+        if (!v2.contentMd) {
+          v2.contentMd = { expression: [{ type: 'field', value: field.sourcePath }] };
+        }
+        break;
+
+      case 'metadata':
+        v2.metadata.push({
+          key: field.sourcePath.split('.').pop() ?? field.sourcePath,
+          expression: [{ type: 'field', value: field.sourcePath }],
+        });
+        break;
+
+      case 'skip':
+      default:
+        // Игнорируем
+        break;
+    }
+  }
+
+  // Объединяем контентные поля
+  if (contentFields.length > 0) {
+    const sortedContent = [...contentFields].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+    
+    // Добавляем поля с разделителями
+    const contentExpression: ExpressionToken[] = [];
+    const separator = v1.contentJoinSeparator ?? '\n\n';
+    
+    sortedContent.forEach((field, index) => {
+      if (index > 0) {
+        contentExpression.push({ type: 'text', value: separator });
+      }
+      contentExpression.push({ type: 'field', value: field.sourcePath });
+    });
+    
+    v2.content = { expression: contentExpression, required: true };
+  }
+
+  return v2;
+}

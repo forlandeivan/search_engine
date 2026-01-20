@@ -1,3 +1,7 @@
+/**
+ * @deprecated Use DocumentFieldMappingEditor instead
+ * This component will be removed in version 1.58
+ */
 import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

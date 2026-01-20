@@ -1,7 +1,8 @@
 import type { JsonImportJob } from "@shared/schema";
 import { storage } from "./storage";
 import { deleteJsonImportFile } from "./workspace-storage-service";
-import type { MappingConfig, HierarchyConfig, ImportRecordError } from "@shared/json-import";
+import type { MappingConfig, MappingConfigV2, HierarchyConfig, ImportRecordError } from "@shared/json-import";
+import { isMappingConfigV2, migrateMappingConfigV1ToV2 } from "@shared/json-import";
 import { processJsonImport } from "./json-import/streaming-processor";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -25,7 +26,17 @@ async function processJob(job: JsonImportJob): Promise<void> {
 
   try {
     // claimNextJsonImportJob уже обновил статус на processing
-    const mappingConfig = job.mappingConfig as MappingConfig;
+    const rawMappingConfig = job.mappingConfig as Record<string, unknown>;
+    
+    // Нормализация конфига к v2 (если v1 - мигрируем)
+    let mappingConfig: MappingConfigV2;
+    if (isMappingConfigV2(rawMappingConfig as any)) {
+      mappingConfig = rawMappingConfig as MappingConfigV2;
+    } else {
+      // v1 - мигрируем в v2
+      mappingConfig = migrateMappingConfigV1ToV2(rawMappingConfig as any);
+    }
+    
     const hierarchyConfig = job.hierarchyConfig as HierarchyConfig;
 
     const errors: ImportRecordError[] = [];

@@ -18,10 +18,10 @@ import { useJsonImportUpload } from "@/hooks/useJsonImportUpload";
 import { Loader2, FileJson, X, ChevronRight, ChevronLeft } from "lucide-react";
 import type { CreateJsonImportRequest } from "@shared/json-import";
 import { StructurePreview } from "./json-import/StructurePreview";
-import { FieldMappingEditor } from "./json-import/FieldMappingEditor";
+import { DocumentFieldMappingEditor } from "./json-import/DocumentFieldMappingEditor";
 import { HierarchyConfigEditor } from "./json-import/HierarchyConfig";
 import type { StructureAnalysis, PreviewError } from "@/lib/json-import-types";
-import type { MappingConfig, HierarchyConfig } from "@shared/json-import";
+import type { MappingConfigV2, HierarchyConfig } from "@shared/json-import";
 
 interface JsonImportWizardProps {
   open: boolean;
@@ -47,7 +47,7 @@ export function JsonImportWizard({
   const [structureAnalysis, setStructureAnalysis] = useState<StructureAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [previewError, setPreviewError] = useState<PreviewError | null>(null);
-  const [mappingConfig, setMappingConfig] = useState<MappingConfig | null>(null);
+  const [mappingConfig, setMappingConfig] = useState<MappingConfigV2 | null>(null);
   const [isMappingValid, setIsMappingValid] = useState(false);
   const [hierarchyConfig, setHierarchyConfig] = useState<HierarchyConfig | null>(null);
   const { uploadFile, uploadProgress, isUploading, error: uploadError, abort } = useJsonImportUpload(workspaceId);
@@ -341,15 +341,16 @@ export function JsonImportWizard({
           )}
 
           {currentStep === "mapping" && structureAnalysis && (
-            <FieldMappingEditor
+            <DocumentFieldMappingEditor
               analysis={structureAnalysis}
-              initialMapping={mappingConfig ?? undefined}
-              onMappingChange={(mapping) => {
-                setMappingConfig(mapping);
+              initialConfig={mappingConfig ?? undefined}
+              onConfigChange={(config) => {
+                setMappingConfig(config);
               }}
               onValidationChange={(isValid) => {
                 setIsMappingValid(isValid);
               }}
+              showValidationErrors={currentStep === "mapping"}
             />
           )}
 

@@ -311,6 +311,7 @@ export type CreateKnowledgeDocumentPayload = {
   parentId?: string | null;
   sourceType?: KnowledgeNodeSourceType;
   importFileName?: string | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 export type CreateCrawledKnowledgeDocumentPayload = {

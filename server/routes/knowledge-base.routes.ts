@@ -45,6 +45,7 @@ import type {
   CreateJsonImportResponse,
   GetJsonImportStatusResponse,
 } from '@shared/json-import';
+import { isMappingConfigV2, migrateMappingConfigV1ToV2 } from '@shared/json-import';
 import {
   initJsonImportMultipartUpload,
   generatePresignedPartUrls,
@@ -835,22 +836,55 @@ knowledgeBaseRouter.post('/json-import/upload/abort', asyncHandler(async (req, r
  * POST /bases/:baseId/json-import
  * Create JSON/JSONL import job
  */
+// Схема для v1 (старый формат)
+const mappingConfigV1Schema = z.object({
+  fields: z.array(z.object({
+    sourcePath: z.string(),
+    role: z.enum(["id", "title", "content", "content_html", "content_md", "metadata", "skip"]),
+    priority: z.number().optional(),
+  })),
+  contentJoinSeparator: z.string().optional(),
+  titleFallback: z.enum(["first_line", "content_excerpt", "filename"]).optional(),
+  deduplication: z.object({
+    mode: z.enum(["skip", "allow_all"]),
+  }).optional(),
+});
+
+// Схема для v2 (новый формат)
+const mappingConfigV2Schema = z.object({
+  version: z.literal(2),
+  id: z.object({
+    expression: z.array(z.any()),
+  }).optional(),
+  title: z.object({
+    expression: z.array(z.any()),
+  }),
+  content: z.object({
+    expression: z.array(z.any()),
+    required: z.boolean().optional(),
+  }),
+  contentHtml: z.object({
+    expression: z.array(z.any()),
+  }).optional(),
+  contentMd: z.object({
+    expression: z.array(z.any()),
+  }).optional(),
+  metadata: z.array(z.object({
+    key: z.string(),
+    expression: z.array(z.any()),
+  })),
+  contentJoinSeparator: z.string().optional(),
+  titleFallback: z.enum(["first_line", "content_excerpt", "filename"]).optional(),
+});
+
+// Union schema для обоих форматов
+const mappingConfigSchema = z.union([mappingConfigV1Schema, mappingConfigV2Schema]);
+
 const createJsonImportSchema = z.object({
   fileKey: z.string().min(1, "Укажите ключ файла"),
   fileName: z.string().min(1, "Укажите имя файла"),
   fileSize: z.number().int().positive("Размер файла должен быть положительным"),
-  mappingConfig: z.object({
-    fields: z.array(z.object({
-      sourcePath: z.string(),
-      role: z.enum(["id", "title", "content", "content_html", "content_md", "metadata", "skip"]),
-      priority: z.number().optional(),
-    })),
-    contentJoinSeparator: z.string().optional(),
-    titleFallback: z.enum(["first_line", "content_excerpt", "filename"]).optional(),
-    deduplication: z.object({
-      mode: z.enum(["skip", "allow_all"]),
-    }).optional(),
-  }),
+  mappingConfig: mappingConfigSchema,
   hierarchyConfig: z.object({
     mode: z.enum(["flat", "grouped"]),
     groupByField: z.string().optional(),
@@ -885,11 +919,24 @@ knowledgeBaseRouter.post('/bases/:baseId/json-import', asyncHandler(async (req, 
     hierarchyConfig.baseParentId = payload.parentId;
   }
 
+  // Нормализация конфига маппинга к v2 (если v1 - мигрируем)
+  const rawMappingConfig = payload.mappingConfig as Record<string, unknown>;
+  let normalizedMappingConfig: Record<string, unknown>;
+  
+  if (isMappingConfigV2(rawMappingConfig as any)) {
+    // Уже v2 - используем как есть
+    normalizedMappingConfig = rawMappingConfig;
+  } else {
+    // v1 - мигрируем в v2
+    const v2Config = migrateMappingConfigV1ToV2(rawMappingConfig as any);
+    normalizedMappingConfig = v2Config as Record<string, unknown>;
+  }
+
   const job = await storage.createJsonImportJob({
     workspaceId,
     baseId,
     status: 'pending',
-    mappingConfig: payload.mappingConfig as Record<string, unknown>,
+    mappingConfig: normalizedMappingConfig,
     hierarchyConfig: hierarchyConfig,
     sourceFileKey: payload.fileKey,
     sourceFileName: payload.fileName,

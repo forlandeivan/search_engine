@@ -8,9 +8,9 @@ import { cn } from "@/lib/utils";
 import { useJsonImportUpload } from "@/hooks/useJsonImportUpload";
 import { apiRequest } from "@/lib/queryClient";
 import type { StructureAnalysis, PreviewError } from "@/lib/json-import-types";
-import type { MappingConfig, HierarchyConfig, CreateJsonImportRequest } from "@shared/json-import";
+import type { MappingConfigV2, HierarchyConfig, CreateJsonImportRequest } from "@shared/json-import";
 import { StructurePreview } from "../json-import/StructurePreview";
-import { FieldMappingEditor } from "../json-import/FieldMappingEditor";
+import { DocumentFieldMappingEditor } from "../json-import/DocumentFieldMappingEditor";
 import { HierarchyConfigEditor } from "../json-import/HierarchyConfig";
 import { ChevronRight, ChevronLeft, Loader2, X, AlertTriangle } from "lucide-react";
 
@@ -41,7 +41,7 @@ export function JsonImportPanel({
   const [structureAnalysis, setStructureAnalysis] = useState<StructureAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [previewError, setPreviewError] = useState<PreviewError | null>(null);
-  const [mappingConfig, setMappingConfig] = useState<MappingConfig | null>(null);
+  const [mappingConfig, setMappingConfig] = useState<MappingConfigV2 | null>(null);
   const [isMappingValid, setIsMappingValid] = useState(false);
   const [showMappingValidationErrors, setShowMappingValidationErrors] = useState(false);
   const [hierarchyConfig, setHierarchyConfig] = useState<HierarchyConfig | null>(null);
@@ -327,11 +327,11 @@ export function JsonImportPanel({
       {/* Step 3: Mapping */}
       {step === "mapping" && structureAnalysis && (
         <div className="max-h-[600px] overflow-y-auto overflow-x-hidden">
-          <FieldMappingEditor
+          <DocumentFieldMappingEditor
             analysis={structureAnalysis}
-            initialMapping={mappingConfig ?? undefined}
-            onMappingChange={(mapping) => {
-              setMappingConfig(mapping);
+            initialConfig={mappingConfig ?? undefined}
+            onConfigChange={(config) => {
+              setMappingConfig(config);
             }}
             onValidationChange={(isValid) => {
               setIsMappingValid(isValid);

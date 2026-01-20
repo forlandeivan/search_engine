@@ -1,4 +1,5 @@
 import type { MappingExpression, ExpressionToken } from "@shared/json-import";
+import { getExpressionFunction } from "./expression-functions";
 
 /**
  * Сериализация выражения в строку для отображения
@@ -93,9 +94,9 @@ export function evaluateExpressionClient(
       case 'field':
         return getNestedValue(record, token.value) ?? '';
       case 'function':
-        // Для preview функций — показываем placeholder
-        if (token.value === 'NewGUID') {
-          return '[UUID будет сгенерирован]';
+        const func = getExpressionFunction(token.value);
+        if (func?.previewExecutor) {
+          return func.previewExecutor(token.args ?? []);
         }
         return `[${token.value}()]`;
       default:

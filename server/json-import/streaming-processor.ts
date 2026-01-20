@@ -1,12 +1,14 @@
 import { Readable } from "stream";
 import { createInterface } from "readline";
-import type { MappingConfig, HierarchyConfig, ImportRecordError, ErrorType } from "@shared/json-import";
+import type { MappingConfig, MappingConfigV2, HierarchyConfig, ImportRecordError, ErrorType } from "@shared/json-import";
+import { isMappingConfigV2, migrateMappingConfigV1ToV2 } from "@shared/json-import";
 import { createKnowledgeDocument, createKnowledgeFolder } from "../knowledge-base";
 import { getObject } from "../workspace-storage-service";
 import { db } from "../db";
 import { knowledgeNodes } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { ImportDeduplicator, extractDeduplicatorOptions } from "./deduplicator";
+import { getExpressionInterpreter } from "../services/expression-interpreter";
 
 const BATCH_SIZE = 100;
 
@@ -25,7 +27,7 @@ interface BatchResult {
 interface ImportContext {
   baseId: string;
   workspaceId: string;
-  mappingConfig: MappingConfig;
+  mappingConfig: MappingConfig; // Поддерживает v1 и v2
   hierarchyConfig: HierarchyConfig;
   onProgress: (stats: {
     processedRecords: number;
@@ -57,8 +59,39 @@ function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
 
 /**
  * Применить маппинг полей к записи
+ * Поддерживает оба формата: v1 (старый) и v2 (expression-based)
  */
 function applyMapping(record: Record<string, unknown>, config: MappingConfig): {
+  id?: string;
+  title: string;
+  content: string;
+  contentMarkdown?: string;
+  contentHtml?: string;
+  metadata?: Record<string, unknown>;
+} {
+  // Используем новый интерпретатор для v2
+  if (isMappingConfigV2(config)) {
+    const interpreter = getExpressionInterpreter();
+    const mapped = interpreter.applyMapping(config, record);
+    
+    return {
+      id: mapped.id,
+      title: mapped.title,
+      content: mapped.content,
+      contentMarkdown: mapped.contentMd,
+      contentHtml: mapped.contentHtml,
+      metadata: mapped.metadata,
+    };
+  }
+  
+  // Fallback на старую логику для v1
+  return applyMappingV1(record, config);
+}
+
+/**
+ * Старая логика маппинга (v1)
+ */
+function applyMappingV1(record: Record<string, unknown>, config: MappingConfig): {
   id?: string;
   title: string;
   content: string;
@@ -77,6 +110,11 @@ function applyMapping(record: Record<string, unknown>, config: MappingConfig): {
     title: "",
     content: "",
   };
+
+  // Проверяем, что это v1 конфиг
+  if (isMappingConfigV2(config)) {
+    throw new Error('applyMappingV1 called with v2 config');
+  }
 
   const contentParts: string[] = [];
   const metadata: Record<string, unknown> = {};
@@ -354,6 +392,7 @@ async function processBatch(
       const mapped = applyMapping(record.data, context.mappingConfig);
 
       // Валидация
+      // Title может быть пустым, если есть fallback - он уже применён в applyMapping
       if (!mapped.title || mapped.title.trim() === "") {
         throw new Error("Title is required");
       }
@@ -374,14 +413,17 @@ async function processBatch(
       }
 
       // Создаём документ
+      // Для v2: используем contentHtml если есть, иначе content
+      // contentMd сохраняется как contentMarkdown
       await createKnowledgeDocument(context.baseId, context.workspaceId, {
         title: mapped.title,
         content: mapped.contentHtml || mapped.content,
-        contentMarkdown: mapped.contentMarkdown,
+        contentMarkdown: mapped.contentMd || mapped.contentMarkdown,
         contentPlainText: mapped.content,
         parentId,
         sourceType: "json_import",
         importFileName: null,
+        metadata: Object.keys(mapped.metadata || {}).length > 0 ? mapped.metadata : undefined,
       });
 
       result.created++;

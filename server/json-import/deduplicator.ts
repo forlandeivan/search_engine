@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
-import type { MappingConfig } from "@shared/json-import";
+import type { MappingConfig, MappingConfigV2 } from "@shared/json-import";
+import { isMappingConfigV2 } from "@shared/json-import";
 
 /**
  * Получить значение из вложенного объекта по пути (например, "metadata.author")
@@ -126,10 +127,56 @@ export class ImportDeduplicator {
 
 /**
  * Извлечь опции дедупликации из MappingConfig
+ * Поддерживает оба формата: v1 и v2
  */
 export function extractDeduplicatorOptions(mappingConfig: MappingConfig): DeduplicatorOptions {
-  const mode = mappingConfig.deduplication?.mode ?? "skip";
+  const mode = "deduplication" in mappingConfig && mappingConfig.deduplication
+    ? mappingConfig.deduplication.mode
+    : "skip";
   
+  if (isMappingConfigV2(mappingConfig)) {
+    // v2 формат - извлекаем из expression
+    
+    // Для ID - находим первое поле в expression
+    let idField: string | undefined;
+    if (mappingConfig.id) {
+      const idFieldToken = mappingConfig.id.expression.find(t => t.type === 'field');
+      if (idFieldToken && idFieldToken.type === 'field') {
+        idField = idFieldToken.value;
+      }
+    }
+    
+    // Для content - находим все поля в expression
+    const contentFields: string[] = [];
+    const contentFieldTokens = mappingConfig.content.expression.filter(t => t.type === 'field');
+    contentFieldTokens.forEach(token => {
+      if (token.type === 'field') {
+        contentFields.push(token.value);
+      }
+    });
+    
+    // Добавляем contentHtml и contentMd если есть
+    if (mappingConfig.contentHtml) {
+      const htmlFieldToken = mappingConfig.contentHtml.expression.find(t => t.type === 'field');
+      if (htmlFieldToken && htmlFieldToken.type === 'field') {
+        contentFields.push(htmlFieldToken.value);
+      }
+    }
+    if (mappingConfig.contentMd) {
+      const mdFieldToken = mappingConfig.contentMd.expression.find(t => t.type === 'field');
+      if (mdFieldToken && mdFieldToken.type === 'field') {
+        contentFields.push(mdFieldToken.value);
+      }
+    }
+    
+    return {
+      mode,
+      idField,
+      contentFields,
+    };
+  }
+  
+  // v1 формат - старая логика
   // Находим поле с ролью "id"
   const idFieldMapping = mappingConfig.fields.find((f) => f.role === "id");
   const idField = idFieldMapping?.sourcePath;

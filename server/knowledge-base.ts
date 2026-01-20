@@ -1844,6 +1844,7 @@ export async function createKnowledgeDocument(
         workspaceId,
         nodeId,
         status: "draft" as KnowledgeDocumentStatus,
+        metadata: payload.metadata && Object.keys(payload.metadata).length > 0 ? payload.metadata : null,
       })
       .returning();
 
