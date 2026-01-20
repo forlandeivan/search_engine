@@ -51,9 +51,9 @@ export function EmbeddingsAndChunkingStep({
 
   // Загрузка провайдеров
   const { data: embeddingServices, isLoading: providersLoading } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
-    queryKey: ["embedding-providers", workspaceId],
+    queryKey: ["/api/embedding/services", workspaceId],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/embedding-providers", undefined, undefined, { workspaceId });
+      const res = await apiRequest("GET", "/api/embedding/services");
       if (!res.ok) {
         throw new Error("Не удалось загрузить провайдеры");
       }
