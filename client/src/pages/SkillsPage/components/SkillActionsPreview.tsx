@@ -10,13 +10,23 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Separator } from "@/components/ui/separator";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from "@/components/ui/command";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -28,17 +38,14 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Loader2 } from "lucide-react";
+import { Loader2, X, ExternalLink, Pencil, PlusCircle, Ellipsis } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Skill } from "@/types/skill";
 import type { SkillActionsPreviewProps, SkillActionRowState, SkillActionConfigItem } from "../types";
 
 export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPreviewProps) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
-  const [archiveTarget, setArchiveTarget] = useState<Skill | null>(null);
-  const [isArchiving, setIsArchiving] = useState(false);
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery<SkillActionConfigItem[]>({
     queryKey: ["skill-actions", skillId],
     queryFn: async () => {
@@ -92,9 +99,9 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
   };
 
   const [search, setSearch] = useState("");
-  const [scopeFilter, setScopeFilter] = useState<"all" | "system" | "workspace">("all");
-  const [enabledFilter, setEnabledFilter] = useState<"all" | "enabled" | "disabled">("all");
-  const [targetFilter, setTargetFilter] = useState<string | "all">("all");
+  const [scopeFilters, setScopeFilters] = useState<Set<string>>(new Set());
+  const [enabledFilters, setEnabledFilters] = useState<Set<string>>(new Set());
+  const [targetFilters, setTargetFilters] = useState<Set<string>>(new Set());
 
   const sendUpdate = async (row: SkillActionRowState, next: Partial<SkillActionRowState>) => {
     setRows((prev) =>
@@ -224,13 +231,14 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
       return false;
     }
 
-    if (scopeFilter === "system" && row.action.scope !== "system") return false;
-    if (scopeFilter === "workspace" && row.action.scope !== "workspace") return false;
+    if (scopeFilters.size > 0 && !scopeFilters.has(row.action.scope)) return false;
 
-    if (enabledFilter === "enabled" && !row.enabled) return false;
-    if (enabledFilter === "disabled" && row.enabled) return false;
+    if (enabledFilters.size > 0) {
+      const enabledStatus = row.enabled ? "enabled" : "disabled";
+      if (!enabledFilters.has(enabledStatus)) return false;
+    }
 
-    if (targetFilter !== "all" && row.action.target !== targetFilter) return false;
+    if (targetFilters.size > 0 && !targetFilters.has(row.action.target)) return false;
 
     return true;
   });
@@ -243,55 +251,255 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
     );
   }
 
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/60">
-        <div className="flex-1 min-w-[220px]">
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Поиск по названию и описанию..."
-          />
-        </div>
-        <Select value={scopeFilter} onValueChange={(v) => setScopeFilter(v as any)}>
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Scope" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все</SelectItem>
-            <SelectItem value="system">Системные</SelectItem>
-            <SelectItem value="workspace">Рабочего пространства</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={enabledFilter} onValueChange={(v) => setEnabledFilter(v as any)}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Статус" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все</SelectItem>
-            <SelectItem value="enabled">Только включённые</SelectItem>
-            <SelectItem value="disabled">Только выключенные</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={targetFilter} onValueChange={(v) => setTargetFilter(v as any)}>
-          <SelectTrigger className="w-[170px]">
-            <SelectValue placeholder="Цель" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все цели</SelectItem>
-            <SelectItem value="transcript">Стенограмма</SelectItem>
-            <SelectItem value="message">Сообщение</SelectItem>
-            <SelectItem value="selection">Выделение</SelectItem>
-            <SelectItem value="conversation">Диалог</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+  const hasActiveFilters = scopeFilters.size > 0 || enabledFilters.size > 0 || targetFilters.size > 0 || search.trim().length > 0;
 
+  const resetFilters = () => {
+    setScopeFilters(new Set());
+    setEnabledFilters(new Set());
+    setTargetFilters(new Set());
+    setSearch("");
+  };
+
+  return (
+    <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Отметьте, какие действия доступны в этом навыке и где они отображаются: в холсте, сообщениях чата или в панели ввода.
+        Отметьте, какие действия доступны в этом навыке и где они отображаются: в холсте, сообщениях чата или в панели ввода
       </p>
 
-      <Table>
+      {/* Поиск и фильтры */}
+      <div className="flex items-center gap-2">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Поиск действий..."
+          className="h-8 w-[150px] lg:w-[250px]"
+        />
+        
+        {/* Scope фильтр */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 border-dashed">
+              <PlusCircle className="mr-2 h-4 w-4" />
+              Scope
+              {scopeFilters.size > 0 && (
+                <>
+                  <Separator orientation="vertical" className="mx-2 h-4" />
+                  <Badge variant="secondary" className="rounded-sm px-1 font-normal lg:hidden">
+                    {scopeFilters.size}
+                  </Badge>
+                  <div className="hidden gap-1 lg:flex">
+                    {scopeFilters.size > 2 ? (
+                      <Badge variant="secondary" className="rounded-sm px-1 font-normal">
+                        {scopeFilters.size} выбрано
+                      </Badge>
+                    ) : (
+                      Array.from(scopeFilters).map((value) => (
+                        <Badge key={value} variant="secondary" className="rounded-sm px-1 font-normal">
+                          {value === "system" ? "Системные" : "Рабочее пространство"}
+                        </Badge>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[200px] p-0" align="start">
+            <Command>
+              <CommandList>
+                <CommandGroup>
+                  {[
+                    { value: "system", label: "Системные" },
+                    { value: "workspace", label: "Рабочего пространства" },
+                  ].map((option) => {
+                    const isSelected = scopeFilters.has(option.value);
+                    return (
+                      <CommandItem
+                        key={option.value}
+                        onSelect={() => {
+                          const newFilters = new Set(scopeFilters);
+                          if (isSelected) {
+                            newFilters.delete(option.value);
+                          } else {
+                            newFilters.add(option.value);
+                          }
+                          setScopeFilters(newFilters);
+                        }}
+                      >
+                        <Checkbox
+                          checked={isSelected}
+                          className="mr-2"
+                        />
+                        {option.label}
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+                {scopeFilters.size > 0 && (
+                  <>
+                    <CommandSeparator />
+                    <CommandGroup>
+                      <CommandItem
+                        onSelect={() => setScopeFilters(new Set())}
+                        className="justify-center text-center"
+                      >
+                        Очистить фильтр
+                      </CommandItem>
+                    </CommandGroup>
+                  </>
+                )}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+
+        {/* Status фильтр */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 border-dashed">
+              <PlusCircle className="mr-2 h-4 w-4" />
+              Статус
+              {enabledFilters.size > 0 && (
+                <>
+                  <Separator orientation="vertical" className="mx-2 h-4" />
+                  <Badge variant="secondary" className="rounded-sm px-1 font-normal">
+                    {enabledFilters.size}
+                  </Badge>
+                </>
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[200px] p-0" align="start">
+            <Command>
+              <CommandList>
+                <CommandGroup>
+                  {[
+                    { value: "enabled", label: "Включённые" },
+                    { value: "disabled", label: "Выключенные" },
+                  ].map((option) => {
+                    const isSelected = enabledFilters.has(option.value);
+                    return (
+                      <CommandItem
+                        key={option.value}
+                        onSelect={() => {
+                          const newFilters = new Set(enabledFilters);
+                          if (isSelected) {
+                            newFilters.delete(option.value);
+                          } else {
+                            newFilters.add(option.value);
+                          }
+                          setEnabledFilters(newFilters);
+                        }}
+                      >
+                        <Checkbox
+                          checked={isSelected}
+                          className="mr-2"
+                        />
+                        {option.label}
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+                {enabledFilters.size > 0 && (
+                  <>
+                    <CommandSeparator />
+                    <CommandGroup>
+                      <CommandItem
+                        onSelect={() => setEnabledFilters(new Set())}
+                        className="justify-center text-center"
+                      >
+                        Очистить фильтр
+                      </CommandItem>
+                    </CommandGroup>
+                  </>
+                )}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+
+        {/* Target фильтр */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 border-dashed">
+              <PlusCircle className="mr-2 h-4 w-4" />
+              Цель
+              {targetFilters.size > 0 && (
+                <>
+                  <Separator orientation="vertical" className="mx-2 h-4" />
+                  <Badge variant="secondary" className="rounded-sm px-1 font-normal">
+                    {targetFilters.size}
+                  </Badge>
+                </>
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[200px] p-0" align="start">
+            <Command>
+              <CommandList>
+                <CommandGroup>
+                  {[
+                    { value: "transcript", label: "Стенограмма" },
+                    { value: "message", label: "Сообщение" },
+                    { value: "selection", label: "Выделение" },
+                    { value: "conversation", label: "Диалог" },
+                  ].map((option) => {
+                    const isSelected = targetFilters.has(option.value);
+                    return (
+                      <CommandItem
+                        key={option.value}
+                        onSelect={() => {
+                          const newFilters = new Set(targetFilters);
+                          if (isSelected) {
+                            newFilters.delete(option.value);
+                          } else {
+                            newFilters.add(option.value);
+                          }
+                          setTargetFilters(newFilters);
+                        }}
+                      >
+                        <Checkbox
+                          checked={isSelected}
+                          className="mr-2"
+                        />
+                        {option.label}
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+                {targetFilters.size > 0 && (
+                  <>
+                    <CommandSeparator />
+                    <CommandGroup>
+                      <CommandItem
+                        onSelect={() => setTargetFilters(new Set())}
+                        className="justify-center text-center"
+                      >
+                        Очистить фильтр
+                      </CommandItem>
+                    </CommandGroup>
+                  </>
+                )}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+
+        {hasActiveFilters && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={resetFilters}
+            className="h-8 px-2 lg:px-3"
+          >
+            Сбросить
+            <X className="ml-2 h-4 w-4" />
+          </Button>
+        )}
+      </div>
+
+      <div className="rounded-md border">
+        <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Название</TableHead>
@@ -302,6 +510,7 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
             <TableHead className="text-center">Message</TableHead>
             <TableHead className="text-center">Toolbar</TableHead>
             <TableHead>Output</TableHead>
+            <TableHead className="w-[50px]"></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -360,40 +569,7 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
                           </Button>
                         </div>
                       ) : (
-                        <>
-                          <p className="text-sm font-medium leading-tight">{label}</p>
-                          {ui.editable && (
-                            <div className="flex flex-wrap gap-1">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 px-2 text-xs"
-                                onClick={() =>
-                                  setRows((prev) =>
-                                    prev.map((item) =>
-                                      item.action.id === row.action.id
-                                        ? { ...item, editing: true, draftLabel: item.labelOverride ?? label }
-                                        : item,
-                                    ),
-                                  )
-                                }
-                                disabled={row.saving}
-                              >
-                                Переименовать
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 px-2 text-xs"
-                                onClick={() => navigate(`/skills/${skillId}/actions/${row.action.id}/edit`)}
-                              >
-                                Открыть страницу
-                              </Button>
-                            </div>
-                          )}
-                        </>
+                        <p className="text-sm font-medium leading-tight">{label}</p>
                       )}
                     </div>
                     {row.labelOverride && !row.editing && (
@@ -437,11 +613,59 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
                     {outputModeLabels[action.outputMode] ?? action.outputMode}
                   </span>
                 </TableCell>
+                <TableCell>
+                  {ui.editable && !row.editing && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          disabled={row.saving}
+                        >
+                          <Ellipsis className="h-4 w-4" />
+                          <span className="sr-only">Открыть меню</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() =>
+                            setRows((prev) =>
+                              prev.map((item) =>
+                                item.action.id === row.action.id
+                                  ? { ...item, editing: true, draftLabel: item.labelOverride ?? label }
+                                  : item,
+                              ),
+                            )
+                          }
+                          disabled={row.saving}
+                        >
+                          <Pencil className="mr-2 h-4 w-4" />
+                          Переименовать
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => navigate(`/skills/${skillId}/actions/${row.action.id}/edit`)}
+                        >
+                          <ExternalLink className="mr-2 h-4 w-4" />
+                          Открыть страницу
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                </TableCell>
               </TableRow>
             );
           })}
         </TableBody>
       </Table>
+      </div>
+
+      {filteredRows.length === 0 && (
+        <div className="py-8 text-center text-sm text-muted-foreground">
+          Действия не найдены.
+        </div>
+      )}
+
       {isFetching && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
