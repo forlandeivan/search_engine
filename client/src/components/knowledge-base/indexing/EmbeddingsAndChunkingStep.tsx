@@ -173,6 +173,15 @@ export function EmbeddingsAndChunkingStep({
     }
   }, [config.embeddingsProvider, config.embeddingsModel, config.chunkSize, config.chunkOverlap]);
 
+  // Если провайдер не выбран, но есть активные провайдеры, выбираем первый
+  useEffect(() => {
+    if ((!selectedProvider || selectedProvider.trim() === "") && activeProviders.length > 0 && !providersLoading) {
+      const firstProvider = activeProviders[0];
+      setSelectedProvider(firstProvider.id);
+      // Не вызываем onChange здесь, чтобы избежать циклов - onChange вызовется при изменении через Select
+    }
+  }, [selectedProvider, activeProviders.length, providersLoading, activeProviders]);
+
   if (providersLoading) {
     return (
       <div className="space-y-4">
@@ -202,15 +211,6 @@ export function EmbeddingsAndChunkingStep({
   }
 
   const maxOverlap = Math.max(0, chunkSize - 1);
-
-  // Если провайдер не выбран, но есть активные провайдеры, выбираем первый
-  useEffect(() => {
-    if ((!selectedProvider || selectedProvider.trim() === "") && activeProviders.length > 0 && !providersLoading) {
-      const firstProvider = activeProviders[0];
-      setSelectedProvider(firstProvider.id);
-      // Не вызываем onChange здесь, чтобы избежать циклов - onChange вызовется при изменении через Select
-    }
-  }, [selectedProvider, activeProviders.length, providersLoading]);
 
   return (
     <div className="space-y-6">
