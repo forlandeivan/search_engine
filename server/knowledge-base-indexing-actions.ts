@@ -7,6 +7,7 @@ import type {
   KnowledgeBaseIndexingActionInsert,
   IndexingStage,
   KnowledgeBaseIndexingActionStatus,
+  IndexingLogResponse,
 } from "@shared/schema";
 
 function mapToDto(row: KnowledgeBaseIndexingActionRecord): KnowledgeBaseIndexingAction {
@@ -167,39 +168,7 @@ export class KnowledgeBaseIndexingActionsService {
     workspaceId: string,
     baseId: string,
     actionId: string,
-  ): Promise<{
-    actionId: string;
-    summary: {
-      status: KnowledgeBaseIndexingActionStatus;
-      stage: IndexingStage;
-      displayText: string | null;
-      startedAt: string;
-      finishedAt: string | null;
-      userId: string | null;
-      userName: string | null;
-      userEmail: string | null;
-      totalDocuments: number;
-      processedDocuments: number;
-      failedDocuments: number;
-      totalChunks: number;
-    };
-    jobs: Array<{
-      jobId: string;
-      documentId: string;
-      documentTitle: string;
-      versionId: string;
-      status: "pending" | "processing" | "completed" | "failed";
-      chunkCount: number | null;
-      totalChars: number | null;
-      totalTokens: number | null;
-      error: string | null;
-      attempts: number;
-      startedAt: string | null;
-      finishedAt: string | null;
-      createdAt: string;
-      updatedAt: string;
-    }>;
-  } | null> {
+  ): Promise<IndexingLogResponse | null> {
     // Получаем action
     const action = await storage.getKnowledgeBaseIndexingAction(workspaceId, baseId, actionId);
     if (!action) {

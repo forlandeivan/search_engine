@@ -619,7 +619,7 @@ async function buildSkillRetrievalContext(options: {
   const fragments: string[] = [];
   for (const entry of filtered.slice(0, rules.topK ?? 6)) {
     const entryPayload = entry.payload && typeof entry.payload === "object" && !Array.isArray(entry.payload) ? entry.payload as Record<string, unknown> : null;
-    const textCandidate = (entryPayload && "chunk_text" in entryPayload && typeof entryPayload.chunk_text === "string" ? entryPayload.chunk_text : null) ?? (entryPayload && "text" in entryPayload && typeof entryPayload.text === "string" ? entryPayload.text : null) ?? null;
+    const textCandidate = (entryPayload && "content" in entryPayload && typeof entryPayload.content === "string" ? entryPayload.content : null) ?? (entryPayload && "chunk_text" in entryPayload && typeof entryPayload.chunk_text === "string" ? entryPayload.chunk_text : null) ?? (entryPayload && "text" in entryPayload && typeof entryPayload.text === "string" ? entryPayload.text : null) ?? null;
     if (typeof textCandidate === "string" && textCandidate.trim()) {
       fragments.push(textCandidate.trim());
     }

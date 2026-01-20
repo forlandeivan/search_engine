@@ -12,17 +12,16 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, CheckCircle2 } from "lucide-react";
+import { Sparkles, CheckCircle2, Database, FileText } from "lucide-react";
 import type { SchemaFieldConfig } from "@shared/knowledge-base-indexing";
-import { COLLECTION_FIELD_TYPES } from "@shared/knowledge-base-indexing";
 import { createFieldToken } from "@shared/json-import";
 import { createRandomId } from "@/lib/knowledge-base";
 
 interface SuggestedField {
   name: string;
-  type: (typeof COLLECTION_FIELD_TYPES)[number];
   expression: SchemaFieldConfig["expression"];
-  reason: string;
+  description: string;
+  category: "system" | "metadata";
 }
 
 interface SuggestFieldsDialogProps {
@@ -34,31 +33,19 @@ interface SuggestFieldsDialogProps {
 }
 
 /**
- * Определяет тип поля на основе имени и значения
+ * Системные поля чанков, которые записываются в payload при индексации
  */
-function inferFieldType(key: string): (typeof COLLECTION_FIELD_TYPES)[number] {
-  const lowerKey = key.toLowerCase();
-  
-  // Проверяем по имени
-  if (lowerKey.includes("date") || lowerKey.includes("time") || lowerKey.includes("created") || lowerKey.includes("updated")) {
-    return "datetime";
-  }
-  if (lowerKey.includes("id") || lowerKey.includes("count") || lowerKey.includes("number") || lowerKey.includes("num")) {
-    return "integer";
-  }
-  if (lowerKey.includes("price") || lowerKey.includes("amount") || lowerKey.includes("cost") || lowerKey.includes("rate")) {
-    return "float";
-  }
-  if (lowerKey.includes("is_") || lowerKey.includes("has_") || lowerKey === "active" || lowerKey === "enabled") {
-    return "boolean";
-  }
-  if (lowerKey.includes("category") || lowerKey.includes("tag") || lowerKey.includes("status") || lowerKey.includes("type")) {
-    return "keyword";
-  }
-  
-  // По умолчанию - text для длинных значений, keyword для коротких
-  return "keyword";
-}
+const SYSTEM_CHUNK_FIELDS: SuggestedField[] = [
+  { name: "title", expression: [createFieldToken("title")], description: "Заголовок документа", category: "system" },
+  { name: "document_url", expression: [createFieldToken("documentUrl")], description: "Ссылка на документ в системе", category: "system" },
+  { name: "document_id", expression: [createFieldToken("documentId")], description: "ID документа", category: "system" },
+  { name: "chunk_index", expression: [createFieldToken("chunk_index")], description: "Индекс чанка (0-based)", category: "system" },
+  { name: "chunk_ordinal", expression: [createFieldToken("chunk_ordinal")], description: "Порядковый номер чанка (1-based)", category: "system" },
+  { name: "version_id", expression: [createFieldToken("versionId")], description: "ID версии документа", category: "system" },
+  { name: "version_number", expression: [createFieldToken("versionNumber")], description: "Номер версии", category: "system" },
+  { name: "knowledge_base_id", expression: [createFieldToken("knowledgeBaseId")], description: "ID базы знаний", category: "system" },
+  { name: "knowledge_base_name", expression: [createFieldToken("knowledgeBaseName")], description: "Название базы знаний", category: "system" },
+];
 
 export function SuggestFieldsDialog({
   open,
@@ -69,29 +56,39 @@ export function SuggestFieldsDialog({
 }: SuggestFieldsDialogProps) {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
 
-  // Генерируем предложения полей на основе ключей метаданных
+  // Генерируем предложения полей на основе системных полей и метаданных
   const suggestedFields = useMemo<SuggestedField[]>(() => {
     const existingFieldNames = new Set(existingFields.map((f) => f.name));
+    const allFields: SuggestedField[] = [];
     
-    return metadataKeys
-      .filter((key) => {
+    // Добавляем системные поля чанков
+    for (const field of SYSTEM_CHUNK_FIELDS) {
+      if (!existingFieldNames.has(field.name)) {
+        allFields.push(field);
+      }
+    }
+    
+    // Добавляем поля из метаданных документов
+    if (metadataKeys && Array.isArray(metadataKeys)) {
+      for (const key of metadataKeys) {
         // Исключаем уже существующие поля
         if (existingFieldNames.has(key)) {
-          return false;
+          continue;
         }
         // Исключаем системные поля
-        if (key === "text" || key.startsWith("_")) {
-          return false;
+        if (key === "text" || key === "content" || key.startsWith("_")) {
+          continue;
         }
-        return true;
-      })
-      .slice(0, 20) // Ограничиваем до 20 предложений
-      .map((key) => ({
-        name: key,
-        type: inferFieldType(key),
-        expression: [createFieldToken(`metadata.${key}`)],
-        reason: "Найдено в метаданных документов",
-      }));
+        allFields.push({
+          name: key,
+          expression: [createFieldToken(`metadata.${key}`)],
+          description: "Из метаданных документа",
+          category: "metadata",
+        });
+      }
+    }
+    
+    return allFields.slice(0, 30); // Ограничиваем до 30 предложений
   }, [metadataKeys, existingFields]);
 
   const handleToggleKey = (key: string) => {
@@ -112,9 +109,10 @@ export function SuggestFieldsDialog({
       .map((field) => ({
         id: createRandomId(),
         name: field.name,
-        type: field.type,
+        type: "keyword" as const,
         isArray: false,
-        expression: field.expression,
+        // Глубокая копия expression для избежания мутаций
+        expression: field.expression.map(token => ({ ...token })),
         isEmbeddingField: false,
       }));
 
@@ -131,6 +129,10 @@ export function SuggestFieldsDialog({
     setSelectedKeys(new Set());
   };
 
+  // Группируем поля по категориям
+  const systemFields = useMemo(() => suggestedFields.filter(f => f.category === "system"), [suggestedFields]);
+  const metadataFields = useMemo(() => suggestedFields.filter(f => f.category === "metadata"), [suggestedFields]);
+
   if (suggestedFields.length === 0) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -138,7 +140,7 @@ export function SuggestFieldsDialog({
           <DialogHeader>
             <DialogTitle>Подобрать поля автоматически</DialogTitle>
             <DialogDescription>
-              Не найдено полей для предложения. Убедитесь, что в документах базы знаний есть метаданные.
+              Не найдено полей для предложения. Все доступные поля уже добавлены в схему.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -149,6 +151,43 @@ export function SuggestFieldsDialog({
     );
   }
 
+  const renderFieldCard = (field: SuggestedField) => (
+    <Card 
+      key={field.name} 
+      className="cursor-pointer hover:border-primary transition-colors"
+      onClick={() => handleToggleKey(field.name)}
+    >
+      <CardContent className="py-3 px-4">
+        <div className="flex items-center gap-3">
+          <Checkbox
+            id={`suggest-${field.name}`}
+            checked={selectedKeys.has(field.name)}
+            onCheckedChange={() => handleToggleKey(field.name)}
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <Label htmlFor={`suggest-${field.name}`} className="font-medium cursor-pointer">
+                {field.name}
+              </Label>
+              <span className="text-xs text-muted-foreground">— {field.description}</span>
+            </div>
+            <div className="text-xs font-mono text-muted-foreground mt-1">
+              {field.expression.map((token) => {
+                if (token.type === "field") {
+                  return `{{${token.value}}}`;
+                }
+                return "";
+              }).join("")}
+            </div>
+          </div>
+          {selectedKeys.has(field.name) && (
+            <CheckCircle2 className="h-5 w-5 text-primary flex-shrink-0" />
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
@@ -158,14 +197,14 @@ export function SuggestFieldsDialog({
             Подобрать поля автоматически
           </DialogTitle>
           <DialogDescription>
-            Выберите поля, которые будут добавлены в схему на основе метаданных документов базы знаний.
+            Выберите поля, которые будут добавлены в схему индекса.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">
-              Найдено {suggestedFields.length} {suggestedFields.length === 1 ? "поле" : "полей"}
+              Найдено {suggestedFields.length} полей
             </span>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={handleSelectAll}>
@@ -177,44 +216,27 @@ export function SuggestFieldsDialog({
             </div>
           </div>
 
-          <div className="space-y-2">
-            {suggestedFields.map((field) => (
-              <Card key={field.name} className="cursor-pointer hover:border-primary transition-colors">
-                <CardContent className="pt-4">
-                  <div className="flex items-start gap-3">
-                    <Checkbox
-                      id={`suggest-${field.name}`}
-                      checked={selectedKeys.has(field.name)}
-                      onCheckedChange={() => handleToggleKey(field.name)}
-                      className="mt-1"
-                    />
-                    <div className="flex-1 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor={`suggest-${field.name}`} className="font-medium cursor-pointer">
-                          {field.name}
-                        </Label>
-                        <Badge variant="outline" className="text-xs">
-                          {field.type}
-                        </Badge>
-                      </div>
-                      <CardDescription className="text-xs">{field.reason}</CardDescription>
-                      <div className="text-xs font-mono text-muted-foreground">
-                        {field.expression.map((token) => {
-                          if (token.type === "field") {
-                            return `{{${token.value}}}`;
-                          }
-                          return "";
-                        }).join("")}
-                      </div>
-                    </div>
-                    {selectedKeys.has(field.name) && (
-                      <CheckCircle2 className="h-5 w-5 text-primary flex-shrink-0" />
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+          {/* Системные поля чанков */}
+          {systemFields.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                <Database className="h-4 w-4" />
+                Системные поля чанков
+              </div>
+              {systemFields.map(renderFieldCard)}
+            </div>
+          )}
+
+          {/* Поля из метаданных документов */}
+          {metadataFields.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                <FileText className="h-4 w-4" />
+                Метаданные документов
+              </div>
+              {metadataFields.map(renderFieldCard)}
+            </div>
+          )}
         </div>
 
         <DialogFooter>

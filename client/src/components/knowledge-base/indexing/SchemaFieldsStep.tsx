@@ -7,8 +7,6 @@ import { Plus, Sparkles, AlertTriangle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { createRandomId } from "@/lib/knowledge-base";
 import type { SchemaFieldConfig } from "@shared/knowledge-base-indexing";
-import { DEFAULT_SCHEMA_FIELDS, COLLECTION_FIELD_TYPES } from "@shared/knowledge-base-indexing";
-import { createFieldToken } from "@shared/json-import";
 import { SchemaFieldEditor } from "./SchemaFieldEditor";
 import { SuggestFieldsDialog } from "./SuggestFieldsDialog";
 
@@ -22,13 +20,6 @@ interface SchemaFieldsStepProps {
   disabled?: boolean;
 }
 
-interface SuggestedField {
-  name: string;
-  type: (typeof COLLECTION_FIELD_TYPES)[number];
-  expression: SchemaFieldConfig["expression"];
-  reason: string;
-}
-
 export function SchemaFieldsStep({
   config,
   onChange,
@@ -36,7 +27,8 @@ export function SchemaFieldsStep({
   baseId,
   disabled,
 }: SchemaFieldsStepProps) {
-  const [fields, setFields] = useState<SchemaFieldConfig[]>(config.schemaFields);
+  // Используем config.schemaFields напрямую (контролируемый компонент)
+  const fields = config.schemaFields;
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [showSuggestDialog, setShowSuggestDialog] = useState(false);
   const queryClient = useQueryClient();
@@ -89,7 +81,6 @@ export function SchemaFieldsStep({
     }
 
     const newFields = fields.map((f) => (f.id === updatedField.id ? updatedField : f));
-    setFields(newFields);
     onChange({ schemaFields: newFields });
   };
 
@@ -106,38 +97,42 @@ export function SchemaFieldsStep({
       expression: [],
     };
     const newFields = [...fields, newField];
-    setFields(newFields);
     onChange({ schemaFields: newFields });
   };
 
   // Удаление поля
   const handleDeleteField = (fieldId: string) => {
     const newFields = fields.filter((f) => f.id !== fieldId);
-    setFields(newFields);
     onChange({ schemaFields: newFields });
   };
 
   // Автоподбор полей
   const handleSuggestFields = async () => {
-    // Загружаем ключи метаданных
-    await queryClient.fetchQuery({
-      queryKey: ["knowledge-base-metadata-keys", baseId, workspaceId],
-      queryFn: async () => {
-        const res = await apiRequest("GET", `/api/knowledge/bases/${baseId}/metadata-keys`, undefined, undefined, {
-          workspaceId,
-        });
-        if (!res.ok) {
-          return [];
-        }
-        return (await res.json()) as string[];
-      },
-    });
-    setShowSuggestDialog(true);
+    try {
+      // Загружаем ключи метаданных
+      const keys = await queryClient.fetchQuery<string[]>({
+        queryKey: ["knowledge-base-metadata-keys", baseId, workspaceId],
+        queryFn: async () => {
+          const res = await apiRequest("GET", `/api/knowledge/bases/${baseId}/metadata-keys`, undefined, undefined, {
+            workspaceId,
+          });
+          if (!res.ok) {
+            return [];
+          }
+          return (await res.json()) as string[];
+        },
+      });
+      // Открываем диалог только если данные загружены
+      if (Array.isArray(keys)) {
+        setShowSuggestDialog(true);
+      }
+    } catch (error) {
+      console.error("Не удалось загрузить ключи метаданных:", error);
+    }
   };
 
   const handleAcceptSuggestedFields = (newFields: SchemaFieldConfig[]) => {
     const newFieldsList = [...fields, ...newFields];
-    setFields(newFieldsList);
     onChange({ schemaFields: newFieldsList });
     setShowSuggestDialog(false);
   };
@@ -257,7 +252,7 @@ export function SchemaFieldsStep({
       <SuggestFieldsDialog
         open={showSuggestDialog}
         onOpenChange={setShowSuggestDialog}
-        metadataKeys={metadataKeys}
+        metadataKeys={metadataKeys || []}
         onAccept={handleAcceptSuggestedFields}
         existingFields={fields}
       />

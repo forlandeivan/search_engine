@@ -10,7 +10,6 @@
  */
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { knowledgeBaseIndexingActionsService } from '../knowledge-base-indexing-actions';
@@ -196,23 +195,13 @@ knowledgeIndexingRouter.get('/bases/:baseId/indexing/actions/:actionId/logs', as
 
   const { baseId, actionId } = req.params;
   const { id: workspaceId } = getRequestWorkspace(req);
-  const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
-  const limit = limitRaw ? Math.min(Math.max(1, Number(limitRaw)), 500) : 100;
-  const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
-  const offset = offsetRaw ? Math.max(0, Number(offsetRaw)) : 0;
 
-  const action = await knowledgeBaseIndexingActionsService.get(workspaceId, baseId, actionId);
-  if (!action) {
+  const logs = await knowledgeBaseIndexingActionsService.getLogs(workspaceId, baseId, actionId);
+  if (!logs) {
     return res.status(404).json({ error: 'Статус индексации не найден' });
   }
 
-  const logs = await storage.listKnowledgeBaseIndexingActionLogs(actionId, { limit, offset });
-  res.json({
-    actionId,
-    logs: logs.items,
-    hasMore: logs.hasMore,
-    nextOffset: logs.nextOffset,
-  });
+  res.json(logs);
 }));
 
 /**

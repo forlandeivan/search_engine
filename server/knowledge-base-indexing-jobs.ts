@@ -1416,8 +1416,10 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
 
       const templateContext = removeUndefinedDeep({
         // Добавляем переменные для контекста индексации
+        content: chunk.text, // Алиас для chunk_text (основное содержимое для векторизации)
         title: nodeDetail.title ?? "",
         documentId: nodeDetail.id,
+        documentUrl: `/knowledge/${base.id}/node/${nodeDetail.id}`, // Ссылка на документ в системе
         nodeSlug: documentSlug,
         chunk_text: chunk.text,
         chunk_index: index,

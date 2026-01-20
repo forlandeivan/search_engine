@@ -132,6 +132,7 @@ export function ExpressionInput({
   const editorRef = useRef<HTMLDivElement>(null);
   const isInternalUpdateRef = useRef(false);
   const lastValueRef = useRef<MappingExpression>(safeValue);
+  const isFirstRenderRef = useRef(true);
 
   // Синхронизация contenteditableс value извне (только если изменение пришло снаружи)
   useEffect(() => {
@@ -140,11 +141,13 @@ export function ExpressionInput({
       return;
     }
 
-    // Проверяем, действительно ли value изменился
+    // Проверяем, действительно ли value изменился или это первый рендер
     const valueChanged = JSON.stringify(lastValueRef.current) !== JSON.stringify(safeValue);
+    const shouldRender = isFirstRenderRef.current || valueChanged;
     
-    if (valueChanged) {
-      const newHtml = safeValue.length === 0 ? '' : renderTokensToHtml(safeValue);
+    if (shouldRender && safeValue.length > 0) {
+      isFirstRenderRef.current = false;
+      const newHtml = renderTokensToHtml(safeValue);
       
       // Сохраняем позицию курсора
       const selection = window.getSelection();

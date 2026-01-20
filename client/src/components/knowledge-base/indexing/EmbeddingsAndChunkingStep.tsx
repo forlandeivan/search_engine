@@ -150,15 +150,6 @@ export function EmbeddingsAndChunkingStep({
     });
   };
 
-  // Автоматический выбор модели при смене провайдера
-  useEffect(() => {
-    if (selectedProvider && availableModels.length > 0 && !availableModels.includes(selectedModel)) {
-      const defaultModel = modelsQuery.data?.defaultModel ?? availableModels[0];
-      if (defaultModel) {
-        setSelectedModel(defaultModel);
-      }
-    }
-  }, [selectedProvider, availableModels, selectedModel, modelsQuery.data]);
 
   // Синхронизация с внешним config (только при изменении внешнего config)
   useEffect(() => {
@@ -175,23 +166,31 @@ export function EmbeddingsAndChunkingStep({
     }
   }, [config.embeddingsProvider, config.embeddingsModel, config.chunkSize, config.chunkOverlap]);
 
-  // Если модель не выбрана, но есть доступные модели, выбираем первую
+  // Если модель не выбрана или выбранная модель недоступна, выбираем первую доступную
   useEffect(() => {
-    if (!selectedModel && availableModels.length > 0 && !modelsLoading) {
-      const firstModel = availableModels[0];
-      const modelKey = firstModel.providerModelKey || firstModel.key;
-      if (modelKey && firstModel.providerId) {
-        setSelectedModel(modelKey);
-        setSelectedProvider(firstModel.providerId);
-        onChange({
-          embeddingsProvider: firstModel.providerId,
-          embeddingsModel: modelKey,
-          chunkSize,
-          chunkOverlap,
-        });
+    if (availableModels.length > 0 && !modelsLoading) {
+      const currentModelExists = selectedModel
+        ? availableModels.some(
+            (m) => (m.providerModelKey || m.key) === selectedModel,
+          )
+        : false;
+
+      if (!selectedModel || !currentModelExists) {
+        const firstModel = availableModels[0];
+        const modelKey = firstModel.providerModelKey || firstModel.key;
+        if (modelKey && firstModel.providerId) {
+          setSelectedModel(modelKey);
+          setSelectedProvider(firstModel.providerId);
+          onChange({
+            embeddingsProvider: firstModel.providerId,
+            embeddingsModel: modelKey,
+            chunkSize,
+            chunkOverlap,
+          });
+        }
       }
     }
-  }, [selectedModel, availableModels.length, modelsLoading]);
+  }, [selectedModel, availableModels, modelsLoading, chunkSize, chunkOverlap, onChange]);
 
   if (modelsLoading) {
     return (
@@ -239,7 +238,6 @@ export function EmbeddingsAndChunkingStep({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="embeddings-model-select">Модель</Label>
             {modelsLoading ? (
               <p className="text-sm text-muted-foreground">Загрузка моделей...</p>
             ) : availableModels.length > 0 ? (
@@ -309,7 +307,6 @@ export function EmbeddingsAndChunkingStep({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="chunk-size-input">Размер чанка</Label>
             <Input
               id="chunk-size-input"
               type="number"
@@ -339,7 +336,6 @@ export function EmbeddingsAndChunkingStep({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="chunk-overlap-input">Перекрытие чанков</Label>
             <Input
               id="chunk-overlap-input"
               type="number"

@@ -145,18 +145,20 @@ import { createFieldToken } from "./json-import";
 
 export const DEFAULT_SCHEMA_FIELDS: SchemaFieldConfig[] = [
   {
-    id: "text-field",
-    name: "text",
+    id: "content-field",
+    name: "content",
     type: "text",
     isArray: false,
-    expression: [createFieldToken("chunk_text")],
+    expression: [createFieldToken("content")],
     isEmbeddingField: true,
   },
 ];
 
 export const INDEXING_TEMPLATE_VARIABLES = [
+  { name: "content", description: "Содержимое чанка (для векторизации)" },
   { name: "title", description: "Заголовок документа" },
   { name: "documentId", description: "ID документа" },
+  { name: "documentUrl", description: "Ссылка на документ в системе" },
   { name: "nodeSlug", description: "Slug узла" },
   { name: "chunk_text", description: "Текст чанка" },
   { name: "chunk_index", description: "Индекс чанка (0-based)" },
