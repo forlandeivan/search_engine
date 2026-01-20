@@ -35,6 +35,7 @@ interface IndexingWizardModalProps {
   onIndexingStarted?: (actionId: string) => void;
   /** Информация о базе знаний (опционально) */
   baseInfo?: {
+    id: string;
     name: string;
     documentCount: number;
   };
@@ -129,7 +130,7 @@ export function IndexingWizardModal({
   // Переход в расширенный режим
   const handleAdvancedMode = useCallback(() => {
     setMode("advanced");
-    setStep("chunking");
+    setStep("embeddings-and-chunking");
   }, []);
 
   // Навигация по шагам
@@ -264,7 +265,8 @@ export function IndexingWizardModal({
 
               {/* Контент шага */}
               <div className="min-h-[400px]">
-                {step === "embeddings-and-chunking" && (
+                {/* DEBUG: step = {step} */}
+                {step === "embeddings-and-chunking" ? (
                   <EmbeddingsAndChunkingStep
                     config={{
                       embeddingsProvider: config.embeddingsProvider,
@@ -289,8 +291,7 @@ export function IndexingWizardModal({
                     }
                     disabled={isSubmitting}
                   />
-                )}
-                {step === "schema" && (
+                ) : step === "schema" ? (
                   <SchemaFieldsStep
                     config={{ schemaFields: config.schemaFields }}
                     onChange={(newConfig) => {
@@ -301,8 +302,7 @@ export function IndexingWizardModal({
                     baseId={baseId}
                     disabled={isSubmitting}
                   />
-                )}
-                {step === "confirm" && (
+                ) : step === "confirm" ? (
                   <IndexingConfirmStep
                     config={config}
                     baseInfo={
@@ -318,7 +318,7 @@ export function IndexingWizardModal({
                     onSaveToPolicyChange={setSaveToPolicy}
                     indexingMode={indexingMode}
                   />
-                )}
+                ) : null}
               </div>
             </>
           )}
