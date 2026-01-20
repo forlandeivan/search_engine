@@ -597,7 +597,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const { data: policyData } = useKnowledgeBaseIndexingPolicy(selectedBase?.id ?? null, workspaceId ?? "");
 
   // Загрузка глобальных правил индексации
-  const { data: globalRules } = useIndexingRules();
+  const { data: globalRules, isLoading: isGlobalRulesLoading } = useIndexingRules();
 
   // Преобразование в конфиг визарда
   const indexingPolicyConfig = useMemo(() => {
@@ -607,23 +607,16 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     return null;
   }, [policyData]);
 
+  // Конфиг готов только когда globalRules загружены
   const globalIndexingConfig = useMemo(() => {
-    if (globalRules) {
-      return convertRulesToWizardConfig(globalRules);
+    if (!globalRules) {
+      return null;
     }
-    // Fallback к дефолтным значениям
-    return {
-      chunkSize: 800,
-      chunkOverlap: 200,
-      embeddingsProvider: "openai",
-      embeddingsModel: "text-embedding-3-small",
-      topK: 6,
-      relevanceThreshold: 0.5,
-      maxContextTokens: 3000,
-      citationsEnabled: true,
-      schemaFields: DEFAULT_SCHEMA_FIELDS,
-    };
+    return convertRulesToWizardConfig(globalRules);
   }, [globalRules]);
+
+  // Флаг готовности конфигурации индексации
+  const isIndexingConfigReady = Boolean(globalIndexingConfig);
   const [isIndexingChangesOpen, setIsIndexingChangesOpen] = useState(false);
   const indexingChangesQuery = useKnowledgeBaseIndexingChanges(
     workspaceId,
@@ -2527,11 +2520,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 disabled={Boolean(
                   startIndexingMutation.isPending ||
                     indexingButtonDisabledReason ||
-                    !detail.rootNodes || detail.rootNodes.length === 0,
+                    !detail.rootNodes || detail.rootNodes.length === 0 ||
+                    !isIndexingConfigReady,
                 )}
                 title={
-                  indexingButtonDisabledReason ??
-                  ((!detail.rootNodes || detail.rootNodes.length === 0) ? "Нет документов для индексации" : undefined)
+                  !isIndexingConfigReady
+                    ? "Загрузка настроек индексации..."
+                    : indexingButtonDisabledReason ??
+                      ((!detail.rootNodes || detail.rootNodes.length === 0) ? "Нет документов для индексации" : undefined)
                 }
                 onClick={() => setIsIndexingWizardOpen(true)}
               >
@@ -3463,7 +3459,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           setIsJsonImportWizardOpen(false);
         }}
       />
-      {selectedBase && (
+      {selectedBase && globalIndexingConfig && (
         <IndexingWizardModal
           open={isIndexingWizardOpen}
           onOpenChange={setIsIndexingWizardOpen}
@@ -3473,6 +3469,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           defaultConfig={globalIndexingConfig}
           onIndexingStarted={handleIndexingStarted}
           baseInfo={{
+            id: selectedBase.id,
             name: selectedBase.name ?? "База знаний",
             documentCount: indexingSummaryQuery.data?.totalDocuments ?? 0,
           }}

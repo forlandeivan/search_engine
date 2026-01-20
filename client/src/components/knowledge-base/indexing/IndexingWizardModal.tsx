@@ -108,13 +108,31 @@ export function IndexingWizardModal({
         baseId,
         mode: "changed",
       });
+      
+      // Проверяем результат
       if (result.actionId) {
         onIndexingStarted?.(result.actionId);
+        toast({
+          title: "Индексация запущена",
+          description: "Прогресс отображается на странице базы знаний",
+        });
+      } else if (result.jobCount === 0) {
+        // Нет документов для индексации
+        const statusMessage = result.status === "up_to_date"
+          ? "База знаний уже актуальна, все документы проиндексированы"
+          : result.status === "not_indexed"
+            ? "В базе знаний нет документов для индексации"
+            : "Нет изменений для индексации";
+        toast({
+          title: "Индексация не требуется",
+          description: statusMessage,
+        });
+      } else {
+        toast({
+          title: "Индексация запущена",
+          description: "Прогресс отображается на странице базы знаний",
+        });
       }
-      toast({
-        title: "Индексация запущена",
-        description: "Прогресс отображается на странице базы знаний",
-      });
       onOpenChange(false);
     } catch (error) {
       toast({
