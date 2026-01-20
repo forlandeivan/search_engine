@@ -1184,7 +1184,7 @@ export async function startKnowledgeBaseIndexing(
             embeddingsModel: validated.embeddingsModel,
             chunkSize: validated.chunkSize,
             chunkOverlap: validated.chunkOverlap,
-            schemaFields: validated.schemaFields,
+            schemaFields: validated.schemaFields ?? [],
           };
         } catch (error) {
           if (error instanceof z.ZodError) {
@@ -1251,7 +1251,7 @@ export async function startKnowledgeBaseIndexing(
                     embeddingsModel: resolvedConfig.embeddingsModel,
                     chunkSize: resolvedConfig.chunkSize,
                     chunkOverlap: resolvedConfig.chunkOverlap,
-                    defaultSchema: resolvedConfig.schemaFields.map((field) => ({
+                    defaultSchema: (resolvedConfig.schemaFields ?? []).map((field) => ({
                       name: field.name,
                       type: field.type,
                       isArray: field.isArray,
