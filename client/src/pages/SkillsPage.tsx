@@ -567,6 +567,7 @@ export function SkillFormContent({
           WORKSPACE_DEFAULT_PROVIDER_VALUE,
         noCodeEndpointUrl: noCodeConnection.endpointUrl ?? "",
         noCodeAuthType: noCodeConnection.authType ?? "none",
+        ragShowSources: ragConfig.showSources ?? true,
         noCodeBearerToken: "",
         noCodeBearerTokenAction: noCodeConnection.tokenIsSet ? "keep" : "replace",
       };
@@ -1005,6 +1006,33 @@ export function SkillFormContent({
                                           ? "Все базы знаний используют embedding-провайдер из правил индексации"
                                           : null}
                                   </FormDescription>
+                                  <FormMessage className="text-xs text-destructive leading-tight" />
+                                </FormItem>
+                              )}
+                            />
+                            
+                            <FormField
+                              control={form.control}
+                              name="ragShowSources"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <div className="flex items-center justify-between rounded-lg border p-3">
+                                    <div className="space-y-0.5">
+                                      <FormLabel className="text-sm font-medium">
+                                        Показывать источники
+                                      </FormLabel>
+                                      <p className="text-xs text-muted-foreground">
+                                        Отображать ссылки на документы базы знаний после ответа
+                                      </p>
+                                    </div>
+                                    <FormControl>
+                                      <Switch
+                                        checked={field.value ?? true}
+                                        onCheckedChange={field.onChange}
+                                        disabled={controlsDisabled}
+                                      />
+                                    </FormControl>
+                                  </div>
                                   <FormMessage className="text-xs text-destructive leading-tight" />
                                 </FormItem>
                               )}

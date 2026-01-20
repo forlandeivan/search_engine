@@ -341,7 +341,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       topK: Number.isFinite(baseRagConfig.topK) ? baseRagConfig.topK : 5,
       minScore: Number.isFinite(baseRagConfig.minScore) ? baseRagConfig.minScore : 0.7,
       maxContextTokens: baseRagConfig.maxContextTokens ?? null,
-      showSources: baseRagConfig.showSources ?? true,
+      showSources: (values as any).ragShowSources ?? baseRagConfig.showSources ?? true,
       llmTemperature,
       llmMaxTokens,
       llmResponseFormat: baseRagConfig.llmResponseFormat ?? null,

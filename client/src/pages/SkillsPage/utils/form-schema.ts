@@ -45,6 +45,7 @@ export const skillFormSchema = z.object({
   noCodeBearerToken: z.string().optional().or(z.literal("")),
   noCodeBearerTokenAction: z.enum(["keep", "replace", "clear"]).default("replace"),
   noCodeFileStorageProviderId: z.string().optional().or(z.literal("")).nullable(),
+  ragShowSources: z.boolean().default(true),
 });
 
 export type SkillFormValues = z.infer<typeof skillFormSchema>;
@@ -72,4 +73,5 @@ export const defaultFormValues: SkillFormValues = {
   noCodeAuthType: "none",
   noCodeBearerToken: "",
   noCodeBearerTokenAction: "replace",
+  ragShowSources: true,
 };

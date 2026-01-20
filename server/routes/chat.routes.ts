@@ -582,7 +582,9 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       if (!ragResult) throw new Error('RAG pipeline returned empty result');
 
       const citations = Array.isArray(ragResult.response.citations) ? ragResult.response.citations : [];
-      const metadata = citations.length > 0 ? { citations } : undefined;
+      // Проверяем настройку показа источников
+      const showSources = context.skillConfig.ragConfig?.showSources ?? true;
+      const metadata = showSources && citations.length > 0 ? { citations } : undefined;
 
       if (wantsStream) {
         streamingResponseStarted = true;

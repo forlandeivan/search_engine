@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 import type { AssistantActionState, ChatMessage } from "@/types/chat";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ChatCitations } from "./ChatCitations";
+import type { RagChunk } from "@/types/search";
 
 type ReadOnlyReason = "chat" | "skill";
 
@@ -27,6 +29,7 @@ type ChatMessagesAreaProps = {
   onOpenTranscript?: (transcriptId: string, defaultTabId?: string | null) => void;
   onOpenCard?: (cardId: string, fallbackTranscriptId?: string | null, defaultTabId?: string | null) => void;
   onRenameChat?: (title: string) => Promise<void>;
+  workspaceId?: string;
 };
 
 export default function ChatMessagesArea({
@@ -47,6 +50,7 @@ export default function ChatMessagesArea({
   onOpenTranscript,
   onOpenCard,
   onRenameChat,
+  workspaceId,
 }: ChatMessagesAreaProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -282,6 +286,7 @@ export default function ChatMessagesArea({
                     isStreamingBubble={streamingAssistantId === message.id || message.metadata?.streaming === true}
                     onOpenTranscript={onOpenTranscript}
                     onOpenCard={onOpenCard}
+                    workspaceId={workspaceId}
                   />
                 ))
             : null}
@@ -312,6 +317,7 @@ type ChatBubbleProps = {
   isStreamingBubble?: boolean;
   onOpenTranscript?: (transcriptId: string, defaultTabId?: string | null) => void;
   onOpenCard?: (cardId: string, fallbackTranscriptId?: string | null, defaultTabId?: string | null) => void;
+  workspaceId?: string;
 };
 
 function ChatBubble({
@@ -320,6 +326,7 @@ function ChatBubble({
   isStreamingBubble = false,
   onOpenTranscript,
   onOpenCard,
+  workspaceId,
 }: ChatBubbleProps) {
   const isUser = message.role === "user";
   const isGroupedWithPrevious = previousRole === message.role;
@@ -364,6 +371,25 @@ function ChatBubble({
     enabled: resolvedStreaming && !isAudioFile && !isAudioMessage,
     resetKey: message.id,
   });
+
+  // Извлечь citations из metadata
+  const citations = useMemo(() => {
+    const raw = message.metadata?.citations;
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    // Валидация структуры
+    return raw.filter(
+      (item): item is RagChunk =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof item.chunk_id === "string" &&
+        typeof item.doc_id === "string"
+    );
+  }, [message.metadata?.citations]);
+
+  // Не показывать источники во время стриминга
+  const showCitations = !resolvedStreaming && citations.length > 0;
 
   const formatSize = (size?: number | null) => {
     if (!size || size <= 0) return null;
@@ -492,6 +518,15 @@ function ChatBubble({
                 markdown={displayContent}
                 className="text-sm text-slate-900 break-words dark:text-slate-100"
               />
+              
+              {/* Источники RAG */}
+              {showCitations && (
+                <ChatCitations
+                  citations={citations}
+                  workspaceId={workspaceId}
+                />
+              )}
+              
               <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
                 {resolvedStreaming ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                 <span>{resolvedStreaming ? "Ассистент печатает..." : timestamp}</span>

@@ -1050,6 +1050,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               onOpenTranscript={(id: string, defaultTabId?: string | null) =>
                 setOpenTranscript({ id, tabId: defaultTabId ?? null })
               }
+              workspaceId={workspaceId}
               onOpenCard={async (cardId, fallbackTranscriptId, defaultTabId) => {
                 if (!workspaceId) return;
                 try {

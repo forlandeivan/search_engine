@@ -25,6 +25,8 @@ export type ChatPayload = {
   title?: string;
 };
 
+import type { RagChunk } from "./search";
+
 export type ChatMessage = {
   id: string;
   chatId: string;
@@ -45,6 +47,8 @@ export type ChatMessage = {
     streamId?: string | null;
     triggerMessageId?: string | null;
     processedChunkIds?: string[];
+    // Добавить поле для источников RAG
+    citations?: RagChunk[];
     [key: string]: unknown;
   };
   file?: {
