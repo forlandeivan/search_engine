@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { JsonImportPanel } from "./import/JsonImportPanel";
 import { FileImportPanel, type FileImportMode } from "./import/FileImportPanel";
+import { CrawlImportPanel, type CrawlMode, type CrawlConfig } from "./import/CrawlImportPanel";
 import { useBulkDocumentImport } from "@/hooks/useBulkDocumentImport";
 
 const ROOT_PARENT_VALUE = "__root__";
@@ -121,6 +122,11 @@ export function CreateKnowledgeDocumentDialog({
   const [mode, setMode] = useState<KnowledgeNodeSourceType>("manual");
   const [manualContent, setManualContent] = useState("");
   const [crawlUrl, setCrawlUrl] = useState("");
+  const [crawlMode, setCrawlMode] = useState<CrawlMode>("single");
+  const [crawlConfig, setCrawlConfig] = useState<CrawlConfig>({
+    startUrls: [],
+    robotsTxt: true,
+  });
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importHtml, setImportHtml] = useState("");
   const [importDetectedTitle, setImportDetectedTitle] = useState<string | null>(null);
@@ -152,6 +158,8 @@ export function CreateKnowledgeDocumentDialog({
       setTitle("");
       setManualContent("");
       setCrawlUrl("");
+      setCrawlMode("single");
+      setCrawlConfig({ startUrls: [], robotsTxt: true });
       setImportFile(null);
       setImportHtml("");
       setImportDetectedTitle(null);
@@ -202,6 +210,8 @@ export function CreateKnowledgeDocumentDialog({
       setImportError(null);
       setIsDragActive(false);
       setCrawlUrl("");
+      setCrawlMode("single");
+      setCrawlConfig({ startUrls: [], robotsTxt: true });
       setTitle("");
       setHasTitleBeenEdited(false);
       if (fileInputRef.current) {
@@ -355,34 +365,119 @@ export function CreateKnowledgeDocumentDialog({
     const parentId = parentValue === ROOT_PARENT_VALUE ? null : parentValue;
 
     if (mode === "crawl") {
-      const trimmedUrl = crawlUrl.trim();
-      if (!trimmedUrl) {
-        setFormError("Укажите ссылку на страницу для импорта.");
-        return;
-      }
-
-      try {
-        const parsed = new URL(trimmedUrl);
-        if (!parsed.protocol.startsWith("http")) {
-          throw new Error("Invalid protocol");
+      if (crawlMode === "single") {
+        // Одна страница - используем существующий API
+        const trimmedUrl = crawlUrl.trim();
+        if (!trimmedUrl) {
+          setFormError("Укажите ссылку на страницу для импорта.");
+          return;
         }
-      } catch {
-        setFormError("Укажите корректный URL страницы.");
-        return;
-      }
 
-      try {
-        await onSubmit({
-          title: trimmedTitle,
-          parentId,
-          content: "",
-          sourceType: "crawl",
-          importFileName: null,
-          crawlUrl: trimmedUrl,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Не удалось импортировать страницу";
-        setFormError(message);
+        try {
+          const parsed = new URL(trimmedUrl);
+          if (!parsed.protocol.startsWith("http")) {
+            throw new Error("Invalid protocol");
+          }
+        } catch {
+          setFormError("Укажите корректный URL страницы.");
+          return;
+        }
+
+        try {
+          await onSubmit({
+            title: trimmedTitle,
+            parentId,
+            content: "",
+            sourceType: "crawl",
+            importFileName: null,
+            crawlUrl: trimmedUrl,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Не удалось импортировать страницу";
+          setFormError(message);
+        }
+      } else {
+        // Несколько страниц - используем API множественного краулинга
+        if (!baseId) {
+          setFormError("База знаний не указана");
+          return;
+        }
+
+        if (!crawlConfig.startUrls || crawlConfig.startUrls.length === 0) {
+          setFormError("Укажите хотя бы один стартовый URL");
+          return;
+        }
+
+        // Валидация URL
+        const invalidUrls: string[] = [];
+        for (const url of crawlConfig.startUrls) {
+          try {
+            const parsed = new URL(url.trim());
+            if (!parsed.protocol.startsWith("http")) {
+              invalidUrls.push(url);
+            }
+          } catch {
+            invalidUrls.push(url);
+          }
+        }
+
+        if (invalidUrls.length > 0) {
+          setFormError(`Некорректные URL: ${invalidUrls.join(", ")}`);
+          return;
+        }
+
+        try {
+          const { apiRequest } = await import("@/lib/queryClient");
+          
+          // Преобразуем конфигурацию в формат API
+          const crawlConfigPayload = {
+            start_urls: crawlConfig.startUrls,
+            sitemap_url: crawlConfig.sitemapUrl || null,
+            allowed_domains: crawlConfig.allowedDomains || [],
+            include: crawlConfig.include || [],
+            exclude: crawlConfig.exclude || [],
+            max_pages: crawlConfig.maxPages || null,
+            max_depth: crawlConfig.maxDepth || null,
+            rate_limit_rps: crawlConfig.rateLimitRps || null,
+            robots_txt: crawlConfig.robotsTxt ?? true,
+            selectors: crawlConfig.selectors
+              ? {
+                  title: crawlConfig.selectors.title || null,
+                  content: crawlConfig.selectors.content || null,
+                }
+              : null,
+            language: crawlConfig.language || null,
+            version: crawlConfig.version || null,
+            auth: crawlConfig.authHeaders
+              ? { headers: crawlConfig.authHeaders }
+              : null,
+          };
+
+          const response = await apiRequest(
+            "POST",
+            `/api/kb/${baseId}/crawl`,
+            { crawl_config: crawlConfigPayload },
+            undefined,
+            { workspaceId: resolvedWorkspaceId }
+          );
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || "Не удалось запустить краулинг");
+          }
+
+          const result = (await response.json()) as {
+            kb_id: string;
+            job_id: string;
+            job: unknown;
+          };
+
+          // Закрываем диалог после успешного запуска
+          onOpenChange(false);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Не удалось запустить краулинг";
+          setFormError(message);
+        }
       }
       return;
     }
@@ -453,7 +548,9 @@ export function CreateKnowledgeDocumentDialog({
   const parentDescription = parentValue === ROOT_PARENT_VALUE ? "В корне базы" : parentLabel;
   const submitLabel =
     mode === "crawl"
-      ? "Импортировать страницу"
+      ? crawlMode === "multiple"
+        ? "Запустить краулинг"
+        : "Импортировать страницу"
       : mode === "import" && (fileImportMode === "multiple" || fileImportMode === "archive")
         ? `Импортировать ${importFiles.length} ${importFiles.length === 1 ? "файл" : importFiles.length < 5 ? "файла" : "файлов"}`
         : mode === "import"
@@ -461,7 +558,9 @@ export function CreateKnowledgeDocumentDialog({
           : "Создать документ";
   const submitPendingLabel =
     mode === "crawl"
-      ? "Импорт..."
+      ? crawlMode === "multiple"
+        ? "Запуск..."
+        : "Импорт..."
       : mode === "import"
         ? "Импорт..."
         : "Создание...";
@@ -489,7 +588,7 @@ export function CreateKnowledgeDocumentDialog({
           </DialogHeader>
 
           <div className="space-y-4">
-            {mode !== "json_import" && (
+            {mode !== "json_import" && !(mode === "crawl" && crawlMode === "multiple") && (
               <>
                 <div className="space-y-2">
                   <Label htmlFor="knowledge-document-title">Название документа</Label>
@@ -506,7 +605,7 @@ export function CreateKnowledgeDocumentDialog({
                     autoFocus
                     disabled={mode === "crawl" || isSubmitting}
                   />
-                  {mode === "crawl" && (
+                  {mode === "crawl" && crawlMode === "single" && (
                     <p className="text-xs text-muted-foreground">
                       После импорта название будет установлено по заголовку страницы.
                     </p>
@@ -854,21 +953,17 @@ export function CreateKnowledgeDocumentDialog({
                 )}
               </div>
             ) : mode === "crawl" ? (
-              <div className="space-y-2">
-                <Label htmlFor="knowledge-document-crawl-url">Ссылка на страницу</Label>
-                <Input
-                  id="knowledge-document-crawl-url"
-                  type="url"
-                  value={crawlUrl}
-                  onChange={(event) => setCrawlUrl(event.target.value)}
-                  placeholder="https://example.com/article"
-                  disabled={isSubmitting}
-                  autoComplete="off"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Заголовок документа будет определён автоматически по содержимому страницы.
-                </p>
-              </div>
+              <CrawlImportPanel
+                mode={crawlMode}
+                onModeChange={setCrawlMode}
+                singleUrl={crawlUrl}
+                onSingleUrlChange={setCrawlUrl}
+                config={crawlConfig}
+                onConfigChange={setCrawlConfig}
+                isSubmitting={isSubmitting}
+                error={formError}
+                disabled={isSubmitting}
+              />
             ) : mode === "json_import" ? (
               workspaceId && baseId ? (
                 <JsonImportPanel

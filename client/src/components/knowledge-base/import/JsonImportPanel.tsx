@@ -20,7 +20,8 @@ type JsonImportPanelProps = {
   workspaceId: string;
   targetBaseId?: string; // Если импорт в существующую БЗ
   targetParentId?: string | null; // Родительская папка для импорта
-  onComplete: (result: { jobId: string }) => void;
+  onCreateBaseBeforeImport?: () => Promise<{ id: string }>; // Колбэк для создания базы перед импортом
+  onComplete: (result: { jobId: string; baseId?: string }) => void;
   onCancel?: () => void;
   disabled?: boolean;
 };
@@ -29,6 +30,7 @@ export function JsonImportPanel({
   workspaceId,
   targetBaseId,
   targetParentId,
+  onCreateBaseBeforeImport,
   onComplete,
   onCancel,
   disabled,
@@ -149,7 +151,7 @@ export function JsonImportPanel({
   };
 
   const handleSubmit = async () => {
-    if (!targetBaseId) {
+    if (!targetBaseId && !onCreateBaseBeforeImport) {
       setError("База знаний не указана");
       return;
     }
@@ -168,6 +170,17 @@ export function JsonImportPanel({
     setError(null);
 
     try {
+      // Если нужно создать базу перед импортом
+      let baseId = targetBaseId;
+      if (!baseId && onCreateBaseBeforeImport) {
+        const created = await onCreateBaseBeforeImport();
+        baseId = created.id;
+      }
+
+      if (!baseId) {
+        throw new Error("База знаний не создана");
+      }
+
       const finalHierarchyConfig: HierarchyConfig = {
         ...(hierarchyConfig ?? { mode: "flat" }),
         baseParentId: targetParentId ?? null,
@@ -183,7 +196,7 @@ export function JsonImportPanel({
 
       const response = await apiRequest(
         "POST",
-        `/api/knowledge/bases/${targetBaseId}/json-import`,
+        `/api/knowledge/bases/${baseId}/json-import`,
         importRequest,
         undefined,
         { workspaceId },
@@ -196,7 +209,7 @@ export function JsonImportPanel({
 
       const data = (await response.json()) as { jobId: string; status: "pending" };
 
-      onComplete({ jobId: data.jobId });
+      onComplete({ jobId: data.jobId, baseId });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Не удалось запустить импорт";
       setError(message);
