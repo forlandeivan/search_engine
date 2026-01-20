@@ -1392,6 +1392,21 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     } else if (policy.defaultSchema && Array.isArray(policy.defaultSchema)) {
       schemaFields = policy.defaultSchema as CollectionSchemaFieldInput[];
     }
+    
+    // Гарантируем наличие document_url в схеме для RAG источников
+    const hasDocumentUrl = schemaFields.some(f => f.name === "document_url");
+    if (!hasDocumentUrl) {
+      schemaFields = [
+        ...schemaFields,
+        {
+          name: "document_url",
+          type: "string",
+          isArray: false,
+          template: "{{ documentUrl }}",
+        },
+      ];
+    }
+    
     const hasCustomSchema = schemaFields.length > 0;
 
     // Получаем данные версии

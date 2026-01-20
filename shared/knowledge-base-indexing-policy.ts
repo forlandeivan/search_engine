@@ -60,6 +60,12 @@ export const DEFAULT_KNOWLEDGE_BASE_INDEXING_POLICY: KnowledgeBaseIndexingPolicy
       template: "{{ chunk.heading | default: document.title }}",
     },
     {
+      name: "document_url",
+      type: "string",
+      isArray: false,
+      template: "{{ documentUrl }}",
+    },
+    {
       name: "url",
       type: "string",
       isArray: false,
