@@ -150,16 +150,9 @@ export function CreateKnowledgeBaseDialog({
       return;
     }
 
+    // JSON import обрабатывается через JsonImportPanel, не через handleSubmit
     if (mode === "json_import") {
-      // Validate JSON import requirements
-      if (!uploadedFileKey || !jsonFile) {
-        setError("Сначала загрузите файл");
-        return;
-      }
-      if (!mappingConfig || !isMappingValid) {
-        setError("Настройте маппинг полей");
-        return;
-      }
+      return;
     }
 
     setError(null);
@@ -167,37 +160,33 @@ export function CreateKnowledgeBaseDialog({
     try {
       let crawlerConfig: CreateKnowledgeBaseInput["crawlerConfig"] | undefined;
       if (mode === "crawler") {
-        const startUrls = parseListInput(startUrlsInput);
-        if (startUrls.length === 0) {
+        // CrawlImportPanel управляет конфигурацией через config prop
+        // Здесь просто используем то, что уже есть в state
+        if (!crawlConfig.startUrls || crawlConfig.startUrls.length === 0) {
           setError("Укажите хотя бы один стартовый URL для краулинга");
           return;
         }
 
-        const headersRecord = parseHeadersInputToRecord(authHeadersInput);
-
         crawlerConfig = {
-          startUrls,
-          sitemapUrl: sitemapUrl.trim() || undefined,
-          allowedDomains: parseListInput(allowedDomainsInput),
-          include: parseListInput(includePatternsInput),
-          exclude: parseListInput(excludePatternsInput),
-          maxPages: parseNumberInput(maxPagesInput),
-          maxDepth: parseNumberInput(maxDepthInput),
-          rateLimitRps: parseNumberInput(rateLimitInput),
-          robotsTxt: robotsTxtEnabled,
-          selectors: {
-            title: selectorTitle.trim() || undefined,
-            content: selectorContent.trim() || undefined,
-          },
-          language: language.trim() || undefined,
-          version: version.trim() || undefined,
-          authHeaders: headersRecord,
+          startUrls: crawlConfig.startUrls,
+          sitemapUrl: crawlConfig.sitemapUrl || undefined,
+          allowedDomains: crawlConfig.allowedDomains || undefined,
+          include: crawlConfig.include || undefined,
+          exclude: crawlConfig.exclude || undefined,
+          maxPages: crawlConfig.maxPages || undefined,
+          maxDepth: crawlConfig.maxDepth || undefined,
+          rateLimitRps: crawlConfig.rateLimitRps || undefined,
+          robotsTxt: crawlConfig.robotsTxt ?? true,
+          selectors: crawlConfig.selectors
+            ? {
+                title: crawlConfig.selectors.title || undefined,
+                content: crawlConfig.selectors.content || undefined,
+              }
+            : undefined,
+          language: crawlConfig.language || undefined,
+          version: crawlConfig.version || undefined,
+          authHeaders: crawlConfig.auth?.headers || undefined,
         };
-      }
-
-      // JSON import обрабатывается через JsonImportPanel, не через handleSubmit
-      if (mode === "json_import") {
-        return;
       }
       
       // For other modes, just create the base
@@ -251,7 +240,7 @@ export function CreateKnowledgeBaseDialog({
                   description: opt.description,
                   icon: opt.icon,
                 }))}
-                disabled={isUploading || isSubmittingImport}
+                disabled={isSubmittingImport}
               />
 
               <BaseNameForm
@@ -259,7 +248,7 @@ export function CreateKnowledgeBaseDialog({
                 onNameChange={setName}
                 description={description}
                 onDescriptionChange={setDescription}
-                disabled={isUploading || isSubmittingImport}
+                disabled={isSubmittingImport}
               />
             </>
           )}
@@ -272,7 +261,7 @@ export function CreateKnowledgeBaseDialog({
                 setArchiveFiles(files);
                 setArchiveFile(files[0] || null);
               }}
-              disabled={isUploading || isSubmittingImport}
+              disabled={isSubmittingImport}
               allowArchives={true}
             />
           )}

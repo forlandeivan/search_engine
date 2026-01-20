@@ -365,7 +365,7 @@ function AppContent() {
     queryFn: getQueryFn<SessionResponse>({ on401: "returnNull" }),
     staleTime: 1000 * 60 * 5, // 5 минут - не обновляем сессию слишком часто
     refetchOnWindowFocus: false, // Не обновляем при фокусе окна
-    refetchOnMount: 'always', // Всегда проверяем сессию при монтировании (важно после logout/login)
+    refetchOnMount: true, // Проверяем сессию при монтировании, если данные устарели
     retry: false, // Не ретраим неудачные запросы сессии - сразу показываем AuthPage
   });
 
