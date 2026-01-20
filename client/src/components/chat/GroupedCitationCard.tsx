@@ -22,6 +22,7 @@ export function GroupedCitationCard({
     nodeId: group.nodeId,
     docId: group.docId,
     documentUrl: group.chunks[0] ? (group.chunks[0] as any).document_url : undefined,
+    knowledgeBaseId: group.chunks[0] ? (group.chunks[0] as any).knowledge_base_id : undefined,
   }, workspaceId);
 
   // Если только один чанк — показываем как обычную карточку
@@ -147,6 +148,7 @@ function SingleChunkCard({ chunk, workspaceId }: { chunk: RagChunk; workspaceId?
     nodeId: chunk.node_id, 
     docId: chunk.doc_id,
     documentUrl: (chunk as any).document_url,
+    knowledgeBaseId: (chunk as any).knowledge_base_id,
   }, workspaceId);
   
   const snippet = chunk.snippet?.trim() || chunk.text?.trim() || "";
@@ -193,34 +195,32 @@ function SingleChunkCard({ chunk, workspaceId }: { chunk: RagChunk; workspaceId?
 }
 
 function buildDocumentUrl(
-  doc: { nodeId?: string | null; docId?: string; documentUrl?: string },
+  doc: { nodeId?: string | null; docId?: string; documentUrl?: string; knowledgeBaseId?: string },
   workspaceId?: string
 ): string | null {
   const nodeId = doc.nodeId || doc.docId;
   if (!nodeId) return null;
 
-  // Если есть workspaceId, используем полный путь
-  if (workspaceId) {
-    // Пытаемся извлечь knowledge base ID из documentUrl, если доступен
-    const documentUrl = doc.documentUrl;
-    if (documentUrl && documentUrl.startsWith("/knowledge/")) {
-      // Извлекаем kb_id из URL
-      const match = documentUrl.match(/\/knowledge\/([^/]+)\/node\/([^/]+)/);
-      if (match && match[1] && match[2]) {
-        return `/workspace/${workspaceId}/knowledge/${match[1]}/node/${match[2]}`;
-      }
-    }
-    
-    // Fallback: используем поиск по node_id
-    return `/workspace/${workspaceId}/search?node=${encodeURIComponent(nodeId)}`;
+  // Пытаемся получить knowledge_base_id
+  const knowledgeBaseId = doc.knowledgeBaseId;
+  
+  // Если есть knowledge_base_id, формируем правильную ссылку
+  if (knowledgeBaseId) {
+    return `/knowledge/${encodeURIComponent(knowledgeBaseId)}/node/${encodeURIComponent(nodeId)}`;
   }
-
-  // Без workspaceId используем упрощённый формат
+  
+  // Пытаемся извлечь knowledge base ID из documentUrl
   const documentUrl = doc.documentUrl;
   if (documentUrl && documentUrl.startsWith("/knowledge/")) {
+    const match = documentUrl.match(/\/knowledge\/([^/]+)\/node\/([^/]+)/);
+    if (match && match[1] && match[2]) {
+      return `/knowledge/${encodeURIComponent(match[1])}/node/${encodeURIComponent(match[2])}`;
+    }
+    // Если формат другой, возвращаем как есть
     return documentUrl;
   }
 
+  // Если нет knowledge_base_id и document_url, не можем сформировать ссылку
   return null;
 }
 

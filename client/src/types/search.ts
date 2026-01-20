@@ -80,6 +80,7 @@ export interface RagChunk {
   scores?: { bm25?: number; vector?: number };
   node_id?: string | null;
   node_slug?: string | null;
+  knowledge_base_id?: string | null;
 }
 
 export interface RagContextEntry {

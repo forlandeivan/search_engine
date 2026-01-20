@@ -264,29 +264,28 @@ function buildDocumentUrl(citation: RagChunk, workspaceId?: string): string | nu
     return null;
   }
 
-  // Если есть workspaceId, используем полный путь
-  if (workspaceId) {
-    // Пытаемся извлечь knowledge base ID из citation, если доступен
-    // В payload из Qdrant может быть document_url вида /knowledge/{kb_id}/node/{node_id}
-    const documentUrl = (citation as any).document_url as string | undefined;
-    if (documentUrl && documentUrl.startsWith("/knowledge/")) {
-      // Извлекаем kb_id из URL
-      const match = documentUrl.match(/\/knowledge\/([^/]+)\/node\/([^/]+)/);
-      if (match && match[1] && match[2]) {
-        return `/workspace/${workspaceId}/knowledge/${match[1]}/node/${match[2]}`;
-      }
-    }
-    
-    // Fallback: используем поиск по node_id
-    return `/workspace/${workspaceId}/search?node=${encodeURIComponent(nodeId)}`;
+  // Пытаемся получить knowledge_base_id из citation
+  const knowledgeBaseId = citation.knowledge_base_id;
+  
+  // Если есть knowledge_base_id, формируем правильную ссылку
+  if (knowledgeBaseId) {
+    return `/knowledge/${encodeURIComponent(knowledgeBaseId)}/node/${encodeURIComponent(nodeId)}`;
   }
 
-  // Без workspaceId используем упрощённый формат
+  // Пытаемся извлечь knowledge base ID из document_url, если доступен
+  // В payload из Qdrant может быть document_url вида /knowledge/{kb_id}/node/{node_id}
   const documentUrl = (citation as any).document_url as string | undefined;
   if (documentUrl && documentUrl.startsWith("/knowledge/")) {
+    // Извлекаем kb_id из URL
+    const match = documentUrl.match(/\/knowledge\/([^/]+)\/node\/([^/]+)/);
+    if (match && match[1] && match[2]) {
+      return `/knowledge/${encodeURIComponent(match[1])}/node/${encodeURIComponent(match[2])}`;
+    }
+    // Если формат другой, возвращаем как есть
     return documentUrl;
   }
 
+  // Если нет knowledge_base_id и document_url, не можем сформировать ссылку
   return null;
 }
 

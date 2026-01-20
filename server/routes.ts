@@ -3707,6 +3707,7 @@ async function runKnowledgeBaseRagPipeline(options: {
   }
   
   const knowledgeBaseId = knowledgeBaseIds[0]; // Для обратной совместимости
+  const wantsLlmStream = Boolean(stream);
   
   logger.info({
     component: 'RAG_PIPELINE',
@@ -3722,9 +3723,6 @@ async function runKnowledgeBaseRagPipeline(options: {
     wantsLlmStream,
     collections: Array.isArray(body.collections) ? body.collections : [body.collection].filter(Boolean),
   }, `[RAG PIPELINE] START: query="${query.slice(0, 50)}...", kb_ids=[${knowledgeBaseIds.join(", ")}], skill_id=${normalizedSkillId || 'N/A'}`);
-  const wantsLlmStream = Boolean(stream);
-  
-  // Логирование будет после определения knowledgeBaseIds
 
   if (!query) {
     throw new HttpError(400, "Укажите поисковый запрос");

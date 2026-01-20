@@ -122,7 +122,9 @@ adminSettingsRouter.get('/indexing-rules', asyncHandler(async (_req, res) => {
  */
 adminSettingsRouter.put('/indexing-rules', asyncHandler(async (req, res) => {
   try {
-    const rules = await indexingRulesService.set(req.body);
+    // Получаем adminId из req.user (должен быть установлен middleware аутентификации)
+    const adminId = (req as any).user?.id ?? null;
+    const rules = await indexingRulesService.updateIndexingRules(req.body, adminId);
     res.json(rules);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -140,7 +142,9 @@ adminSettingsRouter.put('/indexing-rules', asyncHandler(async (req, res) => {
  */
 adminSettingsRouter.patch('/indexing-rules', asyncHandler(async (req, res) => {
   try {
-    const rules = await indexingRulesService.update(req.body);
+    // Получаем adminId из req.user (должен быть установлен middleware аутентификации)
+    const adminId = (req as any).user?.id ?? null;
+    const rules = await indexingRulesService.updateIndexingRules(req.body, adminId);
     res.json(rules);
   } catch (error) {
     if (error instanceof z.ZodError) {
