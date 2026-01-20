@@ -1589,10 +1589,7 @@ export function SkillFormContent({
                 <fieldset disabled={controlsDisabled}>
                   <div className="space-y-4">
                     <div>
-                      <h3 className="text-base font-semibold text-foreground">Действия</h3>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Настройка доступных действий и их отображения
-                      </p>
+                      <h3 className="text-base font-semibold text-foreground">Настройка доступных действий и их отображения</h3>
                     </div>
                     <div>
                       {isSystemSkill ? (
