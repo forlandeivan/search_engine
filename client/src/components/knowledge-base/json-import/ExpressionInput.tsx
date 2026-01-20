@@ -100,6 +100,7 @@ export function ExpressionInput({
     // Ctrl+Space — открыть popup полей
     if (e.ctrlKey && e.key === ' ') {
       e.preventDefault();
+      setIsFunctionPopupOpen(false);
       setIsFieldPopupOpen(true);
       return;
     }
@@ -107,6 +108,7 @@ export function ExpressionInput({
     // Ctrl+Shift+F — открыть popup функций
     if (e.ctrlKey && e.shiftKey && e.key === 'F') {
       e.preventDefault();
+      setIsFieldPopupOpen(false);
       setIsFunctionPopupOpen(true);
       return;
     }
@@ -143,6 +145,7 @@ export function ExpressionInput({
     // Если клик не на токене и не на кнопке "+ текст", открываем popup
     const target = e.target as HTMLElement;
     if (!target.closest('[data-token]') && !target.closest('button')) {
+      setIsFunctionPopupOpen(false);
       setIsFieldPopupOpen(true);
     }
   }, [disabled, showTextInput]);
@@ -153,9 +156,20 @@ export function ExpressionInput({
     setInsertPosition(index + 1);
   }, [disabled]);
 
+  // Определяем, какой попап показывать
+  const isAnyPopupOpen = isFieldPopupOpen || isFunctionPopupOpen;
+
   return (
     <div className={cn("relative", className)}>
-      <Popover open={isFieldPopupOpen} onOpenChange={setIsFieldPopupOpen}>
+      <Popover 
+        open={isAnyPopupOpen} 
+        onOpenChange={(open) => {
+          if (!open) {
+            setIsFieldPopupOpen(false);
+            setIsFunctionPopupOpen(false);
+          }
+        }}
+      >
         <PopoverTrigger asChild>
           <div
             ref={inputRef}
@@ -241,30 +255,24 @@ export function ExpressionInput({
         </PopoverTrigger>
         
         <PopoverContent className="w-80 p-0" align="start">
-          <FieldTokenPopup
-            fields={availableFields}
-            onSelect={handleFieldSelect}
-            onOpenFunctions={() => {
-              setIsFieldPopupOpen(false);
-              setIsFunctionPopupOpen(true);
-            }}
-          />
-        </PopoverContent>
-      </Popover>
-
-      {/* Popup для функций */}
-      <Popover open={isFunctionPopupOpen} onOpenChange={setIsFunctionPopupOpen}>
-        <PopoverTrigger asChild>
-          <span className="hidden" />
-        </PopoverTrigger>
-        <PopoverContent className="w-80 p-0" align="start">
-          <FunctionTokenPopup
-            onSelect={handleFunctionSelect}
-            onBack={() => {
-              setIsFunctionPopupOpen(false);
-              setIsFieldPopupOpen(true);
-            }}
-          />
+          {isFunctionPopupOpen ? (
+            <FunctionTokenPopup
+              onSelect={handleFunctionSelect}
+              onBack={() => {
+                setIsFunctionPopupOpen(false);
+                setIsFieldPopupOpen(true);
+              }}
+            />
+          ) : (
+            <FieldTokenPopup
+              fields={availableFields}
+              onSelect={handleFieldSelect}
+              onOpenFunctions={() => {
+                setIsFieldPopupOpen(false);
+                setIsFunctionPopupOpen(true);
+              }}
+            />
+          )}
         </PopoverContent>
       </Popover>
     </div>
