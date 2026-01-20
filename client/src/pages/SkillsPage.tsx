@@ -45,6 +45,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Field, FieldContent, FieldLabel, FieldTitle, FieldDescription } from "@/components/ui/field";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
@@ -774,72 +775,69 @@ export function SkillFormContent({
                   </div>
 
                   <div className="space-y-4">
-                    <div>
-                      <h3 className="text-base font-semibold text-foreground">Режим выполнения</h3>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Определяет, где выполняется логика обработки сообщений.
-                      </p>
-                    </div>
-                    <div>
-                      <FormField
-                        control={form.control}
-                        name="executionMode"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormControl>
-                              <RadioGroup 
-                                value={field.value} 
-                                onValueChange={controlsDisabled ? undefined : field.onChange} 
-                                className="grid gap-3 md:grid-cols-2"
-                              >
-                                <label className="relative flex cursor-pointer">
+                    <FormField
+                      control={form.control}
+                      name="executionMode"
+                      render={({ field }) => (
+                        <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
+                          <div className="pt-2.5">
+                            <FormLabel className="text-sm font-medium">Обработка</FormLabel>
+                          </div>
+                          <FormControl>
+                            <RadioGroup 
+                              value={field.value} 
+                              onValueChange={controlsDisabled ? undefined : field.onChange} 
+                              className="flex flex-col gap-3"
+                            >
+                              <FieldLabel htmlFor="execution-mode-standard" className="cursor-pointer">
+                                <Field 
+                                  orientation="horizontal"
+                                  className="rounded-lg border-2 p-4 transition-all has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50 has-[:data-state=checked]:border-primary has-[:data-state=checked]:bg-accent/50 border-muted bg-card hover:bg-accent/30"
+                                >
+                                  <FieldContent>
+                                    <FieldTitle>Внутри платформы</FieldTitle>
+                                    <FieldDescription>
+                                      С использованием LLM и RAG
+                                    </FieldDescription>
+                                  </FieldContent>
                                   <RadioGroupItem
                                     value="standard"
-                                    className="peer sr-only"
+                                    id="execution-mode-standard"
                                     disabled={controlsDisabled}
                                     data-testid="execution-mode-standard"
                                   />
-                                  <div className="flex w-full flex-col gap-3 rounded-lg border-2 border-muted bg-background p-4 shadow-sm transition-all hover:border-muted-foreground/50 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-accent/50">
-                                    <div className="flex items-center gap-3">
-                                      <div className="flex h-4 w-4 items-center justify-center">
-                                        <div className="h-2 w-2 rounded-full bg-transparent peer-data-[state=checked]:bg-primary" />
-                                      </div>
-                                      <div className="font-semibold">Стандартный</div>
-                                    </div>
-                                    <p className="text-sm text-muted-foreground">
-                                      Обработка внутри платформы с использованием LLM и RAG
-                                    </p>
-                                  </div>
-                                </label>
+                                </Field>
+                              </FieldLabel>
 
-                                <label className="relative flex cursor-pointer">
+                              <FieldLabel htmlFor="execution-mode-no-code" className="cursor-pointer">
+                                <Field 
+                                  orientation="horizontal"
+                                  className="rounded-lg border-2 p-4 transition-all has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50 has-[:data-state=checked]:border-primary has-[:data-state=checked]:bg-accent/50 border-muted bg-card hover:bg-accent/30"
+                                >
+                                  <FieldContent>
+                                    <div className="flex items-center gap-2">
+                                      <FieldTitle>Внешний сценарий</FieldTitle>
+                                      {!allowNoCodeFlow && (
+                                        <Badge variant="secondary" className="text-xs">Premium</Badge>
+                                      )}
+                                    </div>
+                                    <FieldDescription>
+                                      На no-code через webhook
+                                    </FieldDescription>
+                                  </FieldContent>
                                   <RadioGroupItem
                                     value="no_code"
-                                    className="peer sr-only"
+                                    id="execution-mode-no-code"
                                     disabled={noCodeDisabled}
                                     data-testid="execution-mode-no-code"
                                   />
-                                  <div className="flex w-full flex-col gap-3 rounded-lg border-2 border-muted bg-background p-4 shadow-sm transition-all hover:border-muted-foreground/50 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-accent/50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50">
-                                    <div className="flex items-center gap-3">
-                                      <div className="flex h-4 w-4 items-center justify-center">
-                                        <div className="h-2 w-2 rounded-full bg-transparent peer-data-[state=checked]:bg-primary" />
-                                      </div>
-                                      <div className="font-semibold">No-code</div>
-                                      {!allowNoCodeFlow && (
-                                        <Badge variant="secondary" className="ml-auto text-xs">Premium</Badge>
-                                      )}
-                                    </div>
-                                    <p className="text-sm text-muted-foreground">
-                                      Обработка во внешнем сценарии через webhook
-                                    </p>
-                                  </div>
-                                </label>
-                              </RadioGroup>
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-                    </div>
+                                </Field>
+                              </FieldLabel>
+                            </RadioGroup>
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
                   </div>
 
                 {isStandardMode ? (

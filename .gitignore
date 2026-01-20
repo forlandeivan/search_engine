@@ -50,3 +50,6 @@ dev.log
 tmp-*.cjs
 tmp-*.js
 _*.py
+
+# Cursor IDE local config
+.cursor/
