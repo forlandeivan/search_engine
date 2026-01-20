@@ -122,7 +122,8 @@ export default function AuthPage() {
       await queryClient.refetchQueries({ queryKey: ["/api/auth/session"] });
       
       // Редиректим на главную страницу после успешного логина
-      setLocation("/");
+      // Используем window.location для принудительного редиректа
+      window.location.href = "/";
     },
     onError: (error: Error & { status?: number; code?: string }) => {
       if (error.status === 403 && error.code === "email_not_confirmed") {

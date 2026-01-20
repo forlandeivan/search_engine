@@ -26,6 +26,7 @@ import {
   getKnowledgeNodeDetail,
   createKnowledgeFolder,
   createKnowledgeDocument,
+  bulkCreateDocuments,
   updateKnowledgeNodeParent,
   updateKnowledgeDocument,
   deleteKnowledgeNode,

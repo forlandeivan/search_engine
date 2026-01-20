@@ -69,6 +69,9 @@ export default function SidebarUserMenu({ user }: SidebarUserMenuProps) {
         },
       });
       toast({ title: "Вы успешно вышли" });
+      // Редиректим на страницу авторизации после разлогина
+      // Используем window.location для принудительного редиректа
+      window.location.href = "/auth";
     },
     onError: (error: Error) => {
       toast({
