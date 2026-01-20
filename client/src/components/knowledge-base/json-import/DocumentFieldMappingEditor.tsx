@@ -83,6 +83,13 @@ export function DocumentFieldMappingEditor({
     };
   });
 
+  // Обновление состояния при изменении initialConfig (например, при возврате на шаг)
+  useEffect(() => {
+    if (initialConfig) {
+      setConfig(initialConfig);
+    }
+  }, [initialConfig]);
+
   // Валидация
   const validation = useMemo(() => {
     const errors: string[] = [];

@@ -419,7 +419,172 @@ export function ExpressionInput({
       setIsFunctionPopupOpen(false);
       return;
     }
-  }, [disabled]);
+
+    // Backspace — удаление макроса перед курсором
+    if (e.key === 'Backspace' && editorRef.current) {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+
+      const range = selection.getRangeAt(0);
+      
+      // Проверяем, если курсор в начале текстового узла
+      if (range.collapsed && range.startContainer.nodeType === Node.TEXT_NODE && range.startOffset === 0) {
+        const prevNode = range.startContainer.previousSibling;
+        
+        // Если предыдущий узел - макрос
+        if (prevNode && (prevNode as HTMLElement).hasAttribute?.(MACRO_DATA_ATTR)) {
+          e.preventDefault();
+          
+          // Получаем индекс макроса
+          const macroId = (prevNode as HTMLElement).getAttribute(MACRO_DATA_ATTR);
+          if (macroId) {
+            const index = parseInt(macroId, 10);
+            
+            // Удаляем токен из массива
+            const newTokens = safeValue.filter((_, i) => i !== index);
+            isInternalUpdateRef.current = true;
+            lastValueRef.current = newTokens;
+            onChange(newTokens);
+            
+            // Обновляем HTML
+            setTimeout(() => {
+              if (editorRef.current) {
+                editorRef.current.innerHTML = renderTokensToHtml(newTokens);
+                
+                // Ставим курсор на место удаленного макроса
+                const newSelection = window.getSelection();
+                if (newSelection) {
+                  const newRange = document.createRange();
+                  newRange.selectNodeContents(editorRef.current);
+                  newRange.collapse(true);
+                  newSelection.removeAllRanges();
+                  newSelection.addRange(newRange);
+                }
+                editorRef.current.focus();
+              }
+            }, 0);
+          }
+          return;
+        }
+      }
+      
+      // Проверяем, если курсор сразу после макроса (в родительском элементе)
+      if (range.collapsed && range.startContainer === editorRef.current) {
+        const offset = range.startOffset;
+        if (offset > 0) {
+          const prevNode = editorRef.current.childNodes[offset - 1];
+          
+          if (prevNode && (prevNode as HTMLElement).hasAttribute?.(MACRO_DATA_ATTR)) {
+            e.preventDefault();
+            
+            // Получаем индекс макроса
+            const macroId = (prevNode as HTMLElement).getAttribute(MACRO_DATA_ATTR);
+            if (macroId) {
+              const index = parseInt(macroId, 10);
+              
+              // Удаляем токен из массива
+              const newTokens = safeValue.filter((_, i) => i !== index);
+              isInternalUpdateRef.current = true;
+              lastValueRef.current = newTokens;
+              onChange(newTokens);
+              
+              // Обновляем HTML
+              setTimeout(() => {
+                if (editorRef.current) {
+                  editorRef.current.innerHTML = renderTokensToHtml(newTokens);
+                  
+                  // Ставим курсор на место удаленного макроса
+                  const newSelection = window.getSelection();
+                  if (newSelection) {
+                    const newRange = document.createRange();
+                    newRange.selectNodeContents(editorRef.current);
+                    newRange.collapse(true);
+                    newSelection.removeAllRanges();
+                    newSelection.addRange(newRange);
+                  }
+                  editorRef.current.focus();
+                }
+              }, 0);
+            }
+            return;
+          }
+        }
+      }
+    }
+
+    // Delete — удаление макроса после курсора
+    if (e.key === 'Delete' && editorRef.current) {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+
+      const range = selection.getRangeAt(0);
+      
+      // Проверяем, если курсор в конце текстового узла
+      if (range.collapsed && range.startContainer.nodeType === Node.TEXT_NODE) {
+        const textLength = range.startContainer.textContent?.length || 0;
+        if (range.startOffset === textLength) {
+          const nextNode = range.startContainer.nextSibling;
+          
+          // Если следующий узел - макрос
+          if (nextNode && (nextNode as HTMLElement).hasAttribute?.(MACRO_DATA_ATTR)) {
+            e.preventDefault();
+            
+            // Получаем индекс макроса
+            const macroId = (nextNode as HTMLElement).getAttribute(MACRO_DATA_ATTR);
+            if (macroId) {
+              const index = parseInt(macroId, 10);
+              
+              // Удаляем токен из массива
+              const newTokens = safeValue.filter((_, i) => i !== index);
+              isInternalUpdateRef.current = true;
+              lastValueRef.current = newTokens;
+              onChange(newTokens);
+              
+              // Обновляем HTML
+              setTimeout(() => {
+                if (editorRef.current) {
+                  editorRef.current.innerHTML = renderTokensToHtml(newTokens);
+                  editorRef.current.focus();
+                }
+              }, 0);
+            }
+            return;
+          }
+        }
+      }
+      
+      // Проверяем, если курсор прямо перед макросом (в родительском элементе)
+      if (range.collapsed && range.startContainer === editorRef.current) {
+        const offset = range.startOffset;
+        const nextNode = editorRef.current.childNodes[offset];
+        
+        if (nextNode && (nextNode as HTMLElement).hasAttribute?.(MACRO_DATA_ATTR)) {
+          e.preventDefault();
+          
+          // Получаем индекс макроса
+          const macroId = (nextNode as HTMLElement).getAttribute(MACRO_DATA_ATTR);
+          if (macroId) {
+            const index = parseInt(macroId, 10);
+            
+            // Удаляем токен из массива
+            const newTokens = safeValue.filter((_, i) => i !== index);
+            isInternalUpdateRef.current = true;
+            lastValueRef.current = newTokens;
+            onChange(newTokens);
+            
+            // Обновляем HTML
+            setTimeout(() => {
+              if (editorRef.current) {
+                editorRef.current.innerHTML = renderTokensToHtml(newTokens);
+                editorRef.current.focus();
+              }
+            }, 0);
+          }
+          return;
+        }
+      }
+    }
+  }, [disabled, safeValue, onChange]);
 
   // Клик для открытия popup или редактирования макроса
   const handleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {

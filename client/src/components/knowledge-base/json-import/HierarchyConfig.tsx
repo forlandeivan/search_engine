@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -182,6 +182,13 @@ export function HierarchyConfigEditor({
       uncategorizedFolderName: "Без категории",
     },
   );
+
+  // Обновление состояния при изменении initialConfig (например, при возврате на шаг)
+  useEffect(() => {
+    if (initialConfig) {
+      setConfig(initialConfig);
+    }
+  }, [initialConfig]);
 
   const preview = useMemo(() => buildHierarchyPreview(analysis, config), [analysis, config]);
 
