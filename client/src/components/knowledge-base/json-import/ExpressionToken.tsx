@@ -37,8 +37,19 @@ export function ExpressionToken({
   // Получаем отображаемый текст для LLM токена
   const getDisplayText = () => {
     if (isLlm && token.llmConfig) {
+      if (!Array.isArray(token.llmConfig.prompt)) {
+        return 'AI генерация';
+      }
       const promptPreview = token.llmConfig.prompt
-        ?.map(t => t.type === 'text' ? t.value : t.type === 'field' ? `{${t.value}}` : '')
+        .map((t) => {
+          if (t.type === 'text') {
+            return t.value;
+          }
+          if (t.type === 'field') {
+            return `{${t.value}}`;
+          }
+          return '';
+        })
         .join('')
         .slice(0, 30);
       return promptPreview ? `${promptPreview}...` : 'AI генерация';

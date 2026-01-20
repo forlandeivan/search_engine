@@ -29,7 +29,8 @@ export function ExpressionInput({
 }: ExpressionInputProps) {
   const [isFieldPopupOpen, setIsFieldPopupOpen] = useState(false);
   const [isFunctionPopupOpen, setIsFunctionPopupOpen] = useState(false);
-  const [insertPosition, setInsertPosition] = useState<number>(value.length);
+  const safeValue = Array.isArray(value) ? value : [];
+  const [insertPosition, setInsertPosition] = useState<number>(safeValue.length);
   const [textInput, setTextInput] = useState("");
   const [showTextInput, setShowTextInput] = useState(false);
   const inputRef = useRef<HTMLDivElement>(null);
@@ -37,8 +38,8 @@ export function ExpressionInput({
 
   // Обновляем позицию вставки при изменении value
   useEffect(() => {
-    setInsertPosition(value.length);
-  }, [value.length]);
+    setInsertPosition(safeValue.length);
+  }, [safeValue.length]);
 
   // Фокус на text input при показе
   useEffect(() => {
@@ -50,48 +51,48 @@ export function ExpressionInput({
   // Вставка токена поля
   const handleFieldSelect = useCallback((fieldPath: string) => {
     const token = createFieldToken(fieldPath);
-    const newValue = [...value];
+    const newValue = [...safeValue];
     newValue.splice(insertPosition, 0, token);
     onChange(normalizeExpression(newValue));
     setInsertPosition(insertPosition + 1);
     setIsFieldPopupOpen(false);
-  }, [value, insertPosition, onChange]);
+  }, [safeValue, insertPosition, onChange]);
 
   // Вставка токена функции
   const handleFunctionSelect = useCallback((functionName: string) => {
     const token = createFunctionToken(functionName);
-    const newValue = [...value];
+    const newValue = [...safeValue];
     newValue.splice(insertPosition, 0, token);
     onChange(normalizeExpression(newValue));
     setInsertPosition(insertPosition + 1);
     setIsFunctionPopupOpen(false);
-  }, [value, insertPosition, onChange]);
+  }, [safeValue, insertPosition, onChange]);
 
   // Вставка LLM токена
   const handleLlmTokenAdd = useCallback((config: LLMTokenConfig) => {
     const token = createLlmToken(config, 'AI генерация');
-    const newValue = [...value];
+    const newValue = [...safeValue];
     newValue.splice(insertPosition, 0, token);
     onChange(normalizeExpression(newValue));
     setInsertPosition(insertPosition + 1);
     setIsFieldPopupOpen(false);
-  }, [value, insertPosition, onChange]);
+  }, [safeValue, insertPosition, onChange]);
 
   // Обновление токена
-  const handleUpdateToken = useCallback((index: number, updatedToken: typeof value[0]) => {
-    const newValue = [...value];
+  const handleUpdateToken = useCallback((index: number, updatedToken: typeof safeValue[0]) => {
+    const newValue = [...safeValue];
     newValue[index] = updatedToken;
     onChange(normalizeExpression(newValue));
-  }, [value, onChange]);
+  }, [safeValue, onChange]);
 
   // Удаление токена
   const handleRemoveToken = useCallback((index: number) => {
-    const newValue = value.filter((_, i) => i !== index);
+    const newValue = safeValue.filter((_, i) => i !== index);
     onChange(normalizeExpression(newValue));
     if (insertPosition > index) {
       setInsertPosition(insertPosition - 1);
     }
-  }, [value, insertPosition, onChange]);
+  }, [safeValue, insertPosition, onChange]);
 
   // Добавление текстового токена
   const handleAddText = useCallback(() => {
@@ -102,13 +103,13 @@ export function ExpressionInput({
     }
 
     const token = createTextToken(textInput);
-    const newValue = [...value];
+    const newValue = [...safeValue];
     newValue.splice(insertPosition, 0, token);
     onChange(normalizeExpression(newValue));
     setInsertPosition(insertPosition + 1);
     setShowTextInput(false);
     setTextInput("");
-  }, [value, insertPosition, textInput, onChange]);
+  }, [safeValue, insertPosition, textInput, onChange]);
 
   // Обработка клавиш
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
@@ -204,11 +205,11 @@ export function ExpressionInput({
               !disabled && "cursor-text",
             )}
           >
-            {value.length === 0 && !showTextInput ? (
+            {safeValue.length === 0 && !showTextInput ? (
               <span className="text-muted-foreground">{placeholder}</span>
             ) : (
               <>
-                {value.map((token, index) => {
+                {safeValue.map((token, index) => {
                   // Для текстовых токенов добавляем возможность редактирования
                   if (token.type === 'text') {
                     return (
@@ -260,7 +261,7 @@ export function ExpressionInput({
                     onClick={(e) => {
                       e.stopPropagation();
                       setShowTextInput(true);
-                      setInsertPosition(value.length);
+                      setInsertPosition(safeValue.length);
                     }}
                     className="text-xs text-muted-foreground hover:text-foreground px-1 py-0.5 rounded hover:bg-accent"
                     title="Добавить текст (или нажмите Ctrl+Space для выбора поля)"

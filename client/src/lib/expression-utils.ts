@@ -14,6 +14,8 @@ export function expressionToDisplayString(expression: MappingExpression): string
       case 'function':
         const args = token.args?.join(', ') ?? '';
         return `{{ ${token.value}(${args}) }}`;
+      case 'llm':
+        return '[AI генерация]';
       default:
         return '';
     }
@@ -59,9 +61,17 @@ export function removeTokenFromExpression(
  * Нормализация выражения (объединение соседних текстовых токенов)
  */
 export function normalizeExpression(expression: MappingExpression): MappingExpression {
+  if (!Array.isArray(expression)) {
+    return [];
+  }
+  
   const result: MappingExpression = [];
   
   for (const token of expression) {
+    if (!token || typeof token !== 'object') {
+      continue;
+    }
+    
     const last = result[result.length - 1];
     
     if (token.type === 'text' && last?.type === 'text') {
@@ -70,7 +80,7 @@ export function normalizeExpression(expression: MappingExpression): MappingExpre
         type: 'text',
         value: last.value + token.value,
       };
-    } else if (token.type !== 'text' || token.value !== '') {
+    } else if (token.type !== 'text' || (token.value && token.value !== '')) {
       // Пропускаем пустые текстовые токены
       result.push(token);
     }

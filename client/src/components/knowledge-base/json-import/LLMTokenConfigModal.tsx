@@ -110,7 +110,7 @@ export function LLMTokenConfigModal({
               className="min-h-[120px]"
             />
             <p className="text-xs text-muted-foreground">
-              Пример: "Придумай краткий заголовок (до 10 слов) для следующего текста: {{ text }}"
+              Пример: "Придумай краткий заголовок (до 10 слов) для следующего текста: {'{{ text }}'}"
             </p>
           </div>
 
