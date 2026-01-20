@@ -24,6 +24,12 @@ type JsonImportPanelProps = {
   onComplete: (result: { jobId: string; baseId?: string }) => void;
   onCancel?: () => void;
   disabled?: boolean;
+  // Поля для названия и описания базы знаний (показываются в шапке визарда)
+  baseName?: string;
+  onBaseNameChange?: (name: string) => void;
+  baseDescription?: string;
+  onBaseDescriptionChange?: (description: string) => void;
+  showBaseNameFields?: boolean; // Показывать ли поля названия/описания (только при создании новой БЗ)
 };
 
 export function JsonImportPanel({
@@ -34,6 +40,11 @@ export function JsonImportPanel({
   onComplete,
   onCancel,
   disabled,
+  baseName = "",
+  onBaseNameChange,
+  baseDescription = "",
+  onBaseDescriptionChange,
+  showBaseNameFields = false,
 }: JsonImportPanelProps) {
   const [step, setStep] = useState<JsonImportStep>("upload");
   const [jsonFile, setJsonFile] = useState<File | null>(null);
@@ -156,6 +167,12 @@ export function JsonImportPanel({
       return;
     }
 
+    // Проверка названия базы при создании новой
+    if (showBaseNameFields && onCreateBaseBeforeImport && !baseName?.trim()) {
+      setError("Укажите название базы знаний");
+      return;
+    }
+
     if (!uploadedFileKey || !jsonFile) {
       setError("Сначала загрузите файл");
       return;
@@ -220,6 +237,40 @@ export function JsonImportPanel({
 
   return (
     <div className="space-y-4">
+      {/* Компактная форма названия и описания базы знаний в шапке */}
+      {showBaseNameFields && (
+        <div className="border-b pb-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="json-import-base-name" className="text-xs font-medium">
+                Название базы знаний
+              </Label>
+              <Input
+                id="json-import-base-name"
+                placeholder="Например, База знаний по клиентской поддержке"
+                value={baseName}
+                onChange={(e) => onBaseNameChange?.(e.target.value)}
+                disabled={disabled}
+                className="h-8 text-sm"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="json-import-base-description" className="text-xs font-medium">
+                Краткое описание
+              </Label>
+              <Input
+                id="json-import-base-description"
+                placeholder="Для чего нужна база знаний"
+                value={baseDescription}
+                onChange={(e) => onBaseDescriptionChange?.(e.target.value)}
+                disabled={disabled}
+                className="h-8 text-sm"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Step indicator */}
       <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
         <span className={cn("px-2 py-1 rounded", step === "upload" ? "bg-primary text-primary-foreground" : "bg-muted")}>
@@ -242,32 +293,68 @@ export function JsonImportPanel({
       {/* Step 1: Upload */}
       {step === "upload" && (
         <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="json-import-file">Файл JSON/JSONL</Label>
-            <input
-              ref={jsonFileInputRef}
-              id="json-import-file"
-              type="file"
-              accept=".json,.jsonl"
-              onChange={handleJsonFileChange}
-              disabled={disabled || isSubmitting || isUploading}
-              className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
-            />
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="json-import-file" className="text-sm font-medium">
+                Файл JSON/JSONL
+              </Label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Выберите файл для импорта. Поддерживаются форматы .json и .jsonl до 2GB.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                ref={jsonFileInputRef}
+                id="json-import-file"
+                type="file"
+                accept=".json,.jsonl"
+                onChange={handleJsonFileChange}
+                disabled={disabled || isSubmitting || isUploading}
+                className="flex-1 block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 cursor-pointer"
+              />
+              {jsonFile && !uploadedFileKey && !isUploading && (
+                <Button
+                  type="button"
+                  onClick={handleJsonFileUpload}
+                  disabled={disabled || isSubmitting}
+                  size="default"
+                >
+                  Загрузить
+                </Button>
+              )}
+            </div>
+            
             {jsonFile && (
-              <div className="space-y-2">
-                <p className="text-sm text-muted-foreground">
-                  Выбран: {jsonFile.name} ({(jsonFile.size / 1024 / 1024).toFixed(2)} MB)
-                </p>
-                {!uploadedFileKey && !isUploading && (
-                  <Button
-                    type="button"
-                    onClick={handleJsonFileUpload}
-                    disabled={disabled || isSubmitting}
-                    className="w-full"
-                  >
-                    Загрузить файл
-                  </Button>
-                )}
+              <div className="space-y-3 pt-2 border-t">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{jsonFile.name}</span>
+                    <span className="text-muted-foreground">
+                      ({(jsonFile.size / 1024 / 1024).toFixed(2)} MB)
+                    </span>
+                  </div>
+                  {!isUploading && !uploadedFileKey && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setJsonFile(null);
+                        setUploadedFileKey(null);
+                        setStructureAnalysis(null);
+                        setPreviewError(null);
+                        if (jsonFileInputRef.current) {
+                          jsonFileInputRef.current.value = "";
+                        }
+                      }}
+                      disabled={disabled || isSubmitting}
+                      className="h-7"
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+                
                 {isUploading && uploadProgress && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
@@ -282,32 +369,35 @@ export function JsonImportPanel({
                       variant="outline"
                       size="sm"
                       onClick={abort}
-                      className="w-full"
                       disabled={disabled}
+                      className="w-full"
                     >
                       <X className="mr-2 h-4 w-4" />
                       Отменить загрузку
                     </Button>
                   </div>
                 )}
+                
                 {isAnalyzing && (
-                  <div className="flex items-center justify-center py-4">
+                  <div className="flex items-center justify-center py-6">
                     <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                    <span className="text-sm">Анализ структуры файла...</span>
+                    <span className="text-sm text-muted-foreground">Анализ структуры файла...</span>
                   </div>
                 )}
+                
                 {uploadedFileKey && structureAnalysis && (
-                  <Alert>
-                    <AlertDescription>
+                  <Alert className="bg-green-50 border-green-200">
+                    <AlertDescription className="text-sm">
                       Файл загружен и проанализирован. Нажмите "Далее" для продолжения.
                     </AlertDescription>
                   </Alert>
                 )}
+                
                 {previewError && (
                   <Alert variant="destructive">
                     <AlertDescription>
-                      <p className="font-medium">{previewError.error}</p>
-                      {previewError.details && <p className="text-sm mt-1">{previewError.details}</p>}
+                      <p className="font-medium text-sm">{previewError.error}</p>
+                      {previewError.details && <p className="text-xs mt-1">{previewError.details}</p>}
                     </AlertDescription>
                   </Alert>
                 )}

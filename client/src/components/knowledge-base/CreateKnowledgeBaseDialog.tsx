@@ -282,6 +282,11 @@ export function CreateKnowledgeBaseDialog({
           {mode === "json_import" && workspaceId && (
             <JsonImportPanel
               workspaceId={workspaceId}
+              baseName={name}
+              onBaseNameChange={setName}
+              baseDescription={description}
+              onBaseDescriptionChange={setDescription}
+              showBaseNameFields={true}
               onCreateBaseBeforeImport={async () => {
                 if (!name.trim()) {
                   throw new Error("Укажите название базы знаний");
