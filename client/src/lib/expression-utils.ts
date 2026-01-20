@@ -80,6 +80,20 @@ export function normalizeExpression(expression: MappingExpression): MappingExpre
 }
 
 /**
+ * Проверка, содержит ли выражение LLM токен
+ */
+export function hasLlmToken(expression: MappingExpression): boolean {
+  return expression.some(token => token.type === 'llm');
+}
+
+/**
+ * Получение LLM токена из выражения (первый найденный)
+ */
+export function getLlmToken(expression: MappingExpression): ExpressionToken | undefined {
+  return expression.find(token => token.type === 'llm');
+}
+
+/**
  * Клиентское вычисление выражения для preview
  * (упрощённая версия, без функций)
  */
@@ -99,6 +113,9 @@ export function evaluateExpressionClient(
           return func.previewExecutor(token.args ?? []);
         }
         return `[${token.value}()]`;
+      case 'llm':
+        // Для LLM возвращаем placeholder
+        return '[AI генерация]';
       default:
         return '';
     }

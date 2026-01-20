@@ -351,6 +351,7 @@ export function JsonImportWizard({
                 setIsMappingValid(isValid);
               }}
               showValidationErrors={currentStep === "mapping"}
+              workspaceId={workspaceId}
             />
           )}
 

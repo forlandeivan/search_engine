@@ -60,6 +60,7 @@ interface DocumentFieldMappingEditorProps {
   onConfigChange: (config: MappingConfigV2) => void;
   onValidationChange?: (isValid: boolean) => void;
   showValidationErrors?: boolean;
+  workspaceId: string;
 }
 
 export function DocumentFieldMappingEditor({
@@ -68,6 +69,7 @@ export function DocumentFieldMappingEditor({
   onConfigChange,
   onValidationChange,
   showValidationErrors = false,
+  workspaceId,
 }: DocumentFieldMappingEditorProps) {
   // Инициализация состояния
   const [config, setConfig] = useState<MappingConfigV2>(() => {
@@ -241,6 +243,7 @@ export function DocumentFieldMappingEditor({
         <MappingPreview
           config={config}
           sampleRecord={analysis.sampleRecords[0]}
+          workspaceId={workspaceId}
         />
       )}
 

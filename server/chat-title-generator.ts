@@ -32,7 +32,7 @@ export interface ChatTitleGeneratorService {
   generateTitleForChat(input: ChatTitleGeneratorInput): Promise<string | null>;
 }
 
-async function resolveUnicaChatProvider(workspaceId: string) {
+export async function resolveUnicaChatProvider(workspaceId: string) {
   const skill = await createUnicaChatSkillForWorkspace(workspaceId);
   if (!skill) {
     throw new Error("Системный навык Unica Chat недоступен");

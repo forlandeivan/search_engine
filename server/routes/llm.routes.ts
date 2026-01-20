@@ -12,6 +12,8 @@ import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { storage } from '../storage';
 import { updateLlmProviderSchema, type PublicUser } from '@shared/schema';
+import { createExpressionInterpreter } from '../services/expression-interpreter';
+import type { MappingExpression } from '@shared/json-import';
 
 const logger = createLogger('llm');
 
@@ -137,6 +139,72 @@ llmRouter.put('/providers/:providerId', asyncHandler(async (req, res) => {
   }
   
   res.json({ provider });
+}));
+
+/**
+ * POST /test-expression
+ * Тестовая генерация LLM для preview маппинга
+ */
+const testExpressionSchema = z.object({
+  workspaceId: z.string().min(1),
+  prompt: z.array(z.any()).min(1, "Промпт не может быть пустым"),
+  sampleRecord: z.record(z.unknown()),
+  temperature: z.number().min(0).max(1).optional(),
+});
+
+llmRouter.post('/test-expression', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const body = testExpressionSchema.parse(req.body);
+  const { workspaceId, prompt, sampleRecord, temperature } = body;
+
+  // Проверяем доступ к workspace
+  const workspace = await storage.getWorkspace(workspaceId);
+  if (!workspace) {
+    return res.status(404).json({ success: false, error: 'Workspace not found' });
+  }
+
+  try {
+    // Создаём интерпретатор
+    const interpreter = createExpressionInterpreter(workspaceId);
+
+    // Создаём LLM токен для тестирования
+    const testToken = {
+      type: 'llm' as const,
+      value: 'test',
+      llmConfig: {
+        prompt: prompt as MappingExpression,
+        temperature: temperature ?? 0.3,
+      },
+    };
+
+    // Выполняем генерацию
+    const startTime = Date.now();
+    const result = await interpreter.evaluate([testToken], sampleRecord);
+    const duration = Date.now() - startTime;
+
+    if (result.success) {
+      return res.json({
+        success: true,
+        result: result.value,
+        duration,
+      });
+    } else {
+      return res.json({
+        success: false,
+        error: result.errors?.join("; ") || "Ошибка генерации",
+        result: result.value || null,
+        duration,
+      });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Неизвестная ошибка";
+    return res.status(500).json({
+      success: false,
+      error: message,
+    });
+  }
 }));
 
 // Error handler for this router

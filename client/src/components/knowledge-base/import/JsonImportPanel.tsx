@@ -337,6 +337,7 @@ export function JsonImportPanel({
               setIsMappingValid(isValid);
             }}
             showValidationErrors={showMappingValidationErrors}
+            workspaceId={workspaceId}
           />
         </div>
       )}

@@ -8,7 +8,7 @@ import { db } from "../db";
 import { knowledgeNodes } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { ImportDeduplicator, extractDeduplicatorOptions } from "./deduplicator";
-import { getExpressionInterpreter } from "../services/expression-interpreter";
+import { createExpressionInterpreter } from "../services/expression-interpreter";
 
 const BATCH_SIZE = 100;
 
@@ -61,18 +61,22 @@ function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
  * Применить маппинг полей к записи
  * Поддерживает оба формата: v1 (старый) и v2 (expression-based)
  */
-function applyMapping(record: Record<string, unknown>, config: MappingConfig): {
+async function applyMapping(
+  record: Record<string, unknown>, 
+  config: MappingConfig,
+  workspaceId: string
+): Promise<{
   id?: string;
   title: string;
   content: string;
   contentMarkdown?: string;
   contentHtml?: string;
   metadata?: Record<string, unknown>;
-} {
+}> {
   // Используем новый интерпретатор для v2
   if (isMappingConfigV2(config)) {
-    const interpreter = getExpressionInterpreter();
-    const mapped = interpreter.applyMapping(config, record);
+    const interpreter = createExpressionInterpreter(workspaceId);
+    const mapped = await interpreter.applyMapping(config, record);
     
     return {
       id: mapped.id,
@@ -389,7 +393,7 @@ async function processBatch(
     }
 
     try {
-      const mapped = applyMapping(record.data, context.mappingConfig);
+      const mapped = await applyMapping(record.data, context.mappingConfig, context.workspaceId);
 
       // Валидация
       // Title может быть пустым, если есть fallback - он уже применён в applyMapping

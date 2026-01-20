@@ -3,21 +3,26 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Search, Braces, FunctionSquare, ChevronRight } from "lucide-react";
+import { Search, Braces, FunctionSquare, ChevronRight, Sparkles } from "lucide-react";
+import { LLMTokenConfigModal } from "./LLMTokenConfigModal";
 import type { FieldInfo } from "@/lib/json-import-types";
+import type { LLMTokenConfig } from "@shared/json-import";
 
 interface FieldTokenPopupProps {
   fields: FieldInfo[];
   onSelect: (fieldPath: string) => void;
   onOpenFunctions: () => void;
+  onAddLlmToken?: (config: LLMTokenConfig) => void;
 }
 
 export function FieldTokenPopup({
   fields,
   onSelect,
   onOpenFunctions,
+  onAddLlmToken,
 }: FieldTokenPopupProps) {
   const [search, setSearch] = useState("");
+  const [isLlmModalOpen, setIsLlmModalOpen] = useState(false);
 
   const filteredFields = useMemo(() => {
     if (!search.trim()) return fields;
@@ -103,8 +108,8 @@ export function FieldTokenPopup({
         </div>
       </ScrollArea>
 
-      {/* Кнопка для перехода к функциям */}
-      <div className="p-2 border-t">
+      {/* Кнопки для функций и AI генерации */}
+      <div className="p-2 border-t space-y-1">
         <Button
           type="button"
           variant="ghost"
@@ -118,7 +123,36 @@ export function FieldTokenPopup({
           </span>
           <ChevronRight className="h-4 w-4" />
         </Button>
+        
+        {onAddLlmToken && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="w-full justify-between"
+            onClick={() => setIsLlmModalOpen(true)}
+          >
+            <span className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-green-600" />
+              AI генерация
+            </span>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        )}
       </div>
+
+      {/* Модальное окно настройки LLM */}
+      {onAddLlmToken && (
+        <LLMTokenConfigModal
+          open={isLlmModalOpen}
+          onOpenChange={setIsLlmModalOpen}
+          availableFields={fields}
+          onSave={(config) => {
+            onAddLlmToken(config);
+            setIsLlmModalOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

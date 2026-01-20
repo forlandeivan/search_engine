@@ -4,8 +4,8 @@ import { cn } from "@/lib/utils";
 import { ExpressionToken } from "./ExpressionToken";
 import { FieldTokenPopup } from "./FieldTokenPopup";
 import { FunctionTokenPopup } from "./FunctionTokenPopup";
-import type { MappingExpression, FieldInfo } from "@shared/json-import";
-import { createFieldToken, createFunctionToken, createTextToken } from "@shared/json-import";
+import type { MappingExpression, FieldInfo, LLMTokenConfig } from "@shared/json-import";
+import { createFieldToken, createFunctionToken, createTextToken, createLlmToken } from "@shared/json-import";
 import { normalizeExpression } from "@/lib/expression-utils";
 
 interface ExpressionInputProps {
@@ -66,6 +66,23 @@ export function ExpressionInput({
     setInsertPosition(insertPosition + 1);
     setIsFunctionPopupOpen(false);
   }, [value, insertPosition, onChange]);
+
+  // Вставка LLM токена
+  const handleLlmTokenAdd = useCallback((config: LLMTokenConfig) => {
+    const token = createLlmToken(config, 'AI генерация');
+    const newValue = [...value];
+    newValue.splice(insertPosition, 0, token);
+    onChange(normalizeExpression(newValue));
+    setInsertPosition(insertPosition + 1);
+    setIsFieldPopupOpen(false);
+  }, [value, insertPosition, onChange]);
+
+  // Обновление токена
+  const handleUpdateToken = useCallback((index: number, updatedToken: typeof value[0]) => {
+    const newValue = [...value];
+    newValue[index] = updatedToken;
+    onChange(normalizeExpression(newValue));
+  }, [value, onChange]);
 
   // Удаление токена
   const handleRemoveToken = useCallback((index: number) => {
@@ -217,6 +234,8 @@ export function ExpressionInput({
                       <ExpressionToken
                         token={token}
                         onRemove={() => handleRemoveToken(index)}
+                        onUpdate={(updated) => handleUpdateToken(index, updated)}
+                        availableFields={availableFields}
                         disabled={disabled}
                       />
                     </div>
@@ -271,6 +290,7 @@ export function ExpressionInput({
                 setIsFieldPopupOpen(false);
                 setIsFunctionPopupOpen(true);
               }}
+              onAddLlmToken={handleLlmTokenAdd}
             />
           )}
         </PopoverContent>

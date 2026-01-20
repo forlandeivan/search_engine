@@ -1,5 +1,9 @@
 import { randomUUID } from "crypto";
-import type { MappingExpression, ExpressionToken, MappingConfigV2 } from "@shared/json-import";
+import type { MappingExpression, ExpressionToken, MappingConfigV2, LLMTokenConfig } from "@shared/json-import";
+import { LLM_TOKEN_DEFAULTS } from "@shared/json-import";
+import { resolveUnicaChatProvider } from "../chat-title-generator";
+import { executeLlmCompletion } from "../llm-client";
+import { fetchAccessToken } from "../llm-access-token";
 
 /**
  * Исполнитель функции
@@ -29,8 +33,10 @@ export interface MappedDocument {
 
 export class ExpressionInterpreter {
   private functions = new Map<string, FunctionExecutor>();
+  private workspaceId: string;
 
-  constructor() {
+  constructor(workspaceId: string) {
+    this.workspaceId = workspaceId;
     this.registerBuiltinFunctions();
   }
 
@@ -55,15 +61,15 @@ export class ExpressionInterpreter {
   }
 
   /**
-   * Вычисление выражения
+   * Вычисление выражения (ASYNC)
    */
-  evaluate(expression: MappingExpression, record: Record<string, unknown>): EvaluationResult {
+  async evaluate(expression: MappingExpression, record: Record<string, unknown>): Promise<EvaluationResult> {
     const errors: string[] = [];
     const parts: string[] = [];
 
     for (const token of expression) {
       try {
-        const value = this.evaluateToken(token, record);
+        const value = await this.evaluateToken(token, record);
         parts.push(value);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -80,9 +86,9 @@ export class ExpressionInterpreter {
   }
 
   /**
-   * Вычисление одного токена
+   * Вычисление одного токена (ASYNC)
    */
-  private evaluateToken(token: ExpressionToken, record: Record<string, unknown>): string {
+  private async evaluateToken(token: ExpressionToken, record: Record<string, unknown>): Promise<string> {
     switch (token.type) {
       case 'text':
         return token.value;
@@ -92,6 +98,9 @@ export class ExpressionInterpreter {
 
       case 'function':
         return this.executeFunction(token.value, token.args ?? [], record);
+
+      case 'llm':
+        return await this.executeLlmGeneration(token, record);
 
       default:
         throw new Error(`Unknown token type: ${(token as ExpressionToken).type}`);
@@ -154,9 +163,77 @@ export class ExpressionInterpreter {
   }
 
   /**
-   * Применение MappingConfigV2 к записи
+   * Выполнение LLM генерации
    */
-  applyMapping(config: MappingConfigV2, record: Record<string, unknown>): MappedDocument {
+  private async executeLlmGeneration(token: ExpressionToken, record: Record<string, unknown>): Promise<string> {
+    if (!token.llmConfig) {
+      throw new Error('LLM token missing config');
+    }
+
+    const config = token.llmConfig;
+    const maxRetries = 1;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // 1. Вычисляем промпт (подставляем значения полей)
+        const promptResult = await this.evaluate(config.prompt, record);
+        if (!promptResult.success) {
+          console.warn('[expression-interpreter] LLM prompt evaluation errors:', promptResult.errors);
+        }
+
+        const promptText = promptResult.value.trim();
+        if (!promptText) {
+          console.warn('[expression-interpreter] LLM prompt is empty after evaluation');
+          return '';
+        }
+
+        // 2. Получаем провайдер из Unica Chat
+        const { provider, requestConfig, model } = await resolveUnicaChatProvider(this.workspaceId);
+
+        // 3. Получаем access token
+        const accessToken = await fetchAccessToken(provider);
+
+        // 4. Формируем тело запроса
+        const messagesField = requestConfig.messagesField;
+        const modelField = requestConfig.modelField;
+
+        const body: Record<string, unknown> = {
+          [modelField]: model || provider.model,
+          [messagesField]: [
+            { role: 'user', content: promptText },
+          ],
+          temperature: config.temperature ?? LLM_TOKEN_DEFAULTS.temperature,
+          max_tokens: LLM_TOKEN_DEFAULTS.maxTokens,
+        };
+
+        // 5. Выполняем запрос
+        const completion = await executeLlmCompletion(provider, accessToken, body);
+
+        // 6. Возвращаем ответ
+        const answer = completion.answer?.trim() ?? '';
+        return answer;
+
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        console.warn(`[expression-interpreter] LLM attempt ${attempt + 1} failed:`, lastError.message);
+        
+        // Ждём перед retry
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+    }
+
+    // Все попытки неудачны
+    console.error('[expression-interpreter] LLM generation failed after retries:', lastError);
+    return ''; // Fallback: пустая строка
+  }
+
+  /**
+   * Применение MappingConfigV2 к записи (ASYNC)
+   */
+  async applyMapping(config: MappingConfigV2, record: Record<string, unknown>): Promise<MappedDocument> {
     const result: MappedDocument = {
       title: '',
       content: '',
@@ -165,23 +242,23 @@ export class ExpressionInterpreter {
 
     // ID
     if (config.id) {
-      const idResult = this.evaluate(config.id.expression, record);
+      const idResult = await this.evaluate(config.id.expression, record);
       if (idResult.value) {
         result.id = idResult.value;
       }
     }
 
     // Content (нужно для fallback title)
-    const contentResult = this.evaluate(config.content.expression, record);
+    const contentResult = await this.evaluate(config.content.expression, record);
     result.content = contentResult.value;
 
     // Title
-    const titleResult = this.evaluate(config.title.expression, record);
+    const titleResult = await this.evaluate(config.title.expression, record);
     result.title = titleResult.value || this.getFallbackTitle(result.content, config.titleFallback);
 
     // Content HTML
     if (config.contentHtml) {
-      const htmlResult = this.evaluate(config.contentHtml.expression, record);
+      const htmlResult = await this.evaluate(config.contentHtml.expression, record);
       if (htmlResult.value) {
         result.contentHtml = htmlResult.value;
       }
@@ -189,7 +266,7 @@ export class ExpressionInterpreter {
 
     // Content Markdown
     if (config.contentMd) {
-      const mdResult = this.evaluate(config.contentMd.expression, record);
+      const mdResult = await this.evaluate(config.contentMd.expression, record);
       if (mdResult.value) {
         result.contentMd = mdResult.value;
       }
@@ -197,7 +274,7 @@ export class ExpressionInterpreter {
 
     // Metadata
     for (const metaField of config.metadata) {
-      const metaResult = this.evaluate(metaField.expression, record);
+      const metaResult = await this.evaluate(metaField.expression, record);
       if (metaResult.value) {
         result.metadata[metaField.key] = this.parseMetadataValue(metaResult.value);
       }
@@ -239,12 +316,9 @@ export class ExpressionInterpreter {
   }
 }
 
-// Singleton instance
-let interpreterInstance: ExpressionInterpreter | null = null;
-
-export function getExpressionInterpreter(): ExpressionInterpreter {
-  if (!interpreterInstance) {
-    interpreterInstance = new ExpressionInterpreter();
-  }
-  return interpreterInstance;
+/**
+ * Создание нового экземпляра интерпретатора для workspace
+ */
+export function createExpressionInterpreter(workspaceId: string): ExpressionInterpreter {
+  return new ExpressionInterpreter(workspaceId);
 }

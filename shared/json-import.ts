@@ -117,9 +117,39 @@ export interface GetJsonImportStatusResponse {
 // === Expression-based Mapping Types (v2) ===
 
 /**
- * Тип токена в выражении
+ * Конфигурация LLM токена
  */
-export type ExpressionTokenType = 'field' | 'function' | 'text';
+export interface LLMTokenConfig {
+  /**
+   * Промпт для LLM модели.
+   * Поддерживает макросы — токены полей, которые будут подставлены перед отправкой.
+   * Пример: [{ type: 'text', value: 'Придумай заголовок для: ' }, { type: 'field', value: 'content' }]
+   */
+  prompt: MappingExpression;
+  
+  /**
+   * Температура генерации (0.0 - 1.0)
+   * По умолчанию: 0.3 (более детерминированный вывод)
+   */
+  temperature?: number;
+}
+
+/**
+ * Настройки LLM генерации по умолчанию
+ */
+export const LLM_TOKEN_DEFAULTS = {
+  temperature: 0.3,
+  maxTokens: 256,
+} as const;
+
+/**
+ * Тип токена в выражении
+ * - field: ссылка на поле JSON
+ * - function: вызов функции (NewGUID, trim и др.)
+ * - text: статический текст
+ * - llm: генерация через LLM модель
+ */
+export type ExpressionTokenType = 'field' | 'function' | 'text' | 'llm';
 
 /**
  * Токен в выражении маппинга
@@ -128,11 +158,13 @@ export type ExpressionTokenType = 'field' | 'function' | 'text';
  * - { type: 'field', value: 'metadata.author' }
  * - { type: 'function', value: 'NewGUID' }
  * - { type: 'text', value: ' - ' }
+ * - { type: 'llm', value: 'AI генерация', llmConfig: { prompt: [...], temperature: 0.3 } }
  */
 export interface ExpressionToken {
   type: ExpressionTokenType;
   value: string;
   args?: string[];  // для функций с аргументами (будущее расширение)
+  llmConfig?: LLMTokenConfig;  // для type: 'llm'
 }
 
 /**
@@ -234,6 +266,32 @@ export function createFunctionToken(functionName: string, args?: string[]): Expr
  */
 export function createTextToken(text: string): ExpressionToken {
   return { type: 'text', value: text };
+}
+
+/**
+ * Создание LLM токена
+ * @param config - конфигурация LLM генерации
+ * @param label - краткое описание для отображения в UI (например, "Заголовок")
+ */
+export function createLlmToken(config: LLMTokenConfig, label?: string): ExpressionToken {
+  return {
+    type: 'llm',
+    value: label || 'LLM',
+    llmConfig: config,
+  };
+}
+
+/**
+ * Проверка валидности LLM токена
+ */
+export function isValidLlmToken(token: ExpressionToken): boolean {
+  if (token.type !== 'llm') return false;
+  if (!token.llmConfig) return false;
+  if (!token.llmConfig.prompt || token.llmConfig.prompt.length === 0) return false;
+  if (token.llmConfig.temperature !== undefined) {
+    if (token.llmConfig.temperature < 0 || token.llmConfig.temperature > 1) return false;
+  }
+  return true;
 }
 
 /**
