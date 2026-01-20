@@ -54,7 +54,7 @@ export function IndexingWizardModal({
   const startIndexingMutation = useStartKnowledgeBaseIndexing();
 
   const [mode, setMode] = useState<WizardMode>("select");
-  const [step, setStep] = useState<WizardStep>("chunking");
+  const [step, setStep] = useState<WizardStep>("embeddings-and-chunking");
   const [config, setConfig] = useState<IndexingWizardConfig>(initialConfig ?? defaultConfig);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
