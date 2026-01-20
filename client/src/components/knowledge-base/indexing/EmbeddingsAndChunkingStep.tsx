@@ -42,10 +42,10 @@ export function EmbeddingsAndChunkingStep({
   initialConfig,
   disabled,
 }: EmbeddingsAndChunkingStepProps) {
-  const [selectedProvider, setSelectedProvider] = useState(config.embeddingsProvider);
-  const [selectedModel, setSelectedModel] = useState(config.embeddingsModel);
-  const [chunkSize, setChunkSize] = useState(config.chunkSize);
-  const [chunkOverlap, setChunkOverlap] = useState(config.chunkOverlap);
+  const [selectedProvider, setSelectedProvider] = useState(config.embeddingsProvider || "");
+  const [selectedModel, setSelectedModel] = useState(config.embeddingsModel || "");
+  const [chunkSize, setChunkSize] = useState(config.chunkSize || 800);
+  const [chunkOverlap, setChunkOverlap] = useState(config.chunkOverlap || 0);
   const [chunkSizeError, setChunkSizeError] = useState<string | null>(null);
   const [chunkOverlapError, setChunkOverlapError] = useState<string | null>(null);
 
@@ -113,23 +113,18 @@ export function EmbeddingsAndChunkingStep({
     setChunkSize(newChunkSize);
 
     // Автоматически ограничиваем chunkOverlap
+    let newOverlap = chunkOverlap;
     if (chunkOverlap >= newChunkSize) {
-      const newOverlap = Math.max(0, newChunkSize - 1);
+      newOverlap = Math.max(0, newChunkSize - 1);
       setChunkOverlap(newOverlap);
-      onChange({
-        embeddingsProvider: selectedProvider,
-        embeddingsModel: selectedModel,
-        chunkSize: newChunkSize,
-        chunkOverlap: newOverlap,
-      });
-    } else {
-      onChange({
-        embeddingsProvider: selectedProvider,
-        embeddingsModel: selectedModel,
-        chunkSize: newChunkSize,
-        chunkOverlap,
-      });
     }
+    
+    onChange({
+      embeddingsProvider: selectedProvider,
+      embeddingsModel: selectedModel,
+      chunkSize: newChunkSize,
+      chunkOverlap: newOverlap,
+    });
   };
 
   // Валидация и обновление chunkOverlap
@@ -153,16 +148,6 @@ export function EmbeddingsAndChunkingStep({
     });
   };
 
-  // Обновление конфигурации при изменении провайдера/модели
-  useEffect(() => {
-    onChange({
-      embeddingsProvider: selectedProvider,
-      embeddingsModel: selectedModel,
-      chunkSize,
-      chunkOverlap,
-    });
-  }, [selectedProvider, selectedModel, chunkSize, chunkOverlap, onChange]);
-
   // Автоматический выбор модели при смене провайдера
   useEffect(() => {
     if (selectedProvider && availableModels.length > 0 && !availableModels.includes(selectedModel)) {
@@ -173,12 +158,19 @@ export function EmbeddingsAndChunkingStep({
     }
   }, [selectedProvider, availableModels, selectedModel, modelsQuery.data]);
 
-  // Синхронизация с внешним config
+  // Синхронизация с внешним config (только при изменении внешнего config)
   useEffect(() => {
-    setSelectedProvider(config.embeddingsProvider);
-    setSelectedModel(config.embeddingsModel);
-    setChunkSize(config.chunkSize);
-    setChunkOverlap(config.chunkOverlap);
+    if (
+      config.embeddingsProvider !== selectedProvider ||
+      config.embeddingsModel !== selectedModel ||
+      config.chunkSize !== chunkSize ||
+      config.chunkOverlap !== chunkOverlap
+    ) {
+      setSelectedProvider(config.embeddingsProvider || "");
+      setSelectedModel(config.embeddingsModel || "");
+      setChunkSize(config.chunkSize);
+      setChunkOverlap(config.chunkOverlap);
+    }
   }, [config.embeddingsProvider, config.embeddingsModel, config.chunkSize, config.chunkOverlap]);
 
   if (providersLoading) {
@@ -211,6 +203,15 @@ export function EmbeddingsAndChunkingStep({
 
   const maxOverlap = Math.max(0, chunkSize - 1);
 
+  // Если провайдер не выбран, но есть активные провайдеры, выбираем первый
+  useEffect(() => {
+    if ((!selectedProvider || selectedProvider.trim() === "") && activeProviders.length > 0 && !providersLoading) {
+      const firstProvider = activeProviders[0];
+      setSelectedProvider(firstProvider.id);
+      // Не вызываем onChange здесь, чтобы избежать циклов - onChange вызовется при изменении через Select
+    }
+  }, [selectedProvider, activeProviders.length, providersLoading]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -229,9 +230,15 @@ export function EmbeddingsAndChunkingStep({
           <div className="space-y-2">
             <Label htmlFor="embeddings-provider-select">Провайдер</Label>
             <Select
-              value={selectedProvider}
+              value={selectedProvider || undefined}
               onValueChange={(value) => {
                 setSelectedProvider(value);
+                onChange({
+                  embeddingsProvider: value,
+                  embeddingsModel: selectedModel,
+                  chunkSize,
+                  chunkOverlap,
+                });
               }}
               disabled={disabled}
             >
@@ -280,9 +287,15 @@ export function EmbeddingsAndChunkingStep({
               <p className="text-sm text-muted-foreground">Загрузка моделей...</p>
             ) : availableModels.length > 0 ? (
               <Select
-                value={selectedModel}
+                value={selectedModel || undefined}
                 onValueChange={(value) => {
                   setSelectedModel(value);
+                  onChange({
+                    embeddingsProvider: selectedProvider,
+                    embeddingsModel: value,
+                    chunkSize,
+                    chunkOverlap,
+                  });
                 }}
                 disabled={disabled || !selectedProvider}
               >
@@ -302,7 +315,16 @@ export function EmbeddingsAndChunkingStep({
                 id="embeddings-model-input"
                 type="text"
                 value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSelectedModel(value);
+                  onChange({
+                    embeddingsProvider: selectedProvider,
+                    embeddingsModel: value,
+                    chunkSize,
+                    chunkOverlap,
+                  });
+                }}
                 disabled={disabled || !selectedProvider}
                 placeholder="Введите модель вручную"
               />
