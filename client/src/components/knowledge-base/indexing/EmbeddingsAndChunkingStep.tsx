@@ -1,14 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertTriangle } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
-import { useModels, type PublicModel } from "@/hooks/useModels";
-import type { PublicEmbeddingProvider } from "@shared/schema";
+import { useModels } from "@/hooks/useModels";
 import { MIN_CHUNK_SIZE, MAX_CHUNK_SIZE } from "@shared/indexing-rules";
 
 interface EmbeddingsAndChunkingStepProps {
@@ -49,43 +45,14 @@ export function EmbeddingsAndChunkingStep({
   const [chunkSizeError, setChunkSizeError] = useState<string | null>(null);
   const [chunkOverlapError, setChunkOverlapError] = useState<string | null>(null);
 
-  // Загрузка провайдеров для проверки активности
-  const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
-    queryKey: ["/api/embedding/services", workspaceId],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/embedding/services");
-      if (!res.ok) {
-        throw new Error("Не удалось загрузить провайдеры");
-      }
-      return (await res.json()) as { providers: PublicEmbeddingProvider[] };
-    },
-  });
-
-  const activeProvidersMap = useMemo(() => {
-    const map = new Map<string, PublicEmbeddingProvider>();
-    (embeddingServices?.providers ?? [])
-      .filter((p) => p.isActive)
-      .forEach((p) => map.set(p.id, p));
-    return map;
-  }, [embeddingServices?.providers]);
-
   // Загрузка всех моделей эмбеддингов из каталога
-  const { data: allModels, isLoading: modelsLoading } = useModels("EMBEDDINGS");
-
-  // Фильтруем только активные модели (с активными провайдерами)
-  const availableModels = useMemo(() => {
-    if (!allModels) return [];
-    return allModels.filter((model) => {
-      if (!model.providerId) return false;
-      return activeProvidersMap.has(model.providerId);
-    });
-  }, [allModels, activeProvidersMap]);
+  const { data: availableModels, isLoading: modelsLoading } = useModels("EMBEDDINGS");
 
   // Определяем провайдера для выбранной модели
   const selectedModelData = useMemo(() => {
-    if (!selectedModel || !allModels) return null;
-    return allModels.find((m) => m.providerModelKey === selectedModel || m.key === selectedModel);
-  }, [selectedModel, allModels]);
+    if (!selectedModel || !availableModels) return null;
+    return availableModels.find((m) => m.providerModelKey === selectedModel || m.key === selectedModel);
+  }, [selectedModel, availableModels]);
 
   // Автоматически определяем провайдера из выбранной модели
   useEffect(() => {
@@ -168,7 +135,7 @@ export function EmbeddingsAndChunkingStep({
 
   // Если модель не выбрана или выбранная модель недоступна, выбираем первую доступную
   useEffect(() => {
-    if (availableModels.length > 0 && !modelsLoading) {
+    if (availableModels && availableModels.length > 0 && !modelsLoading) {
       const currentModelExists = selectedModel
         ? availableModels.some(
             (m) => (m.providerModelKey || m.key) === selectedModel,
@@ -201,7 +168,7 @@ export function EmbeddingsAndChunkingStep({
     );
   }
 
-  if (availableModels.length === 0 && !modelsLoading) {
+  if ((!availableModels || availableModels.length === 0) && !modelsLoading) {
     return (
       <div className="space-y-4">
         <h3 className="text-lg font-semibold">Шаг 1: Эмбеддинги и чанкование</h3>
@@ -240,7 +207,7 @@ export function EmbeddingsAndChunkingStep({
           <div className="space-y-2">
             {modelsLoading ? (
               <p className="text-sm text-muted-foreground">Загрузка моделей...</p>
-            ) : availableModels.length > 0 ? (
+            ) : availableModels && availableModels.length > 0 ? (
               <Select
                 value={selectedModel || undefined}
                 onValueChange={(value) => {
@@ -267,11 +234,10 @@ export function EmbeddingsAndChunkingStep({
                 <SelectContent>
                   {availableModels.map((model) => {
                     const modelKey = model.providerModelKey || model.key;
-                    const provider = activeProvidersMap.get(model.providerId || "");
                     return (
                       <SelectItem key={modelKey} value={modelKey}>
                         {model.displayName || modelKey}
-                        {provider && ` (${provider.name})`}
+                        {model.providerType && ` (${model.providerType})`}
                       </SelectItem>
                     );
                   })}
