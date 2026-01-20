@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
-import { useEmbeddingProviderModels } from "@/hooks/useEmbeddingProviderModels";
+import { useModels, type PublicModel } from "@/hooks/useModels";
 import type { PublicEmbeddingProvider } from "@shared/schema";
 import { MIN_CHUNK_SIZE, MAX_CHUNK_SIZE } from "@shared/indexing-rules";
 
@@ -49,8 +49,8 @@ export function EmbeddingsAndChunkingStep({
   const [chunkSizeError, setChunkSizeError] = useState<string | null>(null);
   const [chunkOverlapError, setChunkOverlapError] = useState<string | null>(null);
 
-  // Загрузка провайдеров
-  const { data: embeddingServices, isLoading: providersLoading } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
+  // Загрузка провайдеров для проверки активности
+  const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
     queryKey: ["/api/embedding/services", workspaceId],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/embedding/services");
@@ -61,38 +61,40 @@ export function EmbeddingsAndChunkingStep({
     },
   });
 
-  const activeProviders = useMemo(
-    () => (embeddingServices?.providers ?? []).filter((p) => p.isActive),
-    [embeddingServices?.providers],
-  );
+  const activeProvidersMap = useMemo(() => {
+    const map = new Map<string, PublicEmbeddingProvider>();
+    (embeddingServices?.providers ?? [])
+      .filter((p) => p.isActive)
+      .forEach((p) => map.set(p.id, p));
+    return map;
+  }, [embeddingServices?.providers]);
 
-  const selectedProviderData = useMemo(
-    () => activeProviders.find((p) => p.id === selectedProvider),
-    [activeProviders, selectedProvider],
-  );
+  // Загрузка всех моделей эмбеддингов из каталога
+  const { data: allModels, isLoading: modelsLoading } = useModels("EMBEDDINGS");
 
-  // Загрузка моделей из каталога для выбранного провайдера
-  const modelsQuery = useEmbeddingProviderModels(selectedProvider, {
-    enabled: Boolean(selectedProvider),
-    workspaceId,
-  });
-
+  // Фильтруем только активные модели (с активными провайдерами)
   const availableModels = useMemo(() => {
-    if (!modelsQuery.data) {
-      // Если модели ещё не загружены, возвращаем модель из провайдера (если есть)
-      if (selectedProviderData?.model) {
-        return [selectedProviderData.model];
-      }
-      return [];
+    if (!allModels) return [];
+    return allModels.filter((model) => {
+      if (!model.providerId) return false;
+      return activeProvidersMap.has(model.providerId);
+    });
+  }, [allModels, activeProvidersMap]);
+
+  // Определяем провайдера для выбранной модели
+  const selectedModelData = useMemo(() => {
+    if (!selectedModel || !allModels) return null;
+    return allModels.find((m) => m.providerModelKey === selectedModel || m.key === selectedModel);
+  }, [selectedModel, allModels]);
+
+  // Автоматически определяем провайдера из выбранной модели
+  useEffect(() => {
+    if (selectedModelData?.providerId && selectedModelData.providerId !== selectedProvider) {
+      setSelectedProvider(selectedModelData.providerId);
     }
-    return modelsQuery.data.models ?? [];
-  }, [modelsQuery.data, selectedProviderData]);
+  }, [selectedModelData, selectedProvider]);
 
   // Проверка изменений
-  const hasProviderChanged = useMemo(
-    () => initialConfig && selectedProvider !== initialConfig.embeddingsProvider,
-    [initialConfig, selectedProvider],
-  );
   const hasModelChanged = useMemo(
     () => initialConfig && selectedModel !== initialConfig.embeddingsModel,
     [initialConfig, selectedModel],
@@ -173,16 +175,25 @@ export function EmbeddingsAndChunkingStep({
     }
   }, [config.embeddingsProvider, config.embeddingsModel, config.chunkSize, config.chunkOverlap]);
 
-  // Если провайдер не выбран, но есть активные провайдеры, выбираем первый
+  // Если модель не выбрана, но есть доступные модели, выбираем первую
   useEffect(() => {
-    if ((!selectedProvider || selectedProvider.trim() === "") && activeProviders.length > 0 && !providersLoading) {
-      const firstProvider = activeProviders[0];
-      setSelectedProvider(firstProvider.id);
-      // Не вызываем onChange здесь, чтобы избежать циклов - onChange вызовется при изменении через Select
+    if (!selectedModel && availableModels.length > 0 && !modelsLoading) {
+      const firstModel = availableModels[0];
+      const modelKey = firstModel.providerModelKey || firstModel.key;
+      if (modelKey && firstModel.providerId) {
+        setSelectedModel(modelKey);
+        setSelectedProvider(firstModel.providerId);
+        onChange({
+          embeddingsProvider: firstModel.providerId,
+          embeddingsModel: modelKey,
+          chunkSize,
+          chunkOverlap,
+        });
+      }
     }
-  }, [selectedProvider, activeProviders.length, providersLoading, activeProviders]);
+  }, [selectedModel, availableModels.length, modelsLoading]);
 
-  if (providersLoading) {
+  if (modelsLoading) {
     return (
       <div className="space-y-4">
         <h3 className="text-lg font-semibold">Шаг 1: Эмбеддинги и чанкование</h3>
@@ -191,7 +202,7 @@ export function EmbeddingsAndChunkingStep({
     );
   }
 
-  if (activeProviders.length === 0) {
+  if (availableModels.length === 0 && !modelsLoading) {
     return (
       <div className="space-y-4">
         <h3 className="text-lg font-semibold">Шаг 1: Эмбеддинги и чанкование</h3>
@@ -221,60 +232,6 @@ export function EmbeddingsAndChunkingStep({
         </p>
       </div>
 
-      {/* Провайдер */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Провайдер эмбеддингов</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="embeddings-provider-select">Провайдер</Label>
-            <Select
-              value={selectedProvider || undefined}
-              onValueChange={(value) => {
-                setSelectedProvider(value);
-                onChange({
-                  embeddingsProvider: value,
-                  embeddingsModel: selectedModel,
-                  chunkSize,
-                  chunkOverlap,
-                });
-              }}
-              disabled={disabled}
-            >
-              <SelectTrigger id="embeddings-provider-select">
-                <SelectValue placeholder="Выберите провайдера" />
-              </SelectTrigger>
-              <SelectContent>
-                {activeProviders.map((provider) => (
-                  <SelectItem key={provider.id} value={provider.id}>
-                    {provider.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {selectedProviderData && (
-            <div className="flex items-center gap-2 text-sm">
-              {selectedProviderData.isActive ? (
-                <>
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  <span>Активен</span>
-                </>
-              ) : (
-                <>
-                  <XCircle className="h-4 w-4 text-red-600" />
-                  <span>Неактивен</span>
-                </>
-              )}
-              {selectedProviderData.vectorSize && (
-                <span className="text-muted-foreground">| Размерность: {selectedProviderData.vectorSize}</span>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       {/* Модель */}
       <Card>
         <CardHeader>
@@ -283,31 +240,43 @@ export function EmbeddingsAndChunkingStep({
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="embeddings-model-select">Модель</Label>
-            {modelsQuery.isLoading ? (
+            {modelsLoading ? (
               <p className="text-sm text-muted-foreground">Загрузка моделей...</p>
             ) : availableModels.length > 0 ? (
               <Select
                 value={selectedModel || undefined}
                 onValueChange={(value) => {
-                  setSelectedModel(value);
-                  onChange({
-                    embeddingsProvider: selectedProvider,
-                    embeddingsModel: value,
-                    chunkSize,
-                    chunkOverlap,
-                  });
+                  const model = availableModels.find(
+                    (m) => (m.providerModelKey || m.key) === value,
+                  );
+                  if (model && model.providerId) {
+                    const modelKey = model.providerModelKey || model.key;
+                    setSelectedModel(modelKey);
+                    setSelectedProvider(model.providerId);
+                    onChange({
+                      embeddingsProvider: model.providerId,
+                      embeddingsModel: modelKey,
+                      chunkSize,
+                      chunkOverlap,
+                    });
+                  }
                 }}
-                disabled={disabled || !selectedProvider}
+                disabled={disabled}
               >
                 <SelectTrigger id="embeddings-model-select">
                   <SelectValue placeholder="Выберите модель" />
                 </SelectTrigger>
                 <SelectContent>
-                  {availableModels.map((model) => (
-                    <SelectItem key={model} value={model}>
-                      {model}
-                    </SelectItem>
-                  ))}
+                  {availableModels.map((model) => {
+                    const modelKey = model.providerModelKey || model.key;
+                    const provider = activeProvidersMap.get(model.providerId || "");
+                    return (
+                      <SelectItem key={modelKey} value={modelKey}>
+                        {model.displayName || modelKey}
+                        {provider && ` (${provider.name})`}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             ) : (
@@ -325,7 +294,7 @@ export function EmbeddingsAndChunkingStep({
                     chunkOverlap,
                   });
                 }}
-                disabled={disabled || !selectedProvider}
+                disabled={disabled}
                 placeholder="Введите модель вручную"
               />
             )}
@@ -394,21 +363,12 @@ export function EmbeddingsAndChunkingStep({
       </Card>
 
       {/* Предупреждения */}
-      {(hasProviderChanged || hasModelChanged) && (
+      {hasModelChanged && (
         <Alert>
           <AlertTriangle className="h-4 w-4" />
           <AlertDescription>
-            Смена провайдера эмбеддингов требует полной переиндексации. Существующие векторы станут несовместимы с
+            Смена модели эмбеддингов требует полной переиндексации. Существующие векторы станут несовместимы с
             новой моделью.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {selectedProviderData && !selectedProviderData.isActive && (
-        <Alert variant="destructive">
-          <XCircle className="h-4 w-4" />
-          <AlertDescription>
-            Провайдер неактивен. Настройте его в разделе "Администрирование".
           </AlertDescription>
         </Alert>
       )}
