@@ -2020,7 +2020,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               onClick={() => handleOpenCreateDocument(detail.id, detail.title)}
               className="w-full sm:w-auto"
             >
-              <Plus className="mr-2 h-4 w-4" /> Новый документ
+              <Plus className="mr-2 h-4 w-4" /> Добавить знания
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -2056,7 +2056,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             </div>
             {(!detail.children || detail.children.length === 0) ? (
               <p className="text-sm text-muted-foreground">
-                В этом подразделе пока нет документов. Используйте кнопку «Новый документ», чтобы добавить материалы.
+                В этом подразделе пока нет документов. Используйте кнопку «Добавить знания», чтобы добавить материалы.
               </p>
             ) : (
               <div className="space-y-3">
@@ -2233,7 +2233,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   onClick={() => handleOpenCreateDocument(detail.id, detail.title)}
                   className="w-full sm:w-auto"
                 >
-                  <Plus className="mr-2 h-4 w-4" /> Новый документ
+                  <Plus className="mr-2 h-4 w-4" /> Добавить знания
                 </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -2504,7 +2504,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             onClick={() => handleOpenCreateDocument(null, detail.name)}
             className="w-full sm:w-auto"
           >
-            <Plus className="mr-2 h-4 w-4" /> Новый документ
+            <Plus className="mr-2 h-4 w-4" /> Добавить знания
           </Button>
           <div className="flex flex-col items-start gap-1">
             <div className="flex items-center gap-2">
@@ -2654,7 +2654,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           <h3 className="text-sm font-semibold mb-2">Структура базы</h3>
           {(!detail.rootNodes || detail.rootNodes.length === 0) ? (
             <p className="text-sm text-muted-foreground">
-              В базе ещё нет документов. Нажмите «Новый документ», чтобы создать первый материал.
+              В базе ещё нет документов. Нажмите «Добавить знания», чтобы создать первый материал.
             </p>
           ) : (
             <TreeMenu
