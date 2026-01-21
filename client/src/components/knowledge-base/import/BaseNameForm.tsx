@@ -19,8 +19,10 @@ export function BaseNameForm({
 }: BaseNameFormProps) {
   return (
     <div className="space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="create-base-name">Название базы знаний</Label>
+      <div className="grid grid-cols-[minmax(0,12rem)_1fr] items-start gap-3">
+        <Label htmlFor="create-base-name" className="pt-2">
+          Название
+        </Label>
         <Input
           id="create-base-name"
           placeholder="Например, База знаний по клиентской поддержке"
@@ -30,13 +32,15 @@ export function BaseNameForm({
         />
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="create-base-description">Краткое описание</Label>
+      <div className="grid grid-cols-[minmax(0,12rem)_1fr] items-start gap-3">
+        <Label htmlFor="create-base-description" className="pt-2">
+          Описание
+        </Label>
         <Textarea
           id="create-base-description"
           rows={3}
           disabled={disabled}
-          placeholder="Расскажите, для чего нужна база знаний и какие процессы она покрывает"
+          placeholder="Для чего нужна база знаний и какие процессы она покрывает"
           value={description}
           onChange={(e) => onDescriptionChange(e.target.value)}
         />
