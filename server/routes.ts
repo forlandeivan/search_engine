@@ -5024,6 +5024,11 @@ async function runKnowledgeBaseRagPipeline(options: {
       })),
     }, `[RAG] Retrieval completed: ${combinedResultCount} combined from BM25(${bm25ResultCount ?? 0}) + Vector(${vectorResultCount ?? 0}) in ${Math.round(retrievalDuration)}ms`);
 
+    // ВАЖНО: Сохраняем результаты ТЕКУЩЕГО поиска ДО добавления accumulated chunks
+    // Эти результаты будут использоваться для формирования citations (источников для UI)
+    // Accumulated chunks нужны только для контекста LLM, но НЕ должны отображаться как источники текущего ответа
+    const currentSearchResultsForCitations = [...combinedResults];
+
     // Context Caching: сохраняем результаты retrieval в кэш (только если не было cache hit)
     // chatId и workspaceIdForCache уже объявлены выше при проверке cache hit
     
@@ -5439,8 +5444,11 @@ async function runKnowledgeBaseRagPipeline(options: {
       collection: vectorConfigured ? vectorCollection : null,
     });
 
+    // ВАЖНО: Citations формируются из результатов ТЕКУЩЕГО поиска (currentSearchResultsForCitations),
+    // а НЕ из combinedResults, который может содержать accumulated chunks из предыдущих запросов.
+    // Accumulated chunks нужны только для контекста LLM, но не должны отображаться как источники текущего ответа.
     const citations = allowSources
-      ? combinedResults.map((item) => ({
+      ? currentSearchResultsForCitations.map((item) => ({
           chunk_id: item.chunkId,
           doc_id: item.documentId,
           doc_title: item.docTitle,
@@ -5461,7 +5469,8 @@ async function runKnowledgeBaseRagPipeline(options: {
       component: 'RAG_PIPELINE',
       step: 'citations_formation',
       allowSources,
-      combinedResultsCount: combinedResults.length,
+      currentSearchResultsCount: currentSearchResultsForCitations.length,
+      combinedResultsWithAccumulatedCount: combinedResults.length,
       citationsCount: citations.length,
       citations: citations.length > 0 ? citations.slice(0, 3).map(c => ({
         chunk_id: c.chunk_id,
@@ -5469,7 +5478,7 @@ async function runKnowledgeBaseRagPipeline(options: {
         doc_title: c.doc_title,
         score: c.score,
       })) : [],
-    }, `[RAG] Citations formed: ${citations.length} citations from ${combinedResults.length} results (allowSources=${allowSources})`);
+    }, `[RAG] Citations formed: ${citations.length} citations from ${currentSearchResultsForCitations.length} current search results (${combinedResults.length} total with accumulated, allowSources=${allowSources})`);
 
     const responseChunks = allowSources
       ? combinedResults.map((item) => ({
