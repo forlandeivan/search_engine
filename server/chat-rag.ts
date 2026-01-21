@@ -353,14 +353,9 @@ export async function buildSkillRagRequestPayload(options: {
 
   const fallbackTopK = resolvedRagSettings.topK ?? indexingRules.topK;
   const topK = ensurePositiveInteger(null, fallbackTopK, { min: 1, max: 20 });
-  const bm25Limit =
-    clampInteger(skill.ragConfig.bm25Limit, 1, 50) ??
-    clampInteger(resolvedRagSettings.bm25Limit ?? null, 1, 50) ??
-    topK;
-  const vectorLimit =
-    clampInteger(skill.ragConfig.vectorLimit, 1, 50) ??
-    clampInteger(resolvedRagSettings.vectorLimit ?? null, 1, 50) ??
-    topK;
+  // BM25 отключен - используем только векторный поиск
+  const bm25Limit = 0;
+  const vectorLimit = topK; // Весь topK идёт на векторный поиск
 
   // Определяем коллекции автоматически из баз знаний
   // Коллекция для БЗ формируется как: kb_{baseId}_ws_{workspaceId}
@@ -379,20 +374,9 @@ export async function buildSkillRagRequestPayload(options: {
   const vectorCollection = vectorCollections[0];
 
 
-  // Если используется только векторный поиск (есть vectorCollection), то по умолчанию bm25Weight=0, vectorWeight=1.0
-  // Иначе (если нет векторной коллекции), то используется только BM25: bm25Weight=1.0, vectorWeight=0
-  const defaultBm25Weight = vectorCollection ? 0 : 1.0;
-  const defaultVectorWeight = vectorCollection ? 1.0 : 0;
-
-  const bm25Weight =
-    clampFraction(skill.ragConfig.bm25Weight) ??
-    sanitizeOptionalNumber(resolvedRagSettings.bm25Weight ?? undefined) ??
-    defaultBm25Weight;
-
-  const vectorWeight =
-    clampFraction(skill.ragConfig.vectorWeight) ??
-    sanitizeOptionalNumber(resolvedRagSettings.vectorWeight ?? undefined) ??
-    defaultVectorWeight;
+  // Используем только векторный поиск (BM25 отключен)
+  const bm25Weight = 0;
+  const vectorWeight = 1.0;
 
   const request: KnowledgeRagRequestPayload = {
     q: enhancedQuery, // Расширенный запрос с историей (для LLM)
