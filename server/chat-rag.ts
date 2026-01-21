@@ -5,6 +5,10 @@ import { storage } from "./storage";
 import { isRagSkill } from "./skill-type";
 import { ensureModelAvailable, ModelInactiveError, ModelUnavailableError, ModelValidationError } from "./model-service";
 import { indexingRulesService } from "./indexing-rules";
+import type { ChatConversationMessage } from "./chat-service";
+import { createLogger } from "./lib/logger";
+
+const logger = createLogger("MULTI_TURN_RAG");
 
 export type RagPipelineStream = {
   onEvent: (eventName: string, payload?: unknown) => void;
@@ -102,10 +106,101 @@ const sanitizeOptionalNumber = (value: number | null | undefined): number | unde
 const sanitizeOptionalString = (value: string | null | undefined): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 
+/**
+ * Строит расширенный запрос для RAG на основе истории разговора и текущего сообщения.
+ * Использует простую стратегию объединения последних N сообщений.
+ * 
+ * @param currentMessage - Текущее сообщение пользователя
+ * @param conversationHistory - История разговора (последние сообщения)
+ * @param options - Настройки для ограничения истории
+ * @returns Расширенный запрос для поиска
+ */
+export function buildMultiTurnRagQuery(
+  currentMessage: string,
+  conversationHistory: ChatConversationMessage[],
+  options: {
+    maxHistoryMessages?: number;
+    maxHistoryLength?: number;
+  } = {},
+): string {
+  const maxHistoryMessages = options.maxHistoryMessages ?? 5;
+  const maxHistoryLength = options.maxHistoryLength ?? 2000;
+
+  // Если истории нет, возвращаем только текущее сообщение
+  if (!conversationHistory || conversationHistory.length === 0) {
+    logger.debug({
+      step: "build_query",
+      hasHistory: false,
+      currentMessageLength: currentMessage.length,
+    }, "[MULTI_TURN_RAG] No history, using current message only");
+    return currentMessage.trim();
+  }
+
+  logger.debug({
+    step: "build_query",
+    hasHistory: true,
+    historyMessagesCount: conversationHistory.length,
+    maxHistoryMessages,
+    maxHistoryLength,
+    currentMessageLength: currentMessage.length,
+  }, "[MULTI_TURN_RAG] Building query from history");
+
+  // Берем последние N сообщений (исключая текущее, которое еще не добавлено в историю)
+  const recentMessages = conversationHistory.slice(-maxHistoryMessages);
+
+  // Формируем контекст из истории
+  const historyContext: string[] = [];
+  let totalLength = 0;
+
+  // Идем с конца, чтобы включить самые последние сообщения
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    const msg = recentMessages[i];
+    const content = (msg.content ?? "").trim();
+    if (!content) continue;
+
+    const msgLength = content.length;
+    if (totalLength + msgLength > maxHistoryLength && historyContext.length > 0) {
+      break;
+    }
+
+    // Добавляем сообщение с указанием роли для контекста
+    const prefix = msg.role === "assistant" ? "Ответ: " : "Вопрос: ";
+    historyContext.unshift(prefix + content);
+    totalLength += msgLength;
+  }
+
+  // Если есть история, объединяем её с текущим сообщением
+  if (historyContext.length > 0) {
+    const historyText = historyContext.join("\n");
+    const enhancedQuery = `${historyText}\nВопрос: ${currentMessage.trim()}`;
+    
+    logger.info({
+      step: "build_query",
+      historyMessagesUsed: historyContext.length,
+      historyLength: totalLength,
+      originalMessageLength: currentMessage.length,
+      enhancedQueryLength: enhancedQuery.length,
+      queryExpansionRatio: (enhancedQuery.length / currentMessage.length).toFixed(2),
+      historySample: historyContext.slice(0, 2).join(" | ").substring(0, 200),
+    }, "[MULTI_TURN_RAG] Query enhanced with history");
+    
+    return enhancedQuery;
+  }
+
+  // Если история пустая после фильтрации, возвращаем только текущее сообщение
+  logger.debug({
+    step: "build_query",
+    reason: "history_filtered_empty",
+  }, "[MULTI_TURN_RAG] History filtered out, using current message only");
+  
+  return currentMessage.trim();
+}
+
 export async function buildSkillRagRequestPayload(options: {
   skill: SkillDto;
   workspaceId: string;
   userMessage: string;
+  conversationHistory?: ChatConversationMessage[];
   stream?: boolean;
 }): Promise<KnowledgeRagRequestPayload> {
   const { skill, workspaceId } = options;
@@ -119,6 +214,24 @@ export async function buildSkillRagRequestPayload(options: {
     console.error(`[RAG BUILD PAYLOAD] ERROR: empty message`);
     throw new SkillRagConfigurationError("Пустое сообщение невозможно отправить в RAG-пайплайн");
   }
+
+  // Используем multi-turn RAG для построения расширенного запроса
+  const conversationHistory = options.conversationHistory ?? [];
+  const enhancedQuery = buildMultiTurnRagQuery(trimmedMessage, conversationHistory, {
+    maxHistoryMessages: 5, // Берем последние 5 сообщений
+    maxHistoryLength: 2000, // Максимум 2000 символов из истории
+  });
+
+  logger.info({
+    step: "build_payload",
+    skillId: skill.id,
+    workspaceId,
+    multiTurnEnabled: conversationHistory.length > 0,
+    historyMessagesCount: conversationHistory.length,
+    originalQueryLength: trimmedMessage.length,
+    enhancedQueryLength: enhancedQuery.length,
+    queryExpansionRatio: enhancedQuery.length / trimmedMessage.length,
+  }, "[MULTI_TURN_RAG] Payload built with enhanced query");
 
   const knowledgeBaseIds = skill.knowledgeBaseIds ?? [];
   if (knowledgeBaseIds.length === 0) {
@@ -219,7 +332,7 @@ export async function buildSkillRagRequestPayload(options: {
     defaultVectorWeight;
 
   const request: KnowledgeRagRequestPayload = {
-    q: trimmedMessage,
+    q: enhancedQuery, // Используем расширенный запрос с историей
     kb_id: firstKnowledgeBaseId, // Для обратной совместимости
     kb_ids: knowledgeBaseIds, // Новое поле для списка БЗ
     top_k: topK,
@@ -262,15 +375,57 @@ export async function callRagForSkillChat(options: {
   skill: SkillDto;
   workspaceId: string;
   userMessage: string;
+  chatId?: string;
+  excludeMessageId?: string; // ID сообщения, которое нужно исключить из истории (текущее сообщение)
   runPipeline: RunKnowledgeBaseRagPipeline;
   stream?: RagPipelineStream | null;
 }): Promise<unknown> {
+  // Получаем историю разговора, если передан chatId
+  let conversationHistory: ChatConversationMessage[] = [];
+  if (options.chatId) {
+    try {
+      const messages = await storage.listChatMessages(options.chatId);
+      // Преобразуем в формат ChatConversationMessage, исключая системные сообщения
+      // Исключаем текущее сообщение, если передан excludeMessageId
+      const filteredMessages = messages
+        .filter((msg) => {
+          // Исключаем системные сообщения
+          if (msg.role === "system") return false;
+          // Исключаем текущее сообщение по ID, если указано
+          if (options.excludeMessageId && msg.id === options.excludeMessageId) return false;
+          return true;
+        });
+      
+      conversationHistory = filteredMessages.map((msg) => ({
+        role: msg.role,
+        content: msg.content ?? "",
+      }));
+      
+      console.log(`[RAG CALL] Retrieved conversation history: ${conversationHistory.length} messages (total in chat: ${messages.length}, excluded: ${options.excludeMessageId ? 1 : 0})`);
+    } catch (error) {
+      console.warn(`[RAG CALL] Failed to retrieve conversation history: ${error instanceof Error ? error.message : String(error)}`);
+      // Продолжаем без истории, если не удалось её получить
+    }
+  }
+
   const body = await buildSkillRagRequestPayload({
     skill: options.skill,
     workspaceId: options.workspaceId,
     userMessage: options.userMessage,
+    conversationHistory,
     stream: options.stream ? true : undefined,
   });
+  
+  logger.info({
+    step: "call_pipeline",
+    chatId: options.chatId,
+    skillId: options.skill.id,
+    queryLength: body.q.length,
+    queryPreview: body.q.substring(0, 300),
+    topK: body.top_k,
+    knowledgeBaseIds: body.kb_ids?.length ?? 0,
+    collections: body.collections?.length ?? 0,
+  }, "[MULTI_TURN_RAG] Calling RAG pipeline with enhanced query");
   
   return await options.runPipeline({
     req: options.req,

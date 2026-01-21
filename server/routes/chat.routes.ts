@@ -564,12 +564,49 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       const ragStepInput = { chatId: req.params.chatId, workspaceId, skillId: context.skill.id, knowledgeBaseId: context.skillConfig.knowledgeBaseIds?.[0] ?? null, collections: context.skillConfig.ragConfig?.collectionIds ?? [] };
       await safeLogStep('CALL_RAG_PIPELINE', SKILL_EXECUTION_STEP_STATUS.RUNNING, { input: ragStepInput });
 
+      logger.info({
+        step: "rag_chat_start",
+        chatId: req.params.chatId,
+        skillId: context.skill.id,
+        workspaceId,
+        userMessageId: userMessageRecord?.id,
+        userMessageLength: payload.content.length,
+        multiTurnEnabled: true,
+      }, "[MULTI_TURN_RAG] Starting RAG chat with multi-turn support");
+
       let ragResult: KnowledgeBaseRagPipelineResponse | null = null;
       try {
-        ragResult = await callRagForSkillChat({ req, skill: context.skillConfig, workspaceId, userMessage: payload.content, runPipeline: runKnowledgeBaseRagPipeline, stream: null }) as KnowledgeBaseRagPipelineResponse;
+        ragResult = await callRagForSkillChat({ 
+          req, 
+          skill: context.skillConfig, 
+          workspaceId, 
+          userMessage: payload.content,
+          chatId: req.params.chatId, // Передаем chatId для получения истории
+          excludeMessageId: userMessageRecord?.id, // Исключаем текущее сообщение из истории
+          runPipeline: runKnowledgeBaseRagPipeline, 
+          stream: null 
+        }) as KnowledgeBaseRagPipelineResponse;
+        
+        logger.info({
+          step: "rag_chat_success",
+          chatId: req.params.chatId,
+          skillId: context.skill.id,
+          answerLength: ragResult.response.answer.length,
+          citationsCount: ragResult.response.citations?.length ?? 0,
+          knowledgeBaseId: ragResult.response.knowledgeBaseId,
+        }, "[MULTI_TURN_RAG] RAG pipeline completed successfully");
         await safeLogStep('CALL_RAG_PIPELINE', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { output: { answerPreview: ragResult.response.answer.slice(0, 160), knowledgeBaseId: ragResult.response.knowledgeBaseId, usage: ragResult.response.usage ?? null } });
       } catch (ragError) {
         const info = describeErrorForLog(ragError);
+        logger.error({
+          step: "rag_chat_error",
+          chatId: req.params.chatId,
+          skillId: context.skill.id,
+          errorCode: info.code,
+          errorMessage: info.message,
+          diagnosticInfo: info.diagnosticInfo,
+        }, "[MULTI_TURN_RAG] RAG pipeline failed");
+        
         await safeLogStep('CALL_RAG_PIPELINE', SKILL_EXECUTION_STEP_STATUS.ERROR, { errorCode: info.code, errorMessage: info.message, diagnosticInfo: info.diagnosticInfo, input: ragStepInput });
         if (ragError instanceof SkillRagConfigurationError) throw new ChatServiceError(ragError.message, 400);
         throw ragError;
