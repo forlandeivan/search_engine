@@ -47,6 +47,8 @@ const ragConfigInputSchema = z.object({
   minScore: z.number().min(0).max(1).nullable().optional(),
   maxContextTokens: z.number().int().min(500).max(20000).nullable().optional(),
   showSources: z.boolean().nullable().optional(),
+  historyMessagesLimit: z.number().int().min(0).max(20).nullable().optional(),
+  historyCharsLimit: z.number().int().min(0).max(50000).nullable().optional(),
   bm25Weight: z.number().min(0).max(1).nullable().optional(),
   bm25Limit: z.number().int().min(1).max(50).nullable().optional(),
   vectorWeight: z.number().min(0).max(1).nullable().optional(),
@@ -155,6 +157,8 @@ export type SkillRagConfig = {
   minScore: number;
   maxContextTokens: number | null;
   showSources: boolean;
+  historyMessagesLimit: number | null;
+  historyCharsLimit: number | null;
   bm25Weight: number | null;
   bm25Limit: number | null;
   vectorWeight: number | null;

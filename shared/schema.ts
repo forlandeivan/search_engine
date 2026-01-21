@@ -1627,6 +1627,8 @@ export const skills = pgTable(
     ragMinScore: doublePrecision("rag_min_score").notNull().default(0.7),
     ragMaxContextTokens: integer("rag_max_context_tokens").default(3000),
     ragShowSources: boolean("rag_show_sources").notNull().default(true),
+    ragHistoryMessagesLimit: integer("rag_history_messages_limit").default(6),
+    ragHistoryCharsLimit: integer("rag_history_chars_limit").default(4000),
     ragBm25Weight: doublePrecision("rag_bm25_weight"),
     ragBm25Limit: integer("rag_bm25_limit"),
     ragVectorWeight: doublePrecision("rag_vector_weight"),

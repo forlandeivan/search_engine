@@ -3345,6 +3345,14 @@ const knowledgeRagRequestSchema = z.object({
   top_k: z.coerce.number().int().min(MIN_TOP_K).max(MAX_TOP_K).default(DEFAULT_INDEXING_RULES.topK),
   skill_id: z.string().trim().optional(),
   workspace_id: z.string().trim().optional(),
+  conversation_history: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant", "system"]),
+        content: z.string(),
+      })
+    )
+    .optional(),
   hybrid: z
     .object({
       bm25: z
@@ -4880,6 +4888,23 @@ async function runKnowledgeBaseRagPipeline(options: {
     );
     const llmStart = performance.now();
     let completion: LlmCompletionResult;
+    // Получаем историю из body для передачи в LLM completion
+    const conversationHistory = Array.isArray(body.conversation_history) 
+      ? body.conversation_history.map((msg) => ({
+          role: msg.role as "user" | "assistant" | "system",
+          content: msg.content,
+        }))
+      : undefined;
+    
+    if (conversationHistory && conversationHistory.length > 0) {
+      logger.info({
+        component: 'RAG_PIPELINE',
+        step: 'llm_completion_with_history',
+        historyMessagesCount: conversationHistory.length,
+        historyLength: conversationHistory.reduce((sum, msg) => sum + (msg.content?.length ?? 0), 0),
+      }, '[MULTI_TURN_RAG] Passing conversation history to LLM completion');
+    }
+    
     const completionPromise = fetchLlmCompletion(
       configuredProvider,
       llmAccessToken,
@@ -4889,6 +4914,7 @@ async function runKnowledgeBaseRagPipeline(options: {
       {
         stream: wantsLlmStream,
         responseFormat,
+        conversationHistory,
         onBeforeRequest(details) {
           llmStep.setInput({
             providerId: llmProviderId,

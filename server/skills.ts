@@ -194,6 +194,8 @@ async function assertFileStorageProviderActive(providerId: string | null): Promi
 }
 
 const DEFAULT_RAG_CONFIG: SkillRagConfig = {
+  historyMessagesLimit: 6,
+  historyCharsLimit: 4000,
   mode: "all_collections",
   collectionIds: [],
   topK: 5,
@@ -421,6 +423,26 @@ function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig 
     return trimmed.length > 0 ? trimmed : null;
   };
 
+  const sanitizeHistoryMessagesLimit = (value: number | null | undefined): number | null => {
+    if (typeof value !== "number" || !Number.isInteger(value)) {
+      return null;
+    }
+    if (value < 0 || value > 20) {
+      return null;
+    }
+    return value;
+  };
+
+  const sanitizeHistoryCharsLimit = (value: number | null | undefined): number | null => {
+    if (typeof value !== "number" || !Number.isInteger(value)) {
+      return null;
+    }
+    if (value < 0 || value > 50000) {
+      return null;
+    }
+    return value;
+  };
+
   return {
     mode: normalizeRagModeFromValue(input.mode),
     collectionIds: normalizeCollectionIds(input.collectionIds),
@@ -428,6 +450,8 @@ function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig 
     minScore: sanitizedMinScore,
     maxContextTokens: sanitizedMaxContextTokens,
     showSources: input.showSources ?? DEFAULT_RAG_CONFIG.showSources,
+    historyMessagesLimit: sanitizeHistoryMessagesLimit(input.historyMessagesLimit) ?? DEFAULT_RAG_CONFIG.historyMessagesLimit,
+    historyCharsLimit: sanitizeHistoryCharsLimit(input.historyCharsLimit) ?? DEFAULT_RAG_CONFIG.historyCharsLimit,
     bm25Weight: sanitizeWeight(input.bm25Weight),
     bm25Limit: sanitizeLimit(input.bm25Limit),
     vectorWeight: sanitizeWeight(input.vectorWeight),
@@ -500,6 +524,8 @@ function mapSkillRow(
       minScore: row.ragMinScore ?? DEFAULT_RAG_CONFIG.minScore,
       maxContextTokens: row.ragMaxContextTokens ?? DEFAULT_RAG_CONFIG.maxContextTokens,
       showSources: row.ragShowSources ?? DEFAULT_RAG_CONFIG.showSources,
+      historyMessagesLimit: row.ragHistoryMessagesLimit ?? DEFAULT_RAG_CONFIG.historyMessagesLimit,
+      historyCharsLimit: row.ragHistoryCharsLimit ?? DEFAULT_RAG_CONFIG.historyCharsLimit,
       bm25Weight: row.ragBm25Weight ?? DEFAULT_RAG_CONFIG.bm25Weight,
       bm25Limit: row.ragBm25Limit ?? DEFAULT_RAG_CONFIG.bm25Limit,
       vectorWeight: row.ragVectorWeight ?? DEFAULT_RAG_CONFIG.vectorWeight,
@@ -863,6 +889,8 @@ export async function createSkill(
       ragCollectionIds: effectiveRagConfig.collectionIds,
       ragTopK: effectiveRagConfig.topK,
       ragMinScore: effectiveRagConfig.minScore,
+      ragHistoryMessagesLimit: effectiveRagConfig.historyMessagesLimit,
+      ragHistoryCharsLimit: effectiveRagConfig.historyCharsLimit,
       ragMaxContextTokens: effectiveRagConfig.maxContextTokens,
       ragShowSources: effectiveRagConfig.showSources,
       ragBm25Weight: effectiveRagConfig.bm25Weight,
@@ -1042,6 +1070,8 @@ export async function updateSkill(
     minScore: row.ragMinScore ?? DEFAULT_RAG_CONFIG.minScore,
     maxContextTokens: row.ragMaxContextTokens ?? DEFAULT_RAG_CONFIG.maxContextTokens,
     showSources: row.ragShowSources ?? DEFAULT_RAG_CONFIG.showSources,
+    historyMessagesLimit: row.ragHistoryMessagesLimit ?? DEFAULT_RAG_CONFIG.historyMessagesLimit,
+    historyCharsLimit: row.ragHistoryCharsLimit ?? DEFAULT_RAG_CONFIG.historyCharsLimit,
     bm25Weight: row.ragBm25Weight ?? DEFAULT_RAG_CONFIG.bm25Weight,
     bm25Limit: row.ragBm25Limit ?? DEFAULT_RAG_CONFIG.bm25Limit,
     vectorWeight: row.ragVectorWeight ?? DEFAULT_RAG_CONFIG.vectorWeight,
@@ -1127,6 +1157,8 @@ export async function updateSkill(
               ragMinScore: ragUpdates.minScore,
               ragMaxContextTokens: ragUpdates.maxContextTokens,
               ragShowSources: ragUpdates.showSources,
+              ragHistoryMessagesLimit: ragUpdates.historyMessagesLimit,
+              ragHistoryCharsLimit: ragUpdates.historyCharsLimit,
               ragBm25Weight: ragUpdates.bm25Weight,
               ragBm25Limit: ragUpdates.bm25Limit,
               ragVectorWeight: ragUpdates.vectorWeight,
@@ -1457,6 +1489,8 @@ export async function createUnicaChatSkillForWorkspace(
       ragMinScore: ragConfig.minScore,
       ragMaxContextTokens: ragConfig.maxContextTokens,
       ragShowSources: ragConfig.showSources,
+      ragHistoryMessagesLimit: ragConfig.historyMessagesLimit,
+      ragHistoryCharsLimit: ragConfig.historyCharsLimit,
     })
     .returning();
 

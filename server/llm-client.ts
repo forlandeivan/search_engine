@@ -7,6 +7,7 @@ import {
   type LlmContextRecord,
   type RagResponseFormat,
 } from "./search/utils";
+import type { ChatConversationMessage } from "./chat-service";
 import {
   applyTlsPreferences,
   parseJson,
@@ -260,6 +261,7 @@ function createMockLlmCompletion(
 }
 
 type ExecuteOptions = {
+  conversationHistory?: ChatConversationMessage[];
   stream?: boolean;
   responseFormat?: RagResponseFormat;
   onBeforeRequest?: (details: ApiRequestLog) => void;
@@ -1180,6 +1182,7 @@ export function fetchLlmCompletion(
 ) {
   const requestBody = buildLlmRequestBody(provider, query, context, modelOverride, {
     stream: options?.stream === true ? true : undefined,
+    conversationHistory: options?.conversationHistory,
   });
 
   const completionPromise = executeLlmCompletion(provider, accessToken, requestBody, options);

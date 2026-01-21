@@ -334,6 +334,8 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       minScore: Number.isFinite(baseRagConfig.minScore) ? baseRagConfig.minScore : 0.7,
       maxContextTokens: baseRagConfig.maxContextTokens ?? null,
       showSources: (values as any).ragShowSources ?? baseRagConfig.showSources ?? true,
+      historyMessagesLimit: (values as any).ragHistoryMessagesLimit ?? baseRagConfig.historyMessagesLimit ?? 6,
+      historyCharsLimit: (values as any).ragHistoryCharsLimit ?? baseRagConfig.historyCharsLimit ?? 4000,
       llmTemperature,
       llmMaxTokens,
       llmResponseFormat: baseRagConfig.llmResponseFormat ?? null,

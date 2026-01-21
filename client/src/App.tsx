@@ -316,7 +316,12 @@ function LoadingScreen() {
 }
 
 function LazyRouteWrapper({ children }: { children: React.ReactNode }) {
-  return <Suspense fallback={<LoadingScreen />}>{children}</Suspense>;
+  // Убеждаемся, что компонент рендерится только внутри QueryClientProvider
+  return (
+    <Suspense fallback={<LoadingScreen />}>
+      {children}
+    </Suspense>
+  );
 }
 
 function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {

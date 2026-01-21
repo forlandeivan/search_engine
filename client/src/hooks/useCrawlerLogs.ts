@@ -47,7 +47,23 @@ export function useCrawlerLogs(siteId: string | null | undefined) {
     const connect = () => {
       setConnectionState("connecting");
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const wsUrl = `${protocol}://${window.location.host}/ws/crawler-logs?siteId=${encodeURIComponent(siteId)}`;
+      // Безопасное получение host с проверкой на undefined
+      let host = window.location.host;
+      if (!host || host.includes('undefined')) {
+        // Fallback: собираем host вручную
+        const hostname = window.location.hostname || 'localhost';
+        const port = window.location.port;
+        host = port ? `${hostname}:${port}` : hostname;
+      }
+      
+      // Проверяем валидность URL перед созданием WebSocket
+      if (!host || host.includes('undefined')) {
+        console.error("[WebSocket] Invalid host:", host, "location:", window.location);
+        setConnectionState("error");
+        return;
+      }
+      
+      const wsUrl = `${protocol}://${host}/ws/crawler-logs?siteId=${encodeURIComponent(siteId)}`;
       const socket = new WebSocket(wsUrl);
       wsRef.current = socket;
 

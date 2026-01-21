@@ -46,6 +46,8 @@ export const getSkillWithRagConfigPrepared = db
     ragMinScore: skills.ragMinScore,
     ragMaxContextTokens: skills.ragMaxContextTokens,
     ragShowSources: skills.ragShowSources,
+    ragHistoryMessagesLimit: skills.ragHistoryMessagesLimit,
+    ragHistoryCharsLimit: skills.ragHistoryCharsLimit,
     ragBm25Weight: skills.ragBm25Weight,
     ragBm25Limit: skills.ragBm25Limit,
     ragVectorWeight: skills.ragVectorWeight,

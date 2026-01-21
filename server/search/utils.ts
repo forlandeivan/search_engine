@@ -5,6 +5,7 @@ import {
   type LlmRequestConfig,
   type LlmResponseConfig,
 } from "@shared/schema";
+import type { ChatConversationMessage } from "../chat-service";
 
 export type RagResponseFormat = "text" | "markdown" | "html";
 
@@ -56,7 +57,11 @@ export function buildLlmRequestBody(
   query: string,
   context: LlmContextRecord[],
   modelOverride?: string,
-  options?: { stream?: boolean; responseFormat?: RagResponseFormat },
+  options?: { 
+    stream?: boolean; 
+    responseFormat?: RagResponseFormat;
+    conversationHistory?: ChatConversationMessage[];
+  },
 ) {
   const requestConfig = mergeLlmRequestConfig(provider);
   const effectiveModel = modelOverride && modelOverride.trim().length > 0 ? modelOverride.trim() : provider.model;
@@ -67,6 +72,18 @@ export function buildLlmRequestBody(
 
     if (requestConfig.systemPrompt && requestConfig.systemPrompt.trim()) {
       systemParts.push(requestConfig.systemPrompt.trim());
+    }
+
+    // Добавляем историю диалога в system prompt для Unica провайдера
+    const conversationHistory = options?.conversationHistory ?? [];
+    if (conversationHistory.length > 0) {
+      const historyText = conversationHistory
+        .map((msg) => {
+          const roleLabel = msg.role === "assistant" ? "Ассистент" : "Пользователь";
+          return `${roleLabel}: ${msg.content}`;
+        })
+        .join("\n\n");
+      systemParts.push(`История диалога:\n${historyText}`);
     }
 
     const contextText = context
@@ -89,7 +106,7 @@ export function buildLlmRequestBody(
 
     if (context.length > 0) {
       systemParts.push(
-        `Контекст:\n${contextText}\n\nСформируй понятный ответ на русском языке, опираясь только на предоставленный контекст. Если ответ не найден, сообщи об этом. Не придумывай фактов. ${formatInstruction}`,
+        `Контекст:\n${contextText}\n\nСформируй понятный ответ на русском языке, опираясь только на предоставленный контекст и учитывая историю диалога. Если ответ не найден, сообщи об этом. Не придумывай фактов. ${formatInstruction}`,
       );
     } else {
       systemParts.push("Контекст отсутствует. Если ответ не найден, честно сообщи об этом.");
@@ -136,6 +153,15 @@ export function buildLlmRequestBody(
 
   if (requestConfig.systemPrompt && requestConfig.systemPrompt.trim()) {
     messages.push({ role: "system", content: requestConfig.systemPrompt.trim() });
+  }
+
+  // Добавляем историю диалога перед текущим запросом (если есть)
+  const conversationHistory = options?.conversationHistory ?? [];
+  for (const msg of conversationHistory) {
+    messages.push({
+      role: msg.role,
+      content: msg.content ?? "",
+    });
   }
 
   const contextText = context

@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@/lib/zod-resolver";
 import { z } from "zod";
-import { Sparkles, Plus, Pencil, Loader2, Copy, Ellipsis, ArrowUpDown, Search } from "lucide-react";
+import { Sparkles, Plus, Pencil, Loader2, Copy, Ellipsis, ArrowUpDown, Search, HelpCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +47,13 @@ import { Switch } from "@/components/ui/switch";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Field, FieldContent, FieldLabel, FieldTitle, FieldDescription } from "@/components/ui/field";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Slider } from "@/components/ui/slider";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -519,6 +526,8 @@ export function SkillFormContent({
         minScore: 0.7,
         maxContextTokens: null,
         showSources: true,
+        historyMessagesLimit: 6,
+        historyCharsLimit: 4000,
         embeddingProviderId: null,
         bm25Weight: null,
         bm25Limit: null,
@@ -570,6 +579,8 @@ export function SkillFormContent({
         noCodeEndpointUrl: noCodeConnection.endpointUrl ?? "",
         noCodeAuthType: noCodeConnection.authType ?? "none",
         ragShowSources: ragConfig.showSources ?? true,
+        ragHistoryMessagesLimit: ragConfig.historyMessagesLimit ?? 6,
+        ragHistoryCharsLimit: ragConfig.historyCharsLimit ?? 4000,
         noCodeBearerToken: "",
         noCodeBearerTokenAction: noCodeConnection.tokenIsSet ? "keep" : "replace",
       };
@@ -1055,6 +1066,92 @@ export function SkillFormContent({
                                 </FormItem>
                               )}
                             />
+
+                            <div className="rounded-lg border p-4 space-y-4">
+                              <div className="flex items-center gap-2">
+                                <FormLabel className="text-sm font-medium">История диалога</FormLabel>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-xs">
+                                      <p className="text-xs">
+                                        Настройка количества сообщений и символов из истории разговора, которые будут использоваться для улучшения поиска в базе знаний.
+                                      </p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
+
+                              <FormField
+                                control={form.control}
+                                name="ragHistoryMessagesLimit"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <div className="space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <FormLabel className="text-sm font-medium">
+                                          Максимум сообщений
+                                        </FormLabel>
+                                        <span className="text-sm text-muted-foreground">
+                                          {field.value ?? 6}
+                                        </span>
+                                      </div>
+                                      <FormControl>
+                                        <Slider
+                                          value={[field.value ?? 6]}
+                                          onValueChange={(values) => field.onChange(values[0])}
+                                          min={0}
+                                          max={20}
+                                          step={1}
+                                          disabled={controlsDisabled}
+                                          className="w-full"
+                                        />
+                                      </FormControl>
+                                      <FormDescription className="text-xs text-muted-foreground">
+                                        0 = история отключена, 20 = максимум
+                                      </FormDescription>
+                                      <FormMessage className="text-xs text-destructive leading-tight" />
+                                    </div>
+                                  </FormItem>
+                                )}
+                              />
+
+                              <FormField
+                                control={form.control}
+                                name="ragHistoryCharsLimit"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <div className="space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <FormLabel className="text-sm font-medium">
+                                          Максимум символов
+                                        </FormLabel>
+                                        <span className="text-sm text-muted-foreground">
+                                          {field.value ? field.value.toLocaleString('ru-RU') : '4,000'}
+                                        </span>
+                                      </div>
+                                      <FormControl>
+                                        <Slider
+                                          value={[field.value ?? 4000]}
+                                          onValueChange={(values) => field.onChange(values[0])}
+                                          min={0}
+                                          max={50000}
+                                          step={500}
+                                          disabled={controlsDisabled}
+                                          className="w-full"
+                                        />
+                                      </FormControl>
+                                      <FormDescription className="text-xs text-muted-foreground">
+                                        Ограничение по символам для экономии токенов
+                                      </FormDescription>
+                                      <FormMessage className="text-xs text-destructive leading-tight" />
+                                    </div>
+                                  </FormItem>
+                                )}
+                              />
+                            </div>
                           </div>
                         )}
                       </div>

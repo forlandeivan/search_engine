@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@/lib/zod-resolver";
 import { Loader2, XCircle } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -60,6 +61,8 @@ const formSchema = indexingRulesSchema.refine(
 const STRICT_THRESHOLD_WARNING = 0.8;
 
 export default function AdminIndexingRulesPage() {
+  // Проверяем, что QueryClient доступен перед использованием хуков
+  const queryClient = useQueryClient();
   const { data, isLoading, isError, error, refetch } = useIndexingRules();
   const updateMutation = useUpdateIndexingRules();
   const providersQuery = useEmbeddingProviders();

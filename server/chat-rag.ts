@@ -23,6 +23,7 @@ export type KnowledgeRagRequestPayload = {
   collections?: string[]; // Новое поле для списка коллекций
   skill_id?: string;
   workspace_id?: string; // Для получения настроек навыка в pipeline
+  conversation_history?: ChatConversationMessage[]; // История диалога для передачи в LLM
   hybrid: {
     bm25: {
       weight?: number;
@@ -217,9 +218,12 @@ export async function buildSkillRagRequestPayload(options: {
 
   // Используем multi-turn RAG для построения расширенного запроса
   const conversationHistory = options.conversationHistory ?? [];
+  // Используем настройки из конфига навыка, если они заданы
+  const maxHistoryMessages = skill.ragConfig.historyMessagesLimit ?? 6;
+  const maxHistoryLength = skill.ragConfig.historyCharsLimit ?? 4000;
   const enhancedQuery = buildMultiTurnRagQuery(trimmedMessage, conversationHistory, {
-    maxHistoryMessages: 5, // Берем последние 5 сообщений
-    maxHistoryLength: 2000, // Максимум 2000 символов из истории
+    maxHistoryMessages,
+    maxHistoryLength,
   });
 
   logger.info({
@@ -416,6 +420,9 @@ export async function callRagForSkillChat(options: {
     stream: options.stream ? true : undefined,
   });
   
+  // Добавляем историю в body для передачи в LLM completion
+  body.conversation_history = conversationHistory;
+  
   logger.info({
     step: "call_pipeline",
     chatId: options.chatId,
@@ -425,7 +432,8 @@ export async function callRagForSkillChat(options: {
     topK: body.top_k,
     knowledgeBaseIds: body.kb_ids?.length ?? 0,
     collections: body.collections?.length ?? 0,
-  }, "[MULTI_TURN_RAG] Calling RAG pipeline with enhanced query");
+    historyMessagesCount: conversationHistory.length,
+  }, "[MULTI_TURN_RAG] Calling RAG pipeline with enhanced query and history");
   
   return await options.runPipeline({
     req: options.req,

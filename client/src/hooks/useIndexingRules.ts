@@ -11,6 +11,9 @@ export function useIndexingRules() {
       const res = await apiRequest("GET", "/api/admin/indexing-rules");
       return (await res.json()) as IndexingRulesDto;
     },
+    // Добавляем проверку на доступность контекста
+    enabled: true,
+    retry: 1,
   });
 }
 

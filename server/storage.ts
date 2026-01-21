@@ -10960,6 +10960,16 @@ export async function ensureDatabaseSchema(): Promise<void> {
 
     await db.execute(sql`
       ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_history_messages_limit" integer DEFAULT 6
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_history_chars_limit" integer DEFAULT 4000
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
       ADD COLUMN IF NOT EXISTS "is_system" boolean NOT NULL DEFAULT false
     `);
 

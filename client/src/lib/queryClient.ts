@@ -14,9 +14,34 @@ export class ApiError extends Error {
   }
 }
 
+// Инициализируем queryClient ПЕРЕД использованием в функциях
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchInterval: false,
+      refetchOnWindowFocus: false,
+      staleTime: 60 * 1000, // 1 minute by default
+      gcTime: 5 * 60 * 1000, // 5 minutes in cache (previously cacheTime)
+      retry: 1, // Allow 1 retry for transient errors
+    },
+    mutations: {
+      retry: false,
+    },
+  },
+});
+
 function resolveWorkspaceIdFromCache(): string | null {
-  const session = queryClient.getQueryData<SessionResponse>(["/api/auth/session"]);
-  return session?.workspace?.active?.id ?? session?.activeWorkspaceId ?? null;
+  try {
+    // Проверяем, что queryClient инициализирован
+    if (!queryClient) {
+      return null;
+    }
+    const session = queryClient.getQueryData<SessionResponse>(["/api/auth/session"]);
+    return session?.workspace?.active?.id ?? session?.activeWorkspaceId ?? null;
+  } catch (error) {
+    // Если queryClient еще не инициализирован, возвращаем null
+    return null;
+  }
 }
 
 export async function throwIfResNotOk(res: Response) {
@@ -140,19 +165,13 @@ export const getQueryFn: <T>(options: {
     return await res.json();
   };
 
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      queryFn: getQueryFn({ on401: "throw" }),
-      refetchInterval: false,
-      refetchOnWindowFocus: false,
-      staleTime: 60 * 1000, // 1 minute by default
-      gcTime: 5 * 60 * 1000, // 5 minutes in cache (previously cacheTime)
-      retry: 1, // Allow 1 retry for transient errors
-    },
-    mutations: {
-      retry: false,
-    },
+// Обновляем queryClient с queryFn после его создания
+// Используем setDefaultOptions для установки queryFn
+const currentOptions = queryClient.getDefaultOptions();
+queryClient.setDefaultOptions({
+  queries: {
+    ...currentOptions.queries,
+    queryFn: getQueryFn({ on401: "throw" }),
   },
 });
 
