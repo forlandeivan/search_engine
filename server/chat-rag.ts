@@ -7,6 +7,8 @@ import { ensureModelAvailable, ModelInactiveError, ModelUnavailableError, ModelV
 import { indexingRulesService } from "./indexing-rules";
 import type { ChatConversationMessage } from "./chat-service";
 import { createLogger } from "./lib/logger";
+import { rewriteQuery, type QueryRewriteResult } from "./query-rewriter";
+import { storage } from "./storage";
 
 const logger = createLogger("MULTI_TURN_RAG");
 
@@ -221,7 +223,52 @@ export async function buildSkillRagRequestPayload(options: {
   // Используем настройки из конфига навыка, если они заданы
   const maxHistoryMessages = skill.ragConfig.historyMessagesLimit ?? 6;
   const maxHistoryLength = skill.ragConfig.historyCharsLimit ?? 4000;
-  const enhancedQuery = buildMultiTurnRagQuery(trimmedMessage, conversationHistory, {
+  
+  // Query Rewriting (если включено)
+  let effectiveQuery = trimmedMessage;
+  let queryRewriteResult: QueryRewriteResult | null = null;
+  
+  if (skill.ragConfig.enableQueryRewriting !== false && conversationHistory.length > 0) {
+    try {
+      // Получаем провайдер для rewriting (используем основной провайдер навыка или переопределенную модель)
+      const rewriteProviderId = skill.llmProviderConfigId;
+      if (rewriteProviderId) {
+        const rewriteProvider = await storage.getLlmProvider(rewriteProviderId, workspaceId);
+        if (rewriteProvider && rewriteProvider.isActive) {
+          const rewriteModel = skill.ragConfig.queryRewriteModel ?? undefined;
+          queryRewriteResult = await rewriteQuery(
+            trimmedMessage,
+            conversationHistory,
+            {
+              llmProvider: rewriteProvider,
+              model: rewriteModel,
+              timeout: 3000, // Быстрый timeout для rewriting
+            }
+          );
+          
+          if (queryRewriteResult.wasRewritten) {
+            effectiveQuery = queryRewriteResult.rewrittenQuery;
+            logger.info({
+              step: "query_rewrite",
+              skillId: skill.id,
+              originalQuery: queryRewriteResult.originalQuery,
+              rewrittenQuery: queryRewriteResult.rewrittenQuery,
+              reason: queryRewriteResult.reason,
+            }, "[QUERY_REWRITER] Query rewritten successfully");
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn({
+        step: "query_rewrite",
+        skillId: skill.id,
+        error: error instanceof Error ? error.message : String(error),
+      }, "[QUERY_REWRITER] Query rewrite failed, using original query");
+      // Продолжаем с оригинальным запросом
+    }
+  }
+  
+  const enhancedQuery = buildMultiTurnRagQuery(effectiveQuery, conversationHistory, {
     maxHistoryMessages,
     maxHistoryLength,
   });
@@ -233,9 +280,13 @@ export async function buildSkillRagRequestPayload(options: {
     multiTurnEnabled: conversationHistory.length > 0,
     historyMessagesCount: conversationHistory.length,
     originalQueryLength: trimmedMessage.length,
+    effectiveQueryLength: effectiveQuery.length,
     enhancedQueryLength: enhancedQuery.length,
+    queryRewritten: queryRewriteResult?.wasRewritten ?? false,
     queryExpansionRatio: enhancedQuery.length / trimmedMessage.length,
-  }, "[MULTI_TURN_RAG] Payload built with enhanced query");
+  }, queryRewriteResult?.wasRewritten 
+    ? "[MULTI_TURN_RAG] Payload built with rewritten and enhanced query"
+    : "[MULTI_TURN_RAG] Payload built with enhanced query");
 
   const knowledgeBaseIds = skill.knowledgeBaseIds ?? [];
   if (knowledgeBaseIds.length === 0) {

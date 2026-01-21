@@ -594,6 +594,7 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
           answerLength: ragResult.response.answer.length,
           citationsCount: ragResult.response.citations?.length ?? 0,
           knowledgeBaseId: ragResult.response.knowledgeBaseId,
+          queryRewritingEnabled: context.skillConfig.ragConfig?.enableQueryRewriting ?? true,
         }, "[MULTI_TURN_RAG] RAG pipeline completed successfully");
         await safeLogStep('CALL_RAG_PIPELINE', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { output: { answerPreview: ragResult.response.answer.slice(0, 160), knowledgeBaseId: ragResult.response.knowledgeBaseId, usage: ragResult.response.usage ?? null } });
       } catch (ragError) {

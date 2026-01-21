@@ -48,6 +48,8 @@ export const getSkillWithRagConfigPrepared = db
     ragShowSources: skills.ragShowSources,
     ragHistoryMessagesLimit: skills.ragHistoryMessagesLimit,
     ragHistoryCharsLimit: skills.ragHistoryCharsLimit,
+    ragEnableQueryRewriting: skills.ragEnableQueryRewriting,
+    ragQueryRewriteModel: skills.ragQueryRewriteModel,
     ragBm25Weight: skills.ragBm25Weight,
     ragBm25Limit: skills.ragBm25Limit,
     ragVectorWeight: skills.ragVectorWeight,

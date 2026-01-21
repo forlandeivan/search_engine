@@ -48,6 +48,8 @@ export const skillFormSchema = z.object({
   ragShowSources: z.boolean().default(true),
   ragHistoryMessagesLimit: z.number().int().min(0).max(20).default(6),
   ragHistoryCharsLimit: z.number().int().min(0).max(50000).default(4000),
+  ragEnableQueryRewriting: z.boolean().default(true),
+  ragQueryRewriteModel: z.string().max(200).optional().or(z.literal("")),
 });
 
 export type SkillFormValues = z.infer<typeof skillFormSchema>;
@@ -78,4 +80,6 @@ export const defaultFormValues: SkillFormValues = {
   ragShowSources: true,
   ragHistoryMessagesLimit: 6,
   ragHistoryCharsLimit: 4000,
+  ragEnableQueryRewriting: true,
+  ragQueryRewriteModel: "",
 };

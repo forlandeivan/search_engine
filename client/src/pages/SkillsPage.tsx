@@ -528,6 +528,8 @@ export function SkillFormContent({
         showSources: true,
         historyMessagesLimit: 6,
         historyCharsLimit: 4000,
+        enableQueryRewriting: true,
+        queryRewriteModel: null,
         embeddingProviderId: null,
         bm25Weight: null,
         bm25Limit: null,
@@ -581,6 +583,8 @@ export function SkillFormContent({
         ragShowSources: ragConfig.showSources ?? true,
         ragHistoryMessagesLimit: ragConfig.historyMessagesLimit ?? 6,
         ragHistoryCharsLimit: ragConfig.historyCharsLimit ?? 4000,
+        ragEnableQueryRewriting: ragConfig.enableQueryRewriting ?? true,
+        ragQueryRewriteModel: ragConfig.queryRewriteModel ?? "",
         noCodeBearerToken: "",
         noCodeBearerTokenAction: noCodeConnection.tokenIsSet ? "keep" : "replace",
       };
@@ -1154,6 +1158,91 @@ export function SkillFormContent({
                             </div>
                           </div>
                         )}
+
+                        {/* Query Rewriting */}
+                        <div className="space-y-4 border-t pt-4">
+                          <div className="flex items-center gap-2">
+                            <FormLabel className="text-sm font-medium">Умное переформулирование запросов</FormLabel>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">
+                                    Автоматически улучшает уточняющие вопросы (например, "А какие исключения?", "Подробнее про пункт 2") для лучшего поиска в базе знаний.
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+
+                          <FormField
+                            control={form.control}
+                            name="ragEnableQueryRewriting"
+                            render={({ field }) => (
+                              <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                                <div className="space-y-0.5">
+                                  <FormLabel className="text-sm font-medium">
+                                    Включить переформулирование
+                                  </FormLabel>
+                                  <FormDescription className="text-xs text-muted-foreground">
+                                    Переформулирует уточняющие вопросы с учётом истории диалога
+                                  </FormDescription>
+                                </div>
+                                <FormControl>
+                                  <Switch
+                                    checked={field.value ?? true}
+                                    onCheckedChange={field.onChange}
+                                    disabled={controlsDisabled}
+                                  />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+
+                          {form.watch("ragEnableQueryRewriting") && (
+                            <FormField
+                              control={form.control}
+                              name="ragQueryRewriteModel"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-sm font-medium">
+                                    Модель для переформулирования
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Select
+                                      value={field.value ?? ""}
+                                      onValueChange={(value) => field.onChange(value || "")}
+                                      disabled={controlsDisabled}
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue placeholder="Использовать основную модель" />
+                                      </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="">Основная модель навыка</SelectItem>
+                                          {effectiveLlmOptions
+                                            .filter((opt) => !opt.disabled)
+                                            .map((opt) => {
+                                              const [providerId, modelId] = opt.key.split("::");
+                                              return (
+                                                <SelectItem key={opt.key} value={modelId}>
+                                                  {opt.label} {opt.costLevel !== "FREE" && `(${costLevelLabel[opt.costLevel]})`}
+                                                </SelectItem>
+                                              );
+                                            })}
+                                        </SelectContent>
+                                    </Select>
+                                  </FormControl>
+                                  <FormDescription className="text-xs text-muted-foreground">
+                                    Рекомендуется использовать быструю модель для минимизации задержки
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
+                        </div>
                       </div>
                     </div>
                     ) : null}
