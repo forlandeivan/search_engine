@@ -504,7 +504,7 @@ export interface WorkspaceRequestContext {
 export interface PublicWorkspaceMembership {
   id: string;
   name: string;
-  plan: WorkspaceWithRole["plan"];
+  plan: string;
   role: WorkspaceMemberRole;
   iconUrl: string | null;
   ownerFullName: string | null;
@@ -515,7 +515,7 @@ export function toPublicWorkspaceMembership(workspace: WorkspaceWithRole): Publi
   return {
     id: workspace.id,
     name: workspace.name,
-    plan: workspace.plan,
+    plan: workspace.tariffPlanName ?? workspace.plan,
     role: workspace.role,
     iconUrl: workspace.iconUrl ?? null,
     ownerFullName: workspace.ownerFullName ?? null,

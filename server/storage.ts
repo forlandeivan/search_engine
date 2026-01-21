@@ -846,6 +846,7 @@ export type WorkspaceWithRole = Workspace & {
   role: WorkspaceMember["role"];
   ownerFullName?: string | null;
   ownerEmail?: string | null;
+  tariffPlanName?: string | null;
 };
 
 export type WorkspaceUpdatePayload = {
@@ -10047,24 +10048,28 @@ export class DatabaseStorage implements IStorage {
       role: WorkspaceMember["role"];
       ownerFullName: string | null;
       ownerEmail: string | null;
+      tariffPlanName: string | null;
     }> = await this.db
       .select({
         workspace: workspaces,
         role: workspaceMembers.role,
         ownerFullName: users.fullName,
         ownerEmail: users.email,
+        tariffPlanName: tariffPlans.name,
       })
       .from(workspaceMembers)
       .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
       .leftJoin(users, eq(users.id, workspaces.ownerId))
+      .leftJoin(tariffPlans, eq(workspaces.tariffPlanId, tariffPlans.id))
       .where(eq(workspaceMembers.userId, userId))
       .orderBy(desc(workspaces.createdAt));
 
-    return rows.map(({ workspace, role, ownerFullName, ownerEmail }) => ({
+    return rows.map(({ workspace, role, ownerFullName, ownerEmail, tariffPlanName }) => ({
       ...workspace,
       role,
       ownerFullName: ownerFullName ?? null,
       ownerEmail: ownerEmail ?? null,
+      tariffPlanName: tariffPlanName ?? null,
     }));
   }
 
