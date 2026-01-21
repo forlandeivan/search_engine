@@ -74,18 +74,6 @@ export function buildLlmRequestBody(
       systemParts.push(requestConfig.systemPrompt.trim());
     }
 
-    // Добавляем историю диалога в system prompt для Unica провайдера
-    const conversationHistory = options?.conversationHistory ?? [];
-    if (conversationHistory.length > 0) {
-      const historyText = conversationHistory
-        .map((msg) => {
-          const roleLabel = msg.role === "assistant" ? "Ассистент" : "Пользователь";
-          return `${roleLabel}: ${msg.content}`;
-        })
-        .join("\n\n");
-      systemParts.push(`История диалога:\n${historyText}`);
-    }
-
     const contextText = context
       .map(({ index, score, payload }) => {
         const scoreText = typeof score === "number" ? ` (score: ${score.toFixed(4)})` : "";
@@ -106,14 +94,31 @@ export function buildLlmRequestBody(
 
     if (context.length > 0) {
       systemParts.push(
-        `Контекст:\n${contextText}\n\nСформируй понятный ответ на русском языке, опираясь только на предоставленный контекст и учитывая историю диалога. Если ответ не найден, сообщи об этом. Не придумывай фактов. ${formatInstruction}`,
+        `Контекст:\n${contextText}\n\nСформируй понятный ответ на русском языке, опираясь только на предоставленный контекст. Если ответ не найден, сообщи об этом. Не придумывай фактов. ${formatInstruction}`,
       );
     } else {
       systemParts.push("Контекст отсутствует. Если ответ не найден, честно сообщи об этом.");
     }
 
     const system = systemParts.length > 0 ? systemParts.join("\n\n") : "You are a helpful assistant. Answer concisely and factually.";
-    const prompt = `Вопрос: ${query}`;
+    
+    // Для Unica провайдера история добавляется в prompt, а не в system
+    // Формат: история диалога + текущий вопрос
+    const conversationHistory = options?.conversationHistory ?? [];
+    const promptParts: string[] = [];
+    
+    if (conversationHistory.length > 0) {
+      const historyText = conversationHistory
+        .map((msg) => {
+          const roleLabel = msg.role === "assistant" ? "Ассистент" : "Пользователь";
+          return `${roleLabel}: ${msg.content}`;
+        })
+        .join("\n\n");
+      promptParts.push(`История диалога:\n${historyText}`);
+    }
+    
+    promptParts.push(`Вопрос: ${query}`);
+    const prompt = promptParts.join("\n\n");
 
     const body: Record<string, unknown> = {
       model: effectiveModel,
