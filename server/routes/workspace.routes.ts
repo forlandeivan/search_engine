@@ -10,6 +10,7 @@
  * - DELETE /api/workspaces/members/:memberId - Remove member
  * - GET /api/workspaces/:workspaceId/me - Get current user's role
  * - GET/POST/DELETE /api/workspaces/:workspaceId/icon - Workspace icon
+ * - PATCH /api/workspaces/:workspaceId - Update workspace name
  * - GET /api/workspaces/:workspaceId/plan - Get workspace plan
  * - GET /api/workspaces/:workspaceId/credits - Get workspace credits
  * - PUT /api/workspaces/:workspaceId/plan - Update workspace plan
@@ -476,6 +477,57 @@ workspaceRouter.get('/:workspaceId/icon', asyncHandler(async (req, res) => {
     res.setHeader('Content-Type', icon.contentType);
   }
   icon.body.pipe(res);
+}));
+
+/**
+ * PATCH /api/workspaces/:workspaceId
+ * Update workspace name
+ */
+const updateWorkspaceSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Название не может быть пустым")
+    .max(200, "Название не должно превышать 200 символов"),
+});
+
+workspaceRouter.patch('/:workspaceId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId } = req.params;
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+  if (!membership || !isWorkspaceAdmin(membership.role)) {
+    return res.status(403).json({ message: 'Доступ запрещён. Только владелец или менеджер могут изменять название рабочего пространства' });
+  }
+
+  try {
+    const payload = updateWorkspaceSchema.parse(req.body);
+    const updated = await storage.updateWorkspaceName(workspaceId, payload.name);
+    
+    if (!updated) {
+      return res.status(404).json({ message: 'Рабочее пространство не найдено' });
+    }
+
+    res.json({ 
+      workspace: {
+        id: updated.id,
+        name: updated.name,
+      }
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const issue = error.issues.at(0);
+      return res.status(400).json({
+        message: issue?.message ?? 'Некорректные данные',
+        details: error.issues,
+      });
+    }
+    if (error instanceof Error) {
+      return res.status(400).json({ message: error.message });
+    }
+    throw error;
+  }
 }));
 
 // ============================================================================

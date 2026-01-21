@@ -350,6 +350,8 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
 
   const effectiveWorkspaceId = workspaceIdFromRoute ?? sessionWorkspaceQuery.data?.id ?? null;
   const isOwner = sessionWorkspaceQuery.data?.role === ("owner" as WorkspaceMemberRole);
+  const isManager = sessionWorkspaceQuery.data?.role === ("manager" as WorkspaceMemberRole);
+  const canEditWorkspace = Boolean(isOwner || isManager);
   const isAdmin = sessionWithUser.data?.user?.role === "admin";
   const canManageBilling = Boolean(isOwner || isAdmin);
 
@@ -539,8 +541,51 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
 
     setIsSaving(true);
 
-    // Пока сервер не поддерживает изменение названия/описания, сохраняем только иконку.
     try {
+      // Сохраняем название, если оно изменилось
+      const trimmedName = name.trim();
+      if (trimmedName !== workspaceName && trimmedName.length > 0) {
+        if (trimmedName.length > 200) {
+          toast({
+            title: "Ошибка валидации",
+            description: "Название не должно превышать 200 символов",
+            variant: "destructive",
+          });
+          setIsSaving(false);
+          return;
+        }
+        
+        const res = await apiRequest("PATCH", `/api/workspaces/${effectiveWorkspaceId}`, { name: trimmedName });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.message || "Не удалось обновить название");
+        }
+        const data = await res.json();
+        
+        // Обновляем кэш сессии
+        queryClient.setQueryData(["/api/auth/session"], (prev: SessionResponse | null | undefined) => {
+          if (!prev) return prev;
+          const active = prev.workspace.active;
+          const memberships = prev.workspace.memberships.map((m) =>
+            m.id === active.id ? { ...m, name: data.workspace.name } : m
+          );
+          return {
+            ...prev,
+            workspace: {
+              ...prev.workspace,
+              active: { ...active, name: data.workspace.name },
+              memberships,
+            },
+          };
+        });
+        
+        // Инвалидируем запросы workspace (useWorkspaceInfo использует /api/auth/session)
+        queryClient.invalidateQueries({ queryKey: ["/api/auth/session"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/workspaces"] });
+        
+        toast({ title: "Название обновлено" });
+      }
+
       if (iconFile) {
         const formData = new FormData();
         formData.append("file", iconFile);
@@ -597,7 +642,10 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
           };
         });
         toast({ title: "Иконка сброшена" });
-      } else {
+      }
+      
+      // Если не было изменений ни в названии, ни в иконке
+      if (!iconFile && !resetIcon && trimmedName === workspaceName) {
         toast({ title: "Изменений нет" });
       }
     } catch (error) {
@@ -653,10 +701,11 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="Введите название"
-                      disabled
+                      disabled={!canEditWorkspace || isSaving}
+                      maxLength={200}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Переименование будет доступно после обновления бэкенда. Сейчас поле только для просмотра.
+                      {name.length > 0 ? `${name.length} / 200 символов` : "Максимум 200 символов"}
                     </p>
                   </div>
                   <div className="space-y-2">
@@ -725,9 +774,18 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                 </div>
 
                 <div className="flex justify-end">
-                  <Button onClick={handleSave} disabled={isSaving || (!iconFile && !resetIcon)}>
-                    {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    {isSaving ? "Сохраняем..." : "Сохранить"}
+                  <Button 
+                    onClick={handleSave} 
+                    disabled={isSaving || (!iconFile && !resetIcon && name.trim() === workspaceName)}
+                  >
+                    {isSaving ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Сохраняем...
+                      </>
+                    ) : (
+                      "Сохранить"
+                    )}
                   </Button>
                 </div>
               </div>

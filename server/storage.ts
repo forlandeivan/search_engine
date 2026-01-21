@@ -996,6 +996,7 @@ export interface IStorage {
     iconUrl: string | null,
     iconKey?: string | null,
   ): Promise<Workspace | undefined>;
+  updateWorkspaceName(workspaceId: string, name: string): Promise<Workspace | undefined>;
   setWorkspaceStorageBucket(workspaceId: string, bucketName: string): Promise<void>;
   isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean>;
   getWorkspaceMember(userId: string, workspaceId: string): Promise<WorkspaceMembership | undefined>;
@@ -9715,6 +9716,33 @@ export class DatabaseStorage implements IStorage {
     const [updated] = await this.db
       .update(workspaces)
       .set({ iconUrl, iconKey, updatedAt: new Date() })
+      .where(eq(workspaces.id, workspaceId))
+      .returning();
+    
+    // Invalidate workspace cache
+    if (updated) {
+      const cache = getCache();
+      await cache.del(cacheKeys.workspaceSettings(workspaceId));
+    }
+    
+    return updated ?? undefined;
+  }
+
+  async updateWorkspaceName(workspaceId: string, name: string): Promise<Workspace | undefined> {
+    await ensureWorkspacesTable();
+    
+    // Валидация: название не должно быть пустым и не должно превышать разумную длину
+    const trimmedName = name.trim();
+    if (trimmedName.length === 0) {
+      throw new Error("Название рабочего пространства не может быть пустым");
+    }
+    if (trimmedName.length > 200) {
+      throw new Error("Название рабочего пространства не должно превышать 200 символов");
+    }
+    
+    const [updated] = await this.db
+      .update(workspaces)
+      .set({ name: trimmedName, updatedAt: new Date() })
       .where(eq(workspaces.id, workspaceId))
       .returning();
     
