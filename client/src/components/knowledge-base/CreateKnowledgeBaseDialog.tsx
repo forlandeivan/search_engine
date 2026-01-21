@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type ComponentType } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useCreateKnowledgeBase } from "@/hooks/useCreateKnowledgeBase";
@@ -21,25 +21,25 @@ export const KNOWLEDGE_BASE_CREATION_OPTIONS: CreationOption[] = [
   {
     value: "blank",
     title: "Пустая база",
-    description: "Создайте структуру с нуля и наполняйте контент вручную или с помощью AI.",
+    description: "Новая база с нуля",
     icon: NotebookPen,
   },
   {
     value: "archive",
     title: "Импорт архива",
-    description: "Загрузите ZIP-архив документов, чтобы автоматически разложить их в иерархию.",
+    description: "ZIP-архив документов с сохранённой иерархией",
     icon: FolderArchive,
   },
   {
     value: "crawler",
     title: "Краулинг сайта",
-    description: "Подключите корпоративный портал или знания из публичного сайта для автообновления.",
+    description: "Импорт с сайта с автообновлением",
     icon: Globe,
   },
   {
     value: "json_import",
     title: "Импорт JSON/JSONL",
-    description: "Импортируйте структурированные данные из JSON или JSONL файлов в базу знаний.",
+    description: "Структурированные JSON/JSONL",
     icon: FileJson,
   },
 ];
@@ -211,26 +211,29 @@ export function CreateKnowledgeBaseDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent 
         className={cn(
-          "max-w-xl",
-          mode === "json_import" && "w-[1200px] h-[900px] max-w-[1200px] max-h-[900px] overflow-x-hidden"
+          "flex max-w-xl flex-col gap-0 overflow-hidden p-0",
+          mode === "json_import" && "w-[1200px] h-[900px] max-w-[1200px] max-h-[900px]"
         )}
-        style={mode === "json_import" ? { width: "1200px", height: "900px", maxWidth: "1200px", maxHeight: "900px", overflowX: "hidden" } : undefined}
+        style={mode === "json_import" ? { width: "1200px", height: "900px", maxWidth: "1200px", maxHeight: "900px" } : undefined}
       >
-        <DialogHeader>
+        <DialogHeader className="shrink-0 px-6 pt-6">
           <DialogTitle>
-            {mode === "json_import" ? "Импорт JSON/JSONL" : "Создание базы знаний"}
+            Создание базы знаний
           </DialogTitle>
-          <DialogDescription>
-            {mode === "json_import" 
-              ? "Загрузите файл, настройте маппинг полей и иерархию документов."
-              : "Выберите подходящий сценарий, задайте название и при необходимости укажите источники данных."}
-          </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-2 overflow-x-hidden">
+        <div className="flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-6 pb-6 pt-4 min-h-0">
           {/* Hide mode selection and name/description when in JSON import wizard (JsonImportPanel сам управляет отображением) */}
           {mode !== "json_import" && (
             <>
+              <BaseNameForm
+                name={name}
+                onNameChange={setName}
+                description={description}
+                onDescriptionChange={setDescription}
+                disabled={isSubmittingImport}
+              />
+
               <ImportModeSelector
                 mode={mode}
                 onModeChange={handleModeChange}
@@ -243,13 +246,6 @@ export function CreateKnowledgeBaseDialog({
                 disabled={isSubmittingImport}
               />
 
-              <BaseNameForm
-                name={name}
-                onNameChange={setName}
-                description={description}
-                onDescriptionChange={setDescription}
-                disabled={isSubmittingImport}
-              />
             </>
           )}
 
@@ -324,7 +320,7 @@ export function CreateKnowledgeBaseDialog({
           {error && mode !== "json_import" && <p className="text-sm text-destructive">{error}</p>}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="sticky bottom-0 z-10 shrink-0 border-t bg-muted/50 px-6 py-4">
           {mode === "json_import" ? (
             // JSON импорт обрабатывается внутри JsonImportPanel
             <Button

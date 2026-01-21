@@ -243,7 +243,7 @@ export function JsonImportPanel({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="json-import-base-name" className="text-xs font-medium">
-                Название базы знаний
+                Название
               </Label>
               <Input
                 id="json-import-base-name"
