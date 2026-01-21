@@ -9746,10 +9746,26 @@ export class DatabaseStorage implements IStorage {
       .where(eq(workspaces.id, workspaceId))
       .returning();
     
-    // Invalidate workspace cache
+    // Invalidate caches
     if (updated) {
       const cache = getCache();
+      // Invalidate workspace settings cache
       await cache.del(cacheKeys.workspaceSettings(workspaceId));
+      
+      // Invalidate user workspaces cache for all members
+      // This ensures that session responses will have updated workspace name
+      try {
+        const members = await this.listWorkspaceMembers(workspaceId);
+        const userIds = new Set(members.map(m => m.user.id));
+        if (userIds.size > 0) {
+          await Promise.all(
+            Array.from(userIds).map(userId => cache.del(cacheKeys.userWorkspaces(userId)))
+          );
+        }
+      } catch (error) {
+        // Log error but don't fail the update
+        console.error(`[updateWorkspaceName] Failed to invalidate user workspaces cache for workspace ${workspaceId}:`, error);
+      }
     }
     
     return updated ?? undefined;

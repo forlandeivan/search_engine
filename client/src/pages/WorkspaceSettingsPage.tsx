@@ -583,6 +583,10 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
         queryClient.invalidateQueries({ queryKey: ["/api/auth/session"] });
         queryClient.invalidateQueries({ queryKey: ["/api/workspaces"] });
         
+        // Обновляем локальное состояние названия из ответа API
+        // Это нужно, чтобы UI сразу отобразил новое название до обновления кэша
+        setName(data.workspace.name);
+        
         toast({ title: "Название обновлено" });
       }
 
