@@ -209,9 +209,9 @@ export function CreateKnowledgeBaseDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent 
+        <DialogContent 
         className={cn(
-          "flex max-w-xl flex-col gap-0 overflow-hidden p-0",
+          "flex max-w-2xl flex-col gap-0 overflow-hidden p-0",
           mode === "json_import" && "w-[1200px] h-[900px] max-w-[1200px] max-h-[900px]"
         )}
         style={mode === "json_import" ? { width: "1200px", height: "900px", maxWidth: "1200px", maxHeight: "900px" } : undefined}

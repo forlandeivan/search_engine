@@ -255,7 +255,7 @@ export default function ChatSidebar({
       )}
       data-testid="chat-sidebar"
     >
-      <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-4">
+      <div className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border px-4">
         <h1
           className="text-lg font-semibold tracking-tight text-foreground"
           data-testid="text-sidebar-title"

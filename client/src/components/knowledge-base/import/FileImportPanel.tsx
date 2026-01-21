@@ -177,20 +177,21 @@ export function FileImportPanel({
       )}
 
       {/* Drag & Drop зона */}
-      <div className="space-y-2">
-        <Label htmlFor="file-import-input">
+      <div className="grid grid-cols-[minmax(0,12rem)_1fr] items-start gap-3">
+        <Label htmlFor="file-import-input" className="pt-2">
           {mode === "archive" ? "ZIP-архив документов" : mode === "multiple" ? "Файлы документов" : "Файл документа"}
         </Label>
-        <div
-          className={cn(
-            "flex flex-col gap-3 rounded-md border border-dashed p-4 text-sm transition",
-            isDragActive ? "border-primary bg-primary/5" : "border-muted-foreground/30",
-          )}
-          onDragOver={handleDragOver}
-          onDragEnter={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleFileDrop}
-        >
+        <div className="space-y-2">
+          <div
+            className={cn(
+              "flex flex-col gap-3 rounded-md border border-dashed p-4 text-sm transition",
+              isDragActive ? "border-primary bg-primary/5" : "border-muted-foreground/30",
+            )}
+            onDragOver={handleDragOver}
+            onDragEnter={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleFileDrop}
+          >
           <div className="flex flex-wrap items-center gap-2">
             <Input
               ref={fileInputRef}
@@ -282,6 +283,7 @@ export function FileImportPanel({
               {error}
             </div>
           )}
+        </div>
         </div>
       </div>
     </div>
