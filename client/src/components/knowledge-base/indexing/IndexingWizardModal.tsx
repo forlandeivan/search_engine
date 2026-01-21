@@ -62,6 +62,7 @@ export function IndexingWizardModal({
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [saveToPolicy, setSaveToPolicy] = useState(true);
   const [indexingMode, setIndexingMode] = useState<"full" | "changed">("changed");
+  const [isEmbeddingsStepValid, setIsEmbeddingsStepValid] = useState(true);
 
   // Проверка изменений
   const checkChanges = useCallback(() => {
@@ -308,6 +309,7 @@ export function IndexingWizardModal({
                         : undefined
                     }
                     disabled={isSubmitting}
+                    onValidationChange={setIsEmbeddingsStepValid}
                   />
                 ) : step === "schema" ? (
                   <SchemaFieldsStep
@@ -375,7 +377,7 @@ export function IndexingWizardModal({
                 {mode === "select" ? "Отмена" : "Закрыть"}
               </Button>
               {mode === "advanced" && step !== "confirm" && (
-                <Button onClick={handleNext} disabled={isSubmitting}>
+                <Button onClick={handleNext} disabled={isSubmitting || !isEmbeddingsStepValid}>
                   Далее
                   <ChevronRight className="ml-2 h-4 w-4" />
                 </Button>

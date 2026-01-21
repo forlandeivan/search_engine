@@ -1958,7 +1958,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     const crumbs = detail.breadcrumbs;
     return (
       <Breadcrumb className="mb-4">
-        <BreadcrumbList>
+        <BreadcrumbList className="flex-wrap">
           {crumbs.map((crumb, index) => {
             const isLast = index === crumbs.length - 1;
             const href =
@@ -1967,12 +1967,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 : `/knowledge/${selectedBase?.id}/node/${crumb.id}`;
 
             return (
-              <BreadcrumbItem key={crumb.id}>
+              <BreadcrumbItem key={crumb.id} className="max-w-full">
                 {isLast ? (
-                  <BreadcrumbPage>{crumb.title}</BreadcrumbPage>
+                  <BreadcrumbPage className="truncate max-w-full">{crumb.title}</BreadcrumbPage>
                 ) : (
                   <BreadcrumbLink asChild>
-                    <Link href={href}>{crumb.title}</Link>
+                    <Link href={href} className="truncate max-w-full block">{crumb.title}</Link>
                   </BreadcrumbLink>
                 )}
                 {!isLast && <BreadcrumbSeparator />}
@@ -2040,8 +2040,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     return (
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <CardTitle className="text-xl">{detail.title}</CardTitle>
+          <div className="min-w-0 flex-1">
+            <CardTitle className="text-xl break-words">{detail.title}</CardTitle>
             <CardDescription>
               Управляйте подразделом и меняйте вложенность документов. Обновлено {" "}
               {formatDateTime(detail.updatedAt)}.
@@ -2101,20 +2101,20 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   const availableParents = folderOptions.filter((folder) => !excluded.has(folder.id));
 
                   return (
-                    <div
+                      <div
                       key={child.id}
                       className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between"
                     >
-                      <div>
-                        <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 min-w-0">
                           {child.type === "folder" ? (
-                            <Folder className="h-4 w-4 text-muted-foreground" />
+                            <Folder className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                           ) : (
-                            <FileText className="h-4 w-4 text-muted-foreground" />
+                            <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                           )}
-                          <span className="font-medium">{child.title}</span>
+                          <span className="font-medium break-words min-w-0">{child.title}</span>
                           {child.type === "folder" && (
-                            <Badge variant="outline">{child.childCount} элементов</Badge>
+                            <Badge variant="outline" className="flex-shrink-0">{child.childCount} элементов</Badge>
                           )}
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">
@@ -2227,10 +2227,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               </div>
             ) : (
               <>
-                <CardTitle className="flex flex-wrap items-center gap-2">
-                  <span>{detail.title}</span>
+                <CardTitle className="flex flex-wrap items-center gap-2 min-w-0">
+                  <span className="break-words">{detail.title}</span>
                   {detail.sourceType === "crawl" && (
-                    <span className="flex items-center">
+                    <span className="flex items-center flex-shrink-0">
                       <Globe2 aria-hidden="true" className="h-4 w-4 text-emerald-500" />
                       <span className="sr-only">Документ создан краулингом</span>
                     </span>

@@ -4059,6 +4059,23 @@ async function runKnowledgeBaseRagPipeline(options: {
       bm25Weight = 1;
       vectorWeight = 0;
     }
+    
+    // Логирование конфигурации поиска
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'search_config',
+      query: query.substring(0, 100),
+      bm25Weight,
+      bm25Limit,
+      vectorWeight,
+      vectorLimit,
+      effectiveTopK,
+      effectiveMinScore,
+      effectiveMaxContextTokens,
+      embeddingProviderId,
+      vectorCollections: vectorCollectionsToSearch,
+      knowledgeBaseIds,
+    }, `[RAG] Search config: BM25(${bm25Weight.toFixed(2)}, limit=${bm25Limit}) + Vector(${vectorWeight.toFixed(2)}, limit=${vectorLimit}), topK=${effectiveTopK}, minScore=${effectiveMinScore}`);
 
     // Context Caching: проверяем cache hit перед retrieval
     const chatId = typeof body.chat_id === "string" ? body.chat_id.trim() : null;
@@ -4832,6 +4849,21 @@ async function runKnowledgeBaseRagPipeline(options: {
 
     const bm25Max = Math.max(...Array.from(aggregated.values()).map((item) => item.bm25Score), 0);
     const vectorMax = Math.max(...Array.from(aggregated.values()).map((item) => item.vectorScore), 0);
+    
+    // Логирование агрегации результатов
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'aggregation',
+      query: query.substring(0, 100),
+      bm25SectionsCount: bm25Sections.length,
+      vectorChunksCount: vectorChunks.length,
+      vectorChunksProcessed,
+      vectorChunksSkippedNoChunkId,
+      vectorChunksSkippedNoDetail,
+      aggregatedCount: aggregated.size,
+      bm25MaxScore: bm25Max,
+      vectorMaxScore: vectorMax,
+    }, `[RAG] Aggregation: ${aggregated.size} unique chunks from BM25(${bm25Sections.length}) + Vector(${vectorChunks.length}, processed=${vectorChunksProcessed}, skipped=${vectorChunksSkippedNoChunkId + vectorChunksSkippedNoDetail})`);
 
     const combinedStep = startPipelineStep(
       "combine_results",
@@ -4867,6 +4899,11 @@ async function runKnowledgeBaseRagPipeline(options: {
           .sort((a, b) => b.combinedScore - a.combinedScore);
     }
 
+    const beforePostProcessing = {
+      count: combinedResults.length,
+      tokens: combinedResults.reduce((sum, c) => sum + estimateTokens(c.text), 0),
+    };
+    
     const { combinedResults: processedResults } = applyRetrievalPostProcessing({
       combinedResults,
       topK: effectiveTopK,
@@ -4875,6 +4912,28 @@ async function runKnowledgeBaseRagPipeline(options: {
       estimateTokens,
     });
     combinedResults = processedResults;
+    
+    // Логирование постобработки
+    const afterPostProcessing = {
+      count: combinedResults.length,
+      tokens: combinedResults.reduce((sum, c) => sum + estimateTokens(c.text), 0),
+    };
+    
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'post_processing',
+      query: query.substring(0, 100),
+      beforeCount: beforePostProcessing.count,
+      afterCount: afterPostProcessing.count,
+      beforeTokens: beforePostProcessing.tokens,
+      afterTokens: afterPostProcessing.tokens,
+      effectiveTopK,
+      effectiveMinScore,
+      effectiveMaxContextTokens,
+      filteredByTopK: beforePostProcessing.count > effectiveTopK,
+      filteredByMinScore: effectiveMinScore > 0,
+      filteredByTokens: effectiveMaxContextTokens ? afterPostProcessing.tokens < beforePostProcessing.tokens : false,
+    }, `[RAG] Post-processing: ${beforePostProcessing.count} → ${afterPostProcessing.count} chunks, ${beforePostProcessing.tokens} → ${afterPostProcessing.tokens} tokens`);
     
     if (allowSources) {
       combinedResults.forEach((item, index) => {
@@ -4998,12 +5057,38 @@ async function runKnowledgeBaseRagPipeline(options: {
             // Добавляем к combinedResults (с более низким приоритетом)
             combinedResults = [...combinedResults, ...additionalChunks];
             
-            logger.info({
-              component: 'RAG_PIPELINE',
-              step: 'context_cache_accumulated',
-              chatId,
-              additionalChunksCount: additionalChunks.length,
-            }, '[RAG CACHE] Added accumulated chunks from previous requests');
+            // КРИТИЧНО: Повторно применяем обрезку по maxContextTokens после добавления accumulated chunks
+            // Иначе накопленные чанки могут превысить лимит токенов
+            if (effectiveMaxContextTokens && effectiveMaxContextTokens > 0) {
+              const beforeCount = combinedResults.length;
+              const { combinedResults: reProcessedResults } = applyRetrievalPostProcessing({
+                combinedResults,
+                topK: effectiveTopK + additionalChunks.length, // Увеличиваем лимит, но токены ограничат
+                minScore: 0, // Не фильтруем по score для accumulated chunks
+                maxContextTokens: effectiveMaxContextTokens,
+                estimateTokens,
+              });
+              combinedResults = reProcessedResults;
+              
+              logger.info({
+                component: 'RAG_PIPELINE',
+                step: 'context_cache_accumulated',
+                chatId,
+                additionalChunksCount: additionalChunks.length,
+                beforeCount,
+                afterCount: combinedResults.length,
+                maxContextTokens: effectiveMaxContextTokens,
+                tokensUsed: combinedResults.reduce((sum, c) => sum + estimateTokens(c.text), 0),
+              }, `[RAG CACHE] Added ${additionalChunks.length} accumulated chunks, re-trimmed to ${combinedResults.length} (maxTokens=${effectiveMaxContextTokens})`);
+            } else {
+              logger.info({
+                component: 'RAG_PIPELINE',
+                step: 'context_cache_accumulated',
+                chatId,
+                additionalChunksCount: additionalChunks.length,
+                maxContextTokens: null,
+              }, `[RAG CACHE] Added ${additionalChunks.length} accumulated chunks (no token limit)`);
+            }
           }
         }
       } catch (error) {
@@ -5015,6 +5100,29 @@ async function runKnowledgeBaseRagPipeline(options: {
         }, '[RAG CACHE] Failed to use context cache, continuing without cache');
       }
     }
+
+    // Финальная проверка: логируем количество токенов перед формированием contextRecords
+    const totalTokensBeforeContext = combinedResults.reduce((sum, c) => sum + estimateTokens(c.text), 0);
+    const tokensPerChunk = combinedResults.slice(0, 10).map(c => ({
+      chunkId: c.chunkId.substring(0, 20),
+      tokens: estimateTokens(c.text),
+      textLength: c.text.length,
+    }));
+    
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'context_records_formation',
+      query: query.substring(0, 100),
+      chunksCount: combinedResults.length,
+      totalTokens: totalTokensBeforeContext,
+      maxContextTokens: effectiveMaxContextTokens,
+      tokensWithinLimit: effectiveMaxContextTokens ? totalTokensBeforeContext <= effectiveMaxContextTokens : true,
+      tokensExceededBy: effectiveMaxContextTokens && totalTokensBeforeContext > effectiveMaxContextTokens 
+        ? totalTokensBeforeContext - effectiveMaxContextTokens 
+        : 0,
+      tokensPerChunk: tokensPerChunk,
+      avgTokensPerChunk: combinedResults.length > 0 ? Math.round(totalTokensBeforeContext / combinedResults.length) : 0,
+    }, `[RAG] Forming context records: ${combinedResults.length} chunks, ${totalTokensBeforeContext} tokens (limit: ${effectiveMaxContextTokens ?? 'none'}, exceeded by: ${effectiveMaxContextTokens && totalTokensBeforeContext > effectiveMaxContextTokens ? totalTokensBeforeContext - effectiveMaxContextTokens : 0})`);
 
     const contextRecords: LlmContextRecord[] = combinedResults.map((item, index) => ({
       index,
@@ -5058,6 +5166,20 @@ async function runKnowledgeBaseRagPipeline(options: {
       });
     }
     const responseFormat: RagResponseFormat = ragResponseFormat ?? "text";
+    
+    // Логирование подготовки к LLM
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'llm_preparation',
+      query: query.substring(0, 100),
+      contextRecordsCount: contextRecords.length,
+      responseFormat,
+      llmProviderId: body.llm.provider,
+      llmModel: body.llm.model,
+      temperature: body.llm.temperature,
+      maxTokens: body.llm.max_tokens,
+      hasSystemPrompt: Boolean(body.llm.system_prompt),
+    }, `[RAG] Preparing LLM request: ${contextRecords.length} context records, format=${responseFormat}`);
 
     const llmProvider = await storage.getLlmProvider(body.llm.provider, workspaceId);
     if (!llmProvider) {
@@ -5368,19 +5490,49 @@ async function runKnowledgeBaseRagPipeline(options: {
       responseFormat,
     } as const;
 
+    // Финальное логирование с полной статистикой pipeline
     logger.info({
       component: 'RAG_PIPELINE',
       step: 'response_ready',
+      query: query.substring(0, 100),
       citationsCount: response.citations.length,
       chunksCount: response.chunks.length,
       answerLength: response.answer.length,
       allowSources,
-    }, `[RAG PIPELINE] Response ready: ${response.citations.length} citations, ${response.chunks.length} chunks`);
+      usage: {
+        embeddingTokens: response.usage.embeddingTokens,
+        llmTokens: response.usage.llmTokens,
+        totalTokens: (response.usage.embeddingTokens ?? 0) + (response.usage.llmTokens ?? 0),
+      },
+      timings: {
+        total: response.timings.total_ms,
+        retrieval: response.timings.retrieval_ms,
+        bm25: response.timings.bm25_ms,
+        vector: response.timings.vector_ms,
+        llm: response.timings.llm_ms,
+      },
+      retrievalStats: {
+        bm25ResultCount,
+        vectorResultCount,
+        combinedResultCount,
+        vectorDocumentCount,
+      },
+      cacheHit,
+      skillId: normalizedSkillId,
+    }, `[RAG] Response ready: ${response.citations.length} citations, ${response.chunks.length} chunks, ${response.answer.length} chars answer, ${response.timings.total_ms}ms total (retrieval=${response.timings.retrieval_ms}ms, llm=${response.timings.llm_ms}ms)`);
 
     if (!wantsLlmStream) {
       emitStreamEvent("delta", { text: response.answer });
     }
       emitStreamStatus("done", "Готово");
+      
+      logger.info({
+        component: 'RAG_PIPELINE',
+        step: 'sse_done_emitted',
+        citationsInEvent: response.citations.length,
+        answerLength: response.answer.length,
+      }, `[RAG PIPELINE] SSE done event emitted with ${response.citations.length} citations`);
+      
       emitStreamEvent("done", {
         answer: response.answer,
         query: response.query,

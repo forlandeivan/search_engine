@@ -29,6 +29,8 @@ interface EmbeddingsAndChunkingStepProps {
     chunkOverlap: number;
   };
   disabled?: boolean;
+  /** Callback для передачи состояния валидности */
+  onValidationChange?: (isValid: boolean) => void;
 }
 
 export function EmbeddingsAndChunkingStep({
@@ -37,6 +39,7 @@ export function EmbeddingsAndChunkingStep({
   workspaceId,
   initialConfig,
   disabled,
+  onValidationChange,
 }: EmbeddingsAndChunkingStepProps) {
   const [selectedProvider, setSelectedProvider] = useState(config.embeddingsProvider || "");
   const [selectedModel, setSelectedModel] = useState(config.embeddingsModel || "");
@@ -69,17 +72,18 @@ export function EmbeddingsAndChunkingStep({
 
   // Валидация и обновление chunkSize
   const updateChunkSize = (value: number) => {
-    if (value < MIN_CHUNK_SIZE) {
-      setChunkSizeError(`Минимальный размер чанка: ${MIN_CHUNK_SIZE}`);
-      return;
-    }
-    if (value > MAX_CHUNK_SIZE) {
-      setChunkSizeError(`Максимальный размер чанка: ${MAX_CHUNK_SIZE}`);
-      return;
-    }
-    setChunkSizeError(null);
+    // Всегда обновляем значение, даже если оно невалидно
     const newChunkSize = Math.round(value);
     setChunkSize(newChunkSize);
+
+    // Показываем ошибку только для подсказки, но не блокируем ввод
+    if (value < MIN_CHUNK_SIZE) {
+      setChunkSizeError(`Минимальный размер чанка: ${MIN_CHUNK_SIZE}`);
+    } else if (value > MAX_CHUNK_SIZE) {
+      setChunkSizeError(`Максимальный размер чанка: ${MAX_CHUNK_SIZE}`);
+    } else {
+      setChunkSizeError(null);
+    }
 
     // Автоматически ограничиваем chunkOverlap
     let newOverlap = chunkOverlap;
@@ -98,17 +102,19 @@ export function EmbeddingsAndChunkingStep({
 
   // Валидация и обновление chunkOverlap
   const updateChunkOverlap = (value: number) => {
-    if (value < 0) {
-      setChunkOverlapError("Перекрытие не может быть отрицательным");
-      return;
-    }
-    if (value >= chunkSize) {
-      setChunkOverlapError(`Перекрытие должно быть меньше размера чанка (${chunkSize})`);
-      return;
-    }
-    setChunkOverlapError(null);
+    // Всегда обновляем значение, даже если оно невалидно
     const newOverlap = Math.round(value);
     setChunkOverlap(newOverlap);
+
+    // Показываем ошибку только для подсказки, но не блокируем ввод
+    if (value < 0) {
+      setChunkOverlapError("Перекрытие не может быть отрицательным");
+    } else if (value >= chunkSize) {
+      setChunkOverlapError(`Перекрытие должно быть меньше размера чанка (${chunkSize})`);
+    } else {
+      setChunkOverlapError(null);
+    }
+
     onChange({
       embeddingsProvider: selectedProvider,
       embeddingsModel: selectedModel,
@@ -188,6 +194,23 @@ export function EmbeddingsAndChunkingStep({
   }
 
   const maxOverlap = Math.max(0, chunkSize - 1);
+
+  // Проверка валидности конфигурации
+  const isValid = useMemo(() => {
+    return (
+      chunkSize > 0 &&
+      chunkSize >= MIN_CHUNK_SIZE &&
+      chunkSize <= MAX_CHUNK_SIZE &&
+      chunkOverlap >= 0 &&
+      chunkOverlap < chunkSize &&
+      Boolean(selectedModel)
+    );
+  }, [chunkSize, chunkOverlap, selectedModel]);
+
+  // Уведомляем родительский компонент об изменении валидности
+  useEffect(() => {
+    onValidationChange?.(isValid);
+  }, [isValid, onValidationChange]);
 
   return (
     <div className="space-y-6">
@@ -280,7 +303,14 @@ export function EmbeddingsAndChunkingStep({
               max={MAX_CHUNK_SIZE}
               value={chunkSize}
               onChange={(e) => {
-                const value = Number.parseInt(e.target.value, 10);
+                const inputValue = e.target.value;
+                // Позволяем пустую строку для удобства редактирования
+                if (inputValue === "") {
+                  setChunkSize(0);
+                  setChunkSizeError(`Минимальный размер чанка: ${MIN_CHUNK_SIZE}`);
+                  return;
+                }
+                const value = Number.parseInt(inputValue, 10);
                 if (!Number.isNaN(value)) {
                   updateChunkSize(value);
                 }
@@ -309,7 +339,14 @@ export function EmbeddingsAndChunkingStep({
               max={maxOverlap}
               value={chunkOverlap}
               onChange={(e) => {
-                const value = Number.parseInt(e.target.value, 10);
+                const inputValue = e.target.value;
+                // Позволяем пустую строку для удобства редактирования
+                if (inputValue === "") {
+                  setChunkOverlap(0);
+                  setChunkOverlapError(null);
+                  return;
+                }
+                const value = Number.parseInt(inputValue, 10);
                 if (!Number.isNaN(value)) {
                   updateChunkOverlap(value);
                 }

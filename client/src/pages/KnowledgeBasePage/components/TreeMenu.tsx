@@ -58,18 +58,18 @@ export function TreeMenu({
               <Link
                 href={`/knowledge/${baseId}/node/${node.id}`}
                 className={cn(
-                  "flex flex-1 items-center gap-2 rounded-md px-2 py-1 transition",
+                  "flex flex-1 items-center gap-2 rounded-md px-2 py-1 transition min-w-0",
                   isActive ? "bg-primary/10 text-primary" : "hover:bg-muted",
                 )}
               >
                 {node.type === "folder" ? (
-                  <Folder className="h-4 w-4" />
+                  <Folder className="h-4 w-4 flex-shrink-0" />
                 ) : (
-                  <FileText className="h-4 w-4" />
+                  <FileText className="h-4 w-4 flex-shrink-0" />
                 )}
-                <span className="flex-1 truncate">{node.title}</span>
+                <span className="flex-1 truncate min-w-0 break-words">{node.title}</span>
                 {node.type === "document" && node.sourceType === "crawl" && (
-                  <span className="flex items-center">
+                  <span className="flex items-center flex-shrink-0">
                     <Globe2 aria-hidden="true" className="h-3.5 w-3.5 text-emerald-500" />
                     <span className="sr-only">Документ создан краулингом</span>
                   </span>
