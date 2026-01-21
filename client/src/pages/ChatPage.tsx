@@ -201,6 +201,9 @@ export default function ChatPage({ params }: ChatPageProps) {
     }
     const source = new EventSource(url.toString(), { withCredentials: true });
     let reconnectRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+    let errorCount = 0;
+    let errorTimeout: ReturnType<typeof setTimeout> | null = null;
+    let wasConnected = false; // Флаг, что соединение хотя бы раз было установлено
 
     // Handle both named 'message' events and default onmessage
     source.addEventListener('message', (event) => {
@@ -280,7 +283,13 @@ export default function ChatPage({ params }: ChatPageProps) {
     });
 
     source.onopen = () => {
+      wasConnected = true;
+      errorCount = 0; // Сбрасываем счетчик при успешном подключении
       setStreamError(null);
+      if (errorTimeout) {
+        clearTimeout(errorTimeout);
+        errorTimeout = null;
+      }
       // Reconnect recovery: fetch active bot_action after reconnect
       if (reconnectRecoveryTimer) {
         clearTimeout(reconnectRecoveryTimer);
@@ -405,13 +414,36 @@ export default function ChatPage({ params }: ChatPageProps) {
     };
 
     source.onerror = () => {
-      setStreamError("Не удалось подключиться к каналу чата.");
+      errorCount++;
+      debugLog("[SSE] Connection error", { errorCount, wasConnected, readyState: source.readyState });
+      
+      // EventSource автоматически переподключается, но onerror срабатывает при каждой попытке
+      // Показываем ошибку только если:
+      // 1. Было хотя бы одно успешное подключение (wasConnected = true) - значит это потеря соединения
+      // 2. И прошло несколько неудачных попыток (errorCount >= 3)
+      // 3. Или если это первое подключение и прошло достаточно времени (errorCount >= 5)
+      
+      if (errorTimeout) {
+        clearTimeout(errorTimeout);
+      }
+      
+      // Даем EventSource время на переподключение перед показом ошибки
+      errorTimeout = setTimeout(() => {
+        // Показываем ошибку только если соединение действительно не восстановилось
+        if (source.readyState === EventSource.CLOSED || (wasConnected && errorCount >= 3) || (!wasConnected && errorCount >= 5)) {
+          debugLog("[SSE] Showing connection error", { errorCount, wasConnected, readyState: source.readyState });
+          setStreamError("Не удалось подключиться к каналу чата.");
+        }
+      }, 5000); // 5 секунд задержки перед показом ошибки
     };
 
     return () => {
       source.close();
       if (reconnectRecoveryTimer) {
         clearTimeout(reconnectRecoveryTimer);
+      }
+      if (errorTimeout) {
+        clearTimeout(errorTimeout);
       }
     };
   }, [effectiveChatId, workspaceId, queryClient, chatMessagesQueryKey]);
