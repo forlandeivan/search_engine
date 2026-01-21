@@ -2700,7 +2700,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">{detail.description}</p>
-        {collectionName && (
+        {collectionName && vectorCollections.some((c) => c.name === collectionName) && (
           <div className="flex items-center gap-2 text-sm">
             <Layers className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">Коллекция Qdrant:</span>
