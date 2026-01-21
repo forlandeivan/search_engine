@@ -120,7 +120,7 @@ export default function ChatSidebar({
 
     if (isSkillsLoading) {
       return (
-        <div className="flex items-center gap-2 px-6 py-3 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Загружаем навыки…
         </div>
@@ -184,7 +184,7 @@ export default function ChatSidebar({
   const sidebarContent = useMemo(() => {
     if (!workspaceId) {
       return (
-        <div className="px-6 py-4 text-sm text-muted-foreground">
+        <div className="px-4 py-4 text-sm text-muted-foreground">
           Чтобы работать с чатами, выберите рабочее пространство.
         </div>
       );
@@ -192,7 +192,7 @@ export default function ChatSidebar({
 
     if (isLoading) {
       return (
-        <div className="flex items-center gap-2 px-6 py-4 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 px-4 py-4 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Загружаем чаты…
         </div>
@@ -201,14 +201,14 @@ export default function ChatSidebar({
 
     if (activeChats.length === 0) {
       return (
-        <div className="px-6 py-4 text-sm text-muted-foreground">
+        <div className="px-4 py-4 text-sm text-muted-foreground">
           Пока нет диалогов. Создайте новый чат, чтобы начать.
         </div>
       );
     }
 
     return (
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="pb-2">
         {activeChats.map((chat) => (
           <ChatSidebarItem
             key={chat.id}
@@ -278,37 +278,38 @@ export default function ChatSidebar({
         </Button>
       </div>
 
-      <div className="border-b border-border">
-        {skillsBlock}
-      </div>
-
-      <div className="flex flex-col gap-2 px-4 pb-2 pt-4">
-        <div className="relative">
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Поиск..."
-            className="h-9 rounded-full pl-4 pr-10 text-sm"
-            data-testid="input-search-chats"
-          />
-          <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      {/* One shared scroll area for all sidebar content (skills + search + history) */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="border-b border-border">
+          {skillsBlock}
         </div>
-        {isFetching && !isLoading && (
-          <p className="px-1 text-xs text-muted-foreground">Обновляем историю…</p>
-        )}
-      </div>
 
-      <div className="flex items-center justify-between gap-4 px-4 pb-3 pt-4">
-        <h2
-          className="text-sm font-semibold text-foreground"
-          data-testid="text-history-title"
-        >
-          История
-        </h2>
-        <ChevronDown className="h-6 w-6 text-slate-400" />
-      </div>
+        <div className="flex flex-col gap-2 px-4 pb-2 pt-4">
+          <div className="relative">
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Поиск..."
+              className="h-9 rounded-full pl-4 pr-10 text-sm"
+              data-testid="input-search-chats"
+            />
+            <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          </div>
+          {isFetching && !isLoading && (
+            <p className="px-1 text-xs text-muted-foreground">Обновляем историю…</p>
+          )}
+        </div>
 
-      <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
+        <div className="flex items-center justify-between gap-4 px-4 pb-3 pt-4">
+          <h2
+            className="text-sm font-semibold text-foreground"
+            data-testid="text-history-title"
+          >
+            История
+          </h2>
+          <ChevronDown className="h-6 w-6 text-slate-400" />
+        </div>
+
         {sidebarContent}
       </div>
     </aside>
