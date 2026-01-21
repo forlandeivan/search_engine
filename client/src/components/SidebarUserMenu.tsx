@@ -35,7 +35,15 @@ export default function SidebarUserMenu({ user }: SidebarUserMenuProps) {
   const { toast } = useToast();
   const { isMobile } = useSidebar();
   const [theme, setTheme] = useState<ThemeMode>("light");
-  const initials = getInitials(user.fullName);
+  const displayName =
+    [user.firstName, user.lastName]
+      .map((part) => (typeof part === "string" ? part.trim() : ""))
+      .filter(Boolean)
+      .join(" ")
+      .trim() ||
+    user.fullName ||
+    user.email;
+  const initials = getInitials(displayName);
   const avatarUrl = user.googleAvatar || user.yandexAvatar || "";
 
   useEffect(() => {
@@ -92,13 +100,13 @@ export default function SidebarUserMenu({ user }: SidebarUserMenuProps) {
               className="group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:overflow-visible group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:hover:bg-transparent group-data-[collapsible=icon]:active:bg-transparent"
             >
               <Avatar className="h-8 w-8 rounded-lg after:rounded-lg">
-                <AvatarImage src={avatarUrl} alt={user.fullName} />
+                <AvatarImage src={avatarUrl} alt={displayName} />
                 <AvatarFallback className="rounded-lg">
                   {initials || "??"}
                 </AvatarFallback>
               </Avatar>
               <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
-                <span className="truncate font-medium">{user.fullName}</span>
+                <span className="truncate font-medium">{displayName}</span>
                 <span className="truncate text-xs">{user.email}</span>
               </div>
               <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
@@ -113,13 +121,13 @@ export default function SidebarUserMenu({ user }: SidebarUserMenuProps) {
             <DropdownMenuLabel className="p-0 font-normal">
               <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
                 <Avatar className="h-8 w-8 rounded-lg after:rounded-lg">
-                  <AvatarImage src={avatarUrl} alt={user.fullName} />
+                  <AvatarImage src={avatarUrl} alt={displayName} />
                   <AvatarFallback className="rounded-lg">
                     {initials || "??"}
                   </AvatarFallback>
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">{user.fullName}</span>
+                  <span className="truncate font-medium">{displayName}</span>
                   <span className="truncate text-xs">{user.email}</span>
                 </div>
               </div>
