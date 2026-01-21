@@ -372,14 +372,38 @@ chatRouter.get('/sessions/:chatId/events', asyncHandler(async (req, res) => {
     flushHeaders.call(res);
   }
 
+  // Heartbeat для поддержания соединения активным (особенно важно для HTTP/2)
+  // Отправляем комментарий каждые 30 секунд, чтобы соединение не считалось idle
+  const heartbeatInterval = setInterval(() => {
+    try {
+      // SSE комментарии используются как keep-alive
+      res.write(': heartbeat\n\n');
+      const flusher = (res as Response & { flush?: () => void }).flush;
+      if (typeof flusher === 'function') {
+        flusher.call(res);
+      }
+    } catch (error) {
+      // Игнорируем ошибки записи (соединение может быть закрыто)
+      logger.debug({ chatId, error }, 'Heartbeat write error, connection may be closed');
+    }
+  }, 30000); // 30 секунд
+
   const listener = (payload: ChatEventPayload) => {
-    logger.debug({ chatId, payloadType: payload.type, hasMessage: !!payload.message, hasAction: !!payload.action }, 'Sending SSE event to client');
-    sendSseEvent(res, 'message', payload);
+    try {
+      logger.debug({ chatId, payloadType: payload.type, hasMessage: !!payload.message, hasAction: !!payload.action }, 'Sending SSE event to client');
+      sendSseEvent(res, 'message', payload);
+    } catch (error) {
+      // Игнорируем ошибки записи (соединение может быть закрыто)
+      logger.debug({ chatId, error }, 'Failed to send SSE event, connection may be closed');
+      offChatEvent(chatId, listener);
+      clearInterval(heartbeatInterval);
+    }
   };
 
   onChatEvent(chatId, listener);
 
   req.on('close', () => {
+    clearInterval(heartbeatInterval);
     offChatEvent(chatId, listener);
     res.end();
   });
