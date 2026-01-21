@@ -476,10 +476,10 @@ export default function ChatInput({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         className={cn(
-          "rounded-2xl border bg-white px-3 py-2 shadow-lg transition-colors dark:bg-slate-900",
+          "rounded-2xl border border-input bg-background px-3 py-2 shadow-sm transition-colors",
           isDragOver
             ? "border-blue-400 bg-blue-50/50 dark:border-blue-500 dark:bg-blue-950/30"
-            : "border-slate-300 dark:border-slate-700",
+            : "",
           disabled ? "opacity-75 cursor-not-allowed" : ""
         )}
       >
@@ -514,12 +514,12 @@ export default function ChatInput({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
+                      className="h-9 w-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
                       onClick={() => attachInputRef.current?.click()}
                       disabled={isAttachDisabled}
                       data-testid="button-attach-file"
                     >
-                      <Paperclip className="h-6 w-6" />
+                      <Paperclip className="h-5 w-5" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="top">
@@ -531,12 +531,12 @@ export default function ChatInput({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
+                  className="h-9 w-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
                   onClick={() => attachInputRef.current?.click()}
                   disabled={isAttachDisabled}
                   data-testid="button-attach-file"
                 >
-                  <Paperclip className="h-6 w-6" />
+                  <Paperclip className="h-5 w-5" />
                 </Button>
               )}
             </>
@@ -563,7 +563,7 @@ export default function ChatInput({
                   }}
                   style={{ maxHeight: "240px", overflowY: "hidden", borderRadius: "12px" }}
                   className={cn(
-                    "!min-h-0 flex-1 resize-none border-none px-2 py-2 text-base leading-6",
+                    "!min-h-0 flex-1 resize-none border-none px-2 py-2 text-sm leading-5",
                     disabled
                       ? "cursor-not-allowed bg-transparent text-slate-400 dark:text-slate-600"
                       : "bg-transparent text-slate-600 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-slate-300 dark:placeholder:text-slate-500"
@@ -594,7 +594,7 @@ export default function ChatInput({
               }}
               style={{ maxHeight: "240px", overflowY: "hidden", borderRadius: "12px" }}
               className={cn(
-                "!min-h-0 flex-1 resize-none border-none px-2 py-2 text-base leading-6",
+                "!min-h-0 flex-1 resize-none border-none px-2 py-2 text-sm leading-5",
                 disabled
                   ? "cursor-not-allowed bg-transparent text-slate-400 dark:text-slate-600"
                   : "bg-transparent text-slate-600 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-slate-300 dark:placeholder:text-slate-500"
@@ -608,7 +608,7 @@ export default function ChatInput({
             aria-label={attachedFile ? "Отправить аудио" : "Отправить сообщение"}
             title={attachedFile ? "Отправить аудио" : "Отправить сообщение"}
             size="icon"
-            className="h-10 w-10 shrink-0 rounded-full bg-[#095998] shadow-md hover:bg-[#0a6ab8]"
+            className="h-9 w-9 shrink-0 rounded-full bg-primary shadow-sm hover:bg-primary/90"
             onClick={handleSend}
             disabled={isSendDisabled || false}
             data-testid="button-send-message"

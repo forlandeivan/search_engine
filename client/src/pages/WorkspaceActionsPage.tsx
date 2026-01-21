@@ -22,7 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { EllipsisVertical, Loader2 } from "lucide-react";
+import { EllipsisVertical, Loader2, Plus } from "lucide-react";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { ActionDto, ActionPlacement } from "@shared/skills";
@@ -180,36 +180,50 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
 
   if (!workspaceId) {
     return (
-      <div className="p-6 space-y-3">
-        <Card>
-          <CardHeader>
-            <CardTitle>Действия рабочего пространства</CardTitle>
-            <CardDescription>Выберите рабочее пространство, чтобы увидеть библиотеку действий.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Alert>
-              <AlertTitle>Рабочее пространство не выбрано</AlertTitle>
-              <AlertDescription>Сначала выберите рабочее пространство в шапке.</AlertDescription>
-            </Alert>
-          </CardContent>
-        </Card>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between gap-4 px-6 pt-6">
+          <div className="min-w-0">
+            <h1 className="text-3xl font-semibold">Действия</h1>
+            <p className="text-sm text-muted-foreground">Выберите рабочее пространство, чтобы увидеть библиотеку действий.</p>
+          </div>
+          <Button disabled>
+            <Plus className="mr-2 h-4 w-4" />
+            Создать действие
+          </Button>
+        </div>
+
+        <div className="mx-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Действия рабочего пространства</CardTitle>
+              <CardDescription>Выберите рабочее пространство, чтобы увидеть библиотеку действий.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Alert>
+                <AlertTitle>Рабочее пространство не выбрано</AlertTitle>
+                <AlertDescription>Сначала выберите рабочее пространство в шапке.</AlertDescription>
+              </Alert>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-4">
-      <div>
-        <p className="text-sm text-muted-foreground">Рабочее пространство</p>
-        <h1 className="text-2xl font-semibold">Действия</h1>
-        <p className="text-sm text-muted-foreground">
-          Библиотека действий (system + workspace), доступных в этом рабочем пространстве.
-        </p>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-4 px-6 pt-6">
+        <div className="min-w-0">
+          <h1 className="text-3xl font-semibold">Действия</h1>
+        </div>
+        <Button onClick={() => setCreateState((prev) => ({ ...prev, open: true }))}>
+          <Plus className="mr-2 h-4 w-4" />
+          Создать действие
+        </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => setCreateState((prev) => ({ ...prev, open: true }))}>Создать действие</Button>
-        {createState.open && (
+      {createState.open && (
+        <div className="mx-6">
           <Card className="w-full">
             <CardHeader>
               <CardTitle className="text-base">
@@ -283,10 +297,7 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
                   </div>
                   {placementKeys.map((p) => (
                     <label key={p} className="flex items-center gap-2 text-sm">
-                      <Checkbox
-                        checked={createState.placements.has(p)}
-                        onCheckedChange={() => togglePlacement(p)}
-                      />
+                      <Checkbox checked={createState.placements.has(p)} onCheckedChange={() => togglePlacement(p)} />
                       {placementLabels[p] ?? p}
                     </label>
                   ))}
@@ -361,121 +372,114 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
                 <Button onClick={handleCreateOrUpdate} disabled={createState.saving}>
                   {createState.saving ? "Сохраняем..." : createState.editingActionId ? "Сохранить" : "Создать"}
                 </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={resetCreateState}
-                  disabled={createState.saving}
-                >
+                <Button type="button" variant="ghost" onClick={resetCreateState} disabled={createState.saving}>
                   Отмена
                 </Button>
               </div>
             </CardContent>
           </Card>
-        )}
-      </div>
+        </div>
+      )}
 
-      <Card>
-        <CardHeader className="py-4">
-          <CardTitle className="text-base">Список действий</CardTitle>
-          <CardDescription>Настроенные действия и их доступность в рабочем пространстве.</CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          {actionsQuery.isLoading ? (
-            <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Загружаем действия...
-            </div>
-          ) : actionsQuery.isError ? (
-            <Alert variant="destructive" className="m-4">
-              <AlertTitle>Не удалось загрузить</AlertTitle>
-              <AlertDescription>
-                Попробуйте обновить страницу или проверьте, что у вас есть доступ к этому рабочему пространству.
-              </AlertDescription>
-            </Alert>
-          ) : actions.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted-foreground">Пока нет доступных действий.</div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Название</TableHead>
-                  <TableHead>Scope</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead>Placements</TableHead>
-                  <TableHead>Output</TableHead>
-                  <TableHead className="text-right">Действия</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {actions.map((action) => (
-                  <TableRow key={action.id}>
-                    <TableCell>
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium leading-tight">{action.label}</p>
-                        {action.description && (
-                          <p className="text-xs text-muted-foreground line-clamp-2">{action.description}</p>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-[11px] uppercase">
-                        {action.scope === "system" ? "Системное" : "Рабочее пространство"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{targetLabels[action.target] ?? action.target}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {action.placements.map((p) => (
-                          <Badge key={p} variant="secondary" className="text-[11px]">
-                            {placementLabels[p] ?? p}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell>{outputModeLabels[action.outputMode] ?? action.outputMode}</TableCell>
-                    <TableCell className="text-right">
-                      {action.editable ? (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Меню действия">
-                              <EllipsisVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={() =>
-                                setCreateState({
-                                  label: action.label,
-                                  description: action.description ?? "",
-                                  target: action.target,
-                                  placements: new Set(action.placements),
-                                  inputType: action.inputType,
-                                  outputMode: action.outputMode,
-                                  promptTemplate: action.promptTemplate,
-                                  saving: false,
-                                  open: true,
-                                  editingActionId: action.id,
-                                })
-                              }
-                            >
-                              Редактировать
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      ) : (
-                        <Badge variant="secondary" className="text-[11px]">
-                          Только чтение
-                        </Badge>
-                      )}
-                    </TableCell>
+      <div className="mx-6">
+        <Card>
+          <CardContent className="p-0">
+            {actionsQuery.isLoading ? (
+              <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Загружаем действия...
+              </div>
+            ) : actionsQuery.isError ? (
+              <Alert variant="destructive" className="m-4">
+                <AlertTitle>Не удалось загрузить</AlertTitle>
+                <AlertDescription>
+                  Попробуйте обновить страницу или проверьте, что у вас есть доступ к этому рабочему пространству.
+                </AlertDescription>
+              </Alert>
+            ) : actions.length === 0 ? (
+              <div className="py-10 text-center text-sm text-muted-foreground">Пока нет доступных действий.</div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Название</TableHead>
+                    <TableHead>Scope</TableHead>
+                    <TableHead>Target</TableHead>
+                    <TableHead>Placements</TableHead>
+                    <TableHead>Output</TableHead>
+                    <TableHead className="text-right">Действия</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                </TableHeader>
+                <TableBody>
+                  {actions.map((action) => (
+                    <TableRow key={action.id}>
+                      <TableCell>
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium leading-tight">{action.label}</p>
+                          {action.description && (
+                            <p className="text-xs text-muted-foreground line-clamp-2">{action.description}</p>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-[11px] uppercase">
+                          {action.scope === "system" ? "Системное" : "Рабочее пространство"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{targetLabels[action.target] ?? action.target}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {action.placements.map((p) => (
+                            <Badge key={p} variant="secondary" className="text-[11px]">
+                              {placementLabels[p] ?? p}
+                            </Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell>{outputModeLabels[action.outputMode] ?? action.outputMode}</TableCell>
+                      <TableCell className="text-right">
+                        {action.editable ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Меню действия">
+                                <EllipsisVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  setCreateState({
+                                    label: action.label,
+                                    description: action.description ?? "",
+                                    target: action.target,
+                                    placements: new Set(action.placements),
+                                    inputType: action.inputType,
+                                    outputMode: action.outputMode,
+                                    promptTemplate: action.promptTemplate,
+                                    saving: false,
+                                    open: true,
+                                    editingActionId: action.id,
+                                  })
+                                }
+                              >
+                                Редактировать
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : (
+                          <Badge variant="secondary" className="text-[11px]">
+                            Только чтение
+                          </Badge>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

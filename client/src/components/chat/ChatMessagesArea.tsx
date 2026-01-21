@@ -99,7 +99,7 @@ export default function ChatMessagesArea({
   }, [assistantAction]);
 
   const readonlyBanner = isReadOnly ? (
-    <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+    <div className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-950 dark:text-amber-100">
       {readOnlyBannerText}
     </div>
   ) : null;
@@ -136,8 +136,8 @@ export default function ChatMessagesArea({
   }, [sortedMessages]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-slate-50 dark:bg-slate-900">
-      <header className="flex h-20 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-6 dark:border-slate-800 dark:bg-slate-900">
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4">
         <div className="flex-1">
           {headerTitle && !isEditingTitle ? (
             <div className="flex items-center gap-2">
@@ -154,7 +154,7 @@ export default function ChatMessagesArea({
                 </TooltipProvider>
               ) : null}
               <h1
-                className="text-2xl font-semibold tracking-tight text-slate-900 cursor-pointer hover:underline dark:text-slate-100"
+                className="text-lg font-semibold tracking-tight text-foreground cursor-pointer hover:underline"
                 title="Переименовать чат"
                 onClick={() => {
                   if (!chatId || !onRenameChat) return;
@@ -179,7 +179,7 @@ export default function ChatMessagesArea({
           {isEditingTitle ? (
             <div className="flex items-center gap-2">
               <input
-                className="w-full max-w-xs rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-800"
+                className="w-full max-w-xs rounded-md border border-input bg-background px-2 py-1 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
                 value={draftTitle}
                 autoFocus
                 onChange={(e) => setDraftTitle(e.target.value)}
@@ -227,15 +227,15 @@ export default function ChatMessagesArea({
           <Button
             variant="outline"
             size="icon"
-            className="h-10 w-10 rounded-full border-slate-300"
+            className="h-9 w-9 rounded-full"
             data-testid="button-search-messages"
           >
-            <Search className="h-5 w-5 text-slate-600" />
+            <Search className="h-4 w-4 text-muted-foreground" />
           </Button>
         </div>
       </header>
 
-      <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto py-6">
+      <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto py-5">
         <div className="mx-auto max-w-3xl px-4">
           {readonlyBanner}
           {assistantActionText ? (
@@ -248,7 +248,7 @@ export default function ChatMessagesArea({
           ) : null}
           <div className="flex h-full min-h-0 flex-col gap-3">
           {errorMessage ? (
-            <div className="mx-auto mt-10 max-w-lg rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
+            <div className="mx-auto mt-10 max-w-lg rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
               <h2 className="text-lg font-semibold">Не удалось загрузить историю</h2>
               <p className="mt-2 text-sm text-muted-foreground">{errorMessage}</p>
               {onReset ? (
@@ -260,7 +260,7 @@ export default function ChatMessagesArea({
           ) : null}
 
           {!errorMessage && isNewChat && messages.length === 0 ? (
-            <div className="mx-auto mt-10 max-w-xl rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
+            <div className="mx-auto mt-10 max-w-xl rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
               <Sparkles className="mx-auto h-8 w-8 text-primary" />
               <h2 className="mt-4 text-lg font-semibold">Начните новый диалог</h2>
               <p className="mt-2 text-sm text-muted-foreground">
@@ -316,7 +316,7 @@ export default function ChatMessagesArea({
       ) : null}
 
       {isStreaming && !assistantActionText ? (
-        <div className="border-t bg-white/60 px-6 py-3 text-sm text-muted-foreground dark:bg-slate-900/60">
+        <div className="border-t bg-background px-6 py-3 text-sm text-muted-foreground">
           Ассистент печатает...
         </div>
       ) : null}
@@ -438,21 +438,29 @@ function ChatBubble({
     const name = fileMeta?.filename || message.content || "Файл";
     const sizeLabel = formatSize(fileMeta?.sizeBytes ?? null);
     const downloadUrl = fileMeta?.downloadUrl || null;
+    const iconClassName =
+      "flex h-10 w-10 items-center justify-center rounded-lg " +
+      (isUser ? "bg-primary-foreground/15 text-primary-foreground" : "bg-muted text-foreground");
+    const titleClassName = "break-words font-semibold " + (isUser ? "text-primary-foreground" : "text-foreground");
+    const metaClassName = "text-xs " + (isUser ? "text-primary-foreground/70" : "text-muted-foreground");
+    const linkClassName =
+      "inline-flex items-center gap-2 text-sm font-medium " +
+      (isUser ? "text-primary-foreground hover:underline" : "text-foreground hover:underline");
     return (
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 text-white">
+        <div className={iconClassName}>
           <FileIcon className="h-5 w-5" />
         </div>
         <div className="min-w-0 space-y-1">
-          <p className="break-words font-semibold text-white">{name}</p>
-          <div className="text-xs text-white/70">
+          <p className={titleClassName}>{name}</p>
+          <div className={metaClassName}>
             {sizeLabel ? <span>{sizeLabel}</span> : null}
           </div>
           {downloadUrl ? (
             <div className="pt-1">
               <a
                 href={downloadUrl}
-                className="inline-flex items-center gap-2 text-sm font-medium text-white hover:underline"
+                className={linkClassName}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -468,12 +476,12 @@ function ChatBubble({
 
   const renderAudioBubble = (fileName: string) => (
     <div className="flex items-start gap-2">
-      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white">
-        <Music className="h-4 w-4 text-[#4497d9]" />
+      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-foreground">
+        <Music className="h-4 w-4 text-primary" />
       </div>
       <div className="min-w-0">
-        <p className="font-semibold text-white">{fileName}</p>
-        <p className="text-xs text-white/60">
+        <p className="font-semibold text-primary-foreground">{fileName}</p>
+        <p className="text-xs text-primary-foreground/70">
           {getAudioExtension(fileName)}
         </p>
       </div>
@@ -490,25 +498,25 @@ function ChatBubble({
       >
         <div className="max-w-[70%]">
           {isFileMessage ? (
-            <div className="rounded-2xl bg-[#2278bf] px-3 py-2.5 text-white">
+            <div className="rounded-2xl bg-primary px-3 py-2.5 text-primary-foreground">
               {renderFileBubble()}
-              <div className="mt-2 flex items-center justify-end gap-1 text-xs text-indigo-200">
+              <div className="mt-2 flex items-center justify-end gap-1 text-xs text-primary-foreground/70">
                 <span>{timestamp}</span>
               </div>
             </div>
           ) : (isAudioMessage || isAudioFile) ? (
-            <div className="rounded-2xl bg-[#2278bf] p-1">
-              <div className="rounded-xl bg-[#1269a2] border border-[#4497d9] p-3">
+            <div className="rounded-2xl bg-primary p-1">
+              <div className="rounded-xl bg-primary/90 border border-primary-foreground/20 p-3">
                 {renderAudioBubble(audioFileName || legacyAudioFileName)}
               </div>
               <div className="flex items-center justify-end gap-1 p-2">
-                <span className="text-xs text-indigo-300">{timestamp}</span>
+                <span className="text-xs text-primary-foreground/70">{timestamp}</span>
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-1 rounded-2xl bg-[#2278bf] px-3 py-2.5">
-              <p className="flex-1 text-sm font-medium text-white">{displayContent}</p>
-              <span className="shrink-0 pl-2 text-xs text-indigo-300">{timestamp}</span>
+            <div className="flex items-center gap-1 rounded-2xl bg-primary px-3 py-2.5">
+              <p className="flex-1 text-sm font-medium text-primary-foreground">{displayContent}</p>
+              <span className="shrink-0 pl-2 text-xs text-primary-foreground/70">{timestamp}</span>
             </div>
           )}
         </div>
@@ -524,7 +532,7 @@ function ChatBubble({
       )}
     >
       <div className="max-w-[70%]">
-        <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-800">
+        <div className="rounded-2xl border border-border bg-card p-3">
           {isTranscript ? (
               <TranscriptCard
                 status={(metadata?.transcriptStatus as string) ?? "processing"}
@@ -551,7 +559,7 @@ function ChatBubble({
             <>
               <MarkdownRenderer
                 markdown={displayContent}
-                className="text-sm text-slate-900 break-words dark:text-slate-100"
+                className="text-sm text-foreground break-words"
               />
               
               {/* Источники RAG */}
@@ -562,7 +570,7 @@ function ChatBubble({
                 />
               )}
               
-              <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+              <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                 {resolvedStreaming ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                 <span>{resolvedStreaming ? "Ассистент печатает..." : timestamp}</span>
               </div>
@@ -588,8 +596,8 @@ function TranscriptCard({
 
   return (
     <div className="space-y-2">
-      <div className="rounded-lg bg-slate-100 border-l-2 border-[#095998] p-3 dark:bg-slate-700">
-        <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
+      <div className="rounded-lg bg-muted border-l-2 border-primary p-3">
+        <p className="text-sm font-medium text-foreground">
           Транскрипция аудиофайла
         </p>
       </div>
@@ -599,13 +607,13 @@ function TranscriptCard({
       ) : (
         <>
           {preview ? (
-            <p className="text-sm text-slate-900 line-clamp-6 dark:text-slate-100">{preview}</p>
+            <p className="text-sm text-foreground line-clamp-6">{preview}</p>
           ) : null}
           <div className="flex items-center gap-2 pt-2">
             <Button
               size="sm"
               variant="outline"
-              className="rounded-full text-xs text-[#326994]"
+              className="rounded-full text-xs"
               onClick={onOpen}
               data-testid="button-open-transcript"
             >

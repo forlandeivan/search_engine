@@ -20,12 +20,12 @@ import {
   BookOpen,
   Brain,
   LayoutDashboard,
-  LibraryBig,
+  Layers,
   MessageCircle,
   PanelLeft,
   PanelRight,
   Shield,
-  Sparkles,
+  Sparkle,
   Users,
   Zap,
 } from "lucide-react";
@@ -149,7 +149,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspace }: 
         {
           title: "Навыки",
           url: "/skills",
-          icon: Sparkles,
+          icon: Sparkle,
         },
         {
           title: "Действия",
@@ -169,7 +169,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspace }: 
         {
           title: "Коллекции",
           url: "/vector/collections",
-          icon: LibraryBig,
+          icon: Layers,
         },
         {
           title: "Документация API",

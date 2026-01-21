@@ -131,11 +131,11 @@ export default function ChatSidebar({
       <div className="flex flex-col">
         <Link href="/skills">
           <div
-            className="flex cursor-pointer items-center gap-2 px-6 py-5 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="flex cursor-pointer items-center gap-2 px-4 py-3 hover:bg-accent"
             data-testid="link-manage-skills"
           >
             <Cpu className="h-6 w-6 text-slate-400" />
-            <span className="text-base font-medium text-slate-900 dark:text-slate-100">
+            <span className="text-sm font-medium text-foreground">
               Управление навыками
             </span>
           </div>
@@ -148,7 +148,7 @@ export default function ChatSidebar({
           return (
             <div
               key={skill.id}
-              className="group flex cursor-pointer items-center gap-2 px-6 py-5 hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="group flex cursor-pointer items-center gap-2 px-4 py-3 hover:bg-accent"
               onClick={() => onCreateChatForSkill?.(skill.id)}
               data-testid={`skill-list-item-${skill.id}`}
               data-skill-id={skill.id}
@@ -162,7 +162,7 @@ export default function ChatSidebar({
                 {Icon ? <Icon className="h-6 w-6" /> : <Wand2 className="h-6 w-6" />}
               </span>
               <span
-                className="flex-1 text-base font-medium text-slate-900 dark:text-slate-100"
+                className="flex-1 text-sm font-medium text-foreground"
                 data-testid="skill-name"
               >
                 {skill.name}
@@ -250,14 +250,14 @@ export default function ChatSidebar({
   return (
     <aside
       className={cn(
-        "flex h-full min-h-0 flex-col overflow-hidden border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/40",
+        "flex h-full min-h-0 flex-col overflow-hidden border-r border-border bg-background",
         className
       )}
       data-testid="chat-sidebar"
     >
-      <div className="flex items-center justify-between gap-4 border-b border-slate-300 px-6 py-5 dark:border-slate-700">
+      <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-4">
         <h1
-          className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100"
+          className="text-lg font-semibold tracking-tight text-foreground"
           data-testid="text-sidebar-title"
         >
           AI-ассистент
@@ -265,7 +265,7 @@ export default function ChatSidebar({
         <Button
           variant="outline"
           size="icon"
-          className="h-10 w-10 rounded-full border-slate-300 dark:border-slate-600"
+          className="h-9 w-9 rounded-full"
           onClick={onCreateNewChat}
           disabled={!workspaceId || isCreatingChat}
           data-testid="button-new-chat"
@@ -278,29 +278,29 @@ export default function ChatSidebar({
         </Button>
       </div>
 
-      <div className="border-b border-slate-300 dark:border-slate-700">
+      <div className="border-b border-border">
         {skillsBlock}
       </div>
 
-      <div className="flex flex-col gap-2 px-5 pb-2 pt-4">
+      <div className="flex flex-col gap-2 px-4 pb-2 pt-4">
         <div className="relative">
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Поиск..."
-            className="h-10 rounded-full border-slate-300 bg-white pl-4 pr-10 text-base dark:border-slate-600 dark:bg-slate-800"
+            className="h-9 rounded-full pl-4 pr-10 text-sm"
             data-testid="input-search-chats"
           />
-          <Search className="absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
+          <Search className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         </div>
         {isFetching && !isLoading && (
           <p className="px-1 text-xs text-muted-foreground">Обновляем историю…</p>
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-4 px-6 pb-3 pt-4">
+      <div className="flex items-center justify-between gap-4 px-4 pb-3 pt-4">
         <h2
-          className="text-lg font-semibold text-slate-900 dark:text-slate-100"
+          className="text-sm font-semibold text-foreground"
           data-testid="text-history-title"
         >
           История
@@ -345,10 +345,10 @@ function ChatSidebarItem({
   return (
     <div
       className={cn(
-        "group flex w-full cursor-pointer items-center gap-2 px-6 py-3 text-left transition-colors",
+        "group flex w-full cursor-pointer items-center gap-2 px-4 py-2.5 text-left transition-colors",
         isActive
-          ? "border-r-4 border-[#1269a2] bg-indigo-50 dark:bg-indigo-950/30"
-          : "hover:bg-slate-100 dark:hover:bg-slate-800"
+          ? "bg-primary/5"
+          : "hover:bg-accent"
       )}
       role="button"
       tabIndex={0}
@@ -383,7 +383,7 @@ function ChatSidebarItem({
                   onCancelRename();
                 }
             }}
-            className="h-8"
+            className="h-8 text-sm"
             data-testid="input-rename-chat"
           />
         </form>
@@ -401,7 +401,7 @@ function ChatSidebarItem({
             ) : null}
             <p
               className={cn(
-                "truncate text-base font-medium",
+                "truncate text-sm font-normal",
                 isArchived ? "text-muted-foreground" : "text-slate-900 dark:text-slate-100"
               )}
               data-testid={`text-chat-title-${chat.id}`}
