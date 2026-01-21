@@ -35,6 +35,8 @@ import {
   MAX_TOP_K,
   MIN_RELEVANCE_THRESHOLD,
   MIN_TOP_K,
+  MIN_LLM_MAX_TOKENS,
+  MAX_LLM_MAX_TOKENS,
   indexingRulesSchema,
   type IndexingRulesDto,
 } from "@shared/indexing-rules";
@@ -188,6 +190,12 @@ export default function AdminIndexingRulesPage() {
       if (details?.field === "max_context_tokens") {
         form.setError("maxContextTokens", { message });
       }
+      if (details?.field === "context_input_limit") {
+        form.setError("contextInputLimit", { message });
+      }
+      if (details?.field === "llm_max_tokens") {
+        form.setError("llmMaxTokens", { message });
+      }
       toast({ title: "Ошибка сохранения", description: message, variant: "destructive" });
     }
   });
@@ -304,8 +312,7 @@ export default function AdminIndexingRulesPage() {
                             disabled={providerFieldDisabled}
                             value={field.value}
                             onValueChange={(value) => {
-                              // Устанавливаем значения без валидации
-                              form.setValue("embeddingsProvider", value, { shouldValidate: false, shouldDirty: true });
+                              form.setValue("embeddingsProvider", value, { shouldValidate: true, shouldDirty: true });
                               form.setValue("embeddingsModel", "", { shouldValidate: false, shouldDirty: true });
                               form.clearErrors("embeddingsProvider");
                               form.clearErrors("embeddingsModel");
@@ -402,7 +409,7 @@ export default function AdminIndexingRulesPage() {
                               value={field.value ?? ""}
                               onChange={(event) => {
                                 form.clearErrors("embeddingsModel");
-                                field.onChange(event.target.value);
+                                form.setValue("embeddingsModel", event.target.value, { shouldValidate: true, shouldDirty: true });
                               }}
                             />
                           )}
@@ -455,7 +462,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? undefined : normalized);
+                              form.setValue("chunkSize", normalized === "" ? undefined : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
@@ -485,7 +492,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? undefined : normalized);
+                              form.setValue("chunkOverlap", normalized === "" ? undefined : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
@@ -526,7 +533,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? undefined : normalized);
+                              form.setValue("topK", normalized === "" ? undefined : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
@@ -556,7 +563,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? undefined : normalized);
+                              form.setValue("relevanceThreshold", normalized === "" ? undefined : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
@@ -594,7 +601,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? undefined : normalized);
+                              form.setValue("maxContextTokens", normalized === "" ? null : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
@@ -623,12 +630,52 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? null : normalized);
+                              form.setValue("contextInputLimit", normalized === "" ? null : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
                         <FormDescription>
                           Ограничивает объём истории диалога, отправляемой в обработку. Меньше — дешевле, но меньше "память" диалога. Оставьте пустым, чтобы использовать дефолт.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </section>
+
+              <Separator />
+
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold">LLM</h3>
+                  <p className="text-sm text-muted-foreground">Параметры генерации ответов языковой моделью.</p>
+                </div>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="llmMaxTokens"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel htmlFor="indexing-llm-max-tokens">Макс. токенов ответа LLM</FormLabel>
+                        <FormControl>
+                          <Input
+                            id="indexing-llm-max-tokens"
+                            type="number"
+                            min={MIN_LLM_MAX_TOKENS}
+                            max={MAX_LLM_MAX_TOKENS}
+                            step={256}
+                            disabled={disableInputs}
+                            value={field.value ?? ""}
+                            onChange={(event) => {
+                              const raw = event.target.value;
+                              const normalized = normalizeNumber(raw);
+                              form.setValue("llmMaxTokens", normalized === "" ? null : normalized, { shouldValidate: true, shouldDirty: true });
+                            }}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Максимальное количество токенов в ответе LLM. Увеличьте для длинных ответов (анализ документов, отчёты). По умолчанию 4096.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

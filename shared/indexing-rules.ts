@@ -10,6 +10,8 @@ export const MIN_MAX_CONTEXT_TOKENS = 500;
 export const MAX_MAX_CONTEXT_TOKENS = 20_000;
 export const MIN_CONTEXT_INPUT_LIMIT = 100;
 export const MAX_CONTEXT_INPUT_LIMIT = 50_000;
+export const MIN_LLM_MAX_TOKENS = 256;
+export const MAX_LLM_MAX_TOKENS = 32_000;
 
 export const indexingRulesSchema = z.object({
   embeddingsProvider: z.string().trim().min(1, "Укажите провайдера эмбеддингов").max(255),
@@ -33,12 +35,19 @@ export const indexingRulesSchema = z.object({
     .number()
     .int()
     .min(MIN_MAX_CONTEXT_TOKENS, `maxContextTokens должно быть не меньше ${MIN_MAX_CONTEXT_TOKENS}`)
-    .max(MAX_MAX_CONTEXT_TOKENS, `maxContextTokens должно быть не больше ${MAX_MAX_CONTEXT_TOKENS}`),
+    .max(MAX_MAX_CONTEXT_TOKENS, `maxContextTokens должно быть не больше ${MAX_MAX_CONTEXT_TOKENS}`)
+    .nullable(),
   contextInputLimit: z
     .number()
     .int()
     .min(MIN_CONTEXT_INPUT_LIMIT, `contextInputLimit должно быть не меньше ${MIN_CONTEXT_INPUT_LIMIT}`)
     .max(MAX_CONTEXT_INPUT_LIMIT, `contextInputLimit должно быть не больше ${MAX_CONTEXT_INPUT_LIMIT}`)
+    .nullable(),
+  llmMaxTokens: z
+    .number()
+    .int()
+    .min(MIN_LLM_MAX_TOKENS, `llmMaxTokens должно быть не меньше ${MIN_LLM_MAX_TOKENS}`)
+    .max(MAX_LLM_MAX_TOKENS, `llmMaxTokens должно быть не больше ${MAX_LLM_MAX_TOKENS}`)
     .nullable(),
   citationsEnabled: z.boolean(),
 });
@@ -70,5 +79,6 @@ export const DEFAULT_INDEXING_RULES: IndexingRulesDto = {
   relevanceThreshold: 0.5,
   maxContextTokens: 3000,
   contextInputLimit: null,
+  llmMaxTokens: 4096,
   citationsEnabled: true,
 };

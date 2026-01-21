@@ -11,6 +11,12 @@ import {
   MAX_TOP_K,
   MIN_RELEVANCE_THRESHOLD,
   MIN_TOP_K,
+  MIN_LLM_MAX_TOKENS,
+  MAX_LLM_MAX_TOKENS,
+  MIN_MAX_CONTEXT_TOKENS,
+  MAX_MAX_CONTEXT_TOKENS,
+  MIN_CONTEXT_INPUT_LIMIT,
+  MAX_CONTEXT_INPUT_LIMIT,
   indexingRulesSchema,
   type IndexingRulesDto,
   type UpdateIndexingRulesDto,
@@ -79,6 +85,7 @@ class DbIndexingRulesRepository implements IndexingRulesRepository {
           relevanceThreshold: values.relevanceThreshold,
           maxContextTokens: values.maxContextTokens,
           contextInputLimit: values.contextInputLimit,
+          llmMaxTokens: values.llmMaxTokens,
           citationsEnabled: values.citationsEnabled,
           updatedByAdminId: values.updatedByAdminId ?? null,
           updatedAt: sql`CURRENT_TIMESTAMP`,
@@ -102,8 +109,9 @@ function mapToDto(row: StoredIndexingRules | null): IndexingRulesDto {
     chunkOverlap: row.chunkOverlap,
     topK: row.topK,
     relevanceThreshold: row.relevanceThreshold,
-    maxContextTokens: row.maxContextTokens,
+    maxContextTokens: row.maxContextTokens ?? DEFAULT_INDEXING_RULES.maxContextTokens,
     contextInputLimit: row.contextInputLimit,
+    llmMaxTokens: row.llmMaxTokens ?? DEFAULT_INDEXING_RULES.llmMaxTokens,
     citationsEnabled: row.citationsEnabled,
   };
 }
@@ -124,9 +132,13 @@ function normalizeString(field: string, value: string | undefined): string | und
   return trimmed;
 }
 
-function normalizeInteger(field: string, value: number | undefined, options: { min?: number; max?: number; gt?: number } = {}): number | undefined {
+function normalizeInteger(field: string, value: number | null | undefined, options: { min?: number; max?: number; gt?: number } = {}): number | null | undefined {
   if (value === undefined) {
     return undefined;
+  }
+
+  if (value === null) {
+    return null;
   }
 
   if (!Number.isInteger(value)) {
@@ -235,6 +247,7 @@ export class IndexingRulesService {
       relevanceThreshold: values.relevanceThreshold,
       maxContextTokens: values.maxContextTokens,
       contextInputLimit: values.contextInputLimit,
+      llmMaxTokens: values.llmMaxTokens,
       citationsEnabled: values.citationsEnabled,
       updatedByAdminId: actorAdminId ?? existing?.updatedByAdminId ?? null,
       createdAt: existing?.createdAt ?? new Date(),
@@ -365,6 +378,54 @@ export class IndexingRulesService {
             `Порог релевантности должен быть в диапазоне ${MIN_RELEVANCE_THRESHOLD}..${MAX_RELEVANCE_THRESHOLD}`,
             "INDEXING_THRESHOLD_OUT_OF_RANGE",
             "relevance_threshold",
+          );
+        }
+        throw error;
+      }
+    }
+
+    if (patch.maxContextTokens !== undefined) {
+      try {
+        const maxContextTokens = normalizeInteger("maxContextTokens", patch.maxContextTokens, { min: MIN_MAX_CONTEXT_TOKENS, max: MAX_MAX_CONTEXT_TOKENS });
+        sanitizedPatch.maxContextTokens = maxContextTokens;
+      } catch (error) {
+        if (error instanceof IndexingRulesError) {
+          throw new IndexingRulesDomainError(
+            `maxContextTokens должно быть в диапазоне ${MIN_MAX_CONTEXT_TOKENS}..${MAX_MAX_CONTEXT_TOKENS}`,
+            "INDEXING_MAX_CONTEXT_TOKENS_OUT_OF_RANGE",
+            "max_context_tokens",
+          );
+        }
+        throw error;
+      }
+    }
+
+    if (patch.contextInputLimit !== undefined) {
+      try {
+        const contextInputLimit = normalizeInteger("contextInputLimit", patch.contextInputLimit, { min: MIN_CONTEXT_INPUT_LIMIT, max: MAX_CONTEXT_INPUT_LIMIT });
+        sanitizedPatch.contextInputLimit = contextInputLimit;
+      } catch (error) {
+        if (error instanceof IndexingRulesError) {
+          throw new IndexingRulesDomainError(
+            `contextInputLimit должно быть в диапазоне ${MIN_CONTEXT_INPUT_LIMIT}..${MAX_CONTEXT_INPUT_LIMIT}`,
+            "INDEXING_CONTEXT_INPUT_LIMIT_OUT_OF_RANGE",
+            "context_input_limit",
+          );
+        }
+        throw error;
+      }
+    }
+
+    if (patch.llmMaxTokens !== undefined) {
+      try {
+        const llmMaxTokens = normalizeInteger("llmMaxTokens", patch.llmMaxTokens, { min: MIN_LLM_MAX_TOKENS, max: MAX_LLM_MAX_TOKENS });
+        sanitizedPatch.llmMaxTokens = llmMaxTokens;
+      } catch (error) {
+        if (error instanceof IndexingRulesError) {
+          throw new IndexingRulesDomainError(
+            `llmMaxTokens должно быть в диапазоне ${MIN_LLM_MAX_TOKENS}..${MAX_LLM_MAX_TOKENS}`,
+            "INDEXING_LLM_MAX_TOKENS_OUT_OF_RANGE",
+            "llm_max_tokens",
           );
         }
         throw error;

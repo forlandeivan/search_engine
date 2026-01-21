@@ -18,6 +18,7 @@
 import { Router, type Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
+import { performance } from 'perf_hooks';
 import multer from 'multer';
 import { storage } from '../storage';
 import { createLogger, logger } from '../lib/logger';
@@ -372,14 +373,38 @@ chatRouter.get('/sessions/:chatId/events', asyncHandler(async (req, res) => {
     flushHeaders.call(res);
   }
 
+  // Heartbeat для поддержания соединения активным (особенно важно для HTTP/2)
+  // Отправляем комментарий каждые 30 секунд, чтобы соединение не считалось idle
+  const heartbeatInterval = setInterval(() => {
+    try {
+      // SSE комментарии используются как keep-alive
+      res.write(': heartbeat\n\n');
+      const flusher = (res as Response & { flush?: () => void }).flush;
+      if (typeof flusher === 'function') {
+        flusher.call(res);
+      }
+    } catch (error) {
+      // Игнорируем ошибки записи (соединение может быть закрыто)
+      logger.debug({ chatId, error }, 'Heartbeat write error, connection may be closed');
+    }
+  }, 30000); // 30 секунд
+
   const listener = (payload: ChatEventPayload) => {
-    logger.debug({ chatId, payloadType: payload.type, hasMessage: !!payload.message, hasAction: !!payload.action }, 'Sending SSE event to client');
-    sendSseEvent(res, 'message', payload);
+    try {
+      logger.debug({ chatId, payloadType: payload.type, hasMessage: !!payload.message, hasAction: !!payload.action }, 'Sending SSE event to client');
+      sendSseEvent(res, 'message', payload);
+    } catch (error) {
+      // Игнорируем ошибки записи (соединение может быть закрыто)
+      logger.debug({ chatId, error }, 'Failed to send SSE event, connection may be closed');
+      offChatEvent(chatId, listener);
+      clearInterval(heartbeatInterval);
+    }
   };
 
   onChatEvent(chatId, listener);
 
   req.on('close', () => {
+    clearInterval(heartbeatInterval);
     offChatEvent(chatId, listener);
     res.end();
   });
@@ -799,13 +824,36 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       return;
     }
 
-    // Standard LLM completion
+    // Standard LLM completion (no RAG)
     const requestBody = buildChatCompletionRequestBody(context, { stream: wantsStream });
     const accessToken = await fetchAccessToken(context.provider);
     const totalPromptChars = Array.isArray(requestBody[context.requestConfig.messagesField]) ? JSON.stringify(requestBody[context.requestConfig.messagesField]).length : 0;
     const resolvedModelKey = context.model ?? context.provider.model ?? null;
     const resolvedModelId = context.modelInfo?.id ?? null;
     const llmCallInput = { providerId: context.provider.id, endpoint: context.provider.completionUrl ?? null, model: resolvedModelKey, modelId: resolvedModelId, stream: wantsStream, temperature: context.requestConfig.temperature ?? null, messageCount: context.messages.length, promptLength: totalPromptChars };
+
+    // Log LLM request start (pure LLM without RAG)
+    const llmStartTime = performance.now();
+    logger.info({
+      component: 'LLM_PIPELINE',
+      step: 'start',
+      chatId: req.params.chatId,
+      skillId: context.skill?.id ?? null,
+      skillName: context.skill?.name ?? null,
+      workspaceId,
+      providerId: context.provider.id,
+      providerName: context.provider.name,
+      model: resolvedModelKey,
+      modelId: resolvedModelId,
+      isStreaming: wantsStream,
+      messagesCount: context.messages.length,
+      promptLength: totalPromptChars,
+      temperature: context.requestConfig.temperature ?? null,
+      maxTokens: context.requestConfig.maxTokens ?? null,
+      userMessagePreview: payload.content.substring(0, 200),
+      hasSystemPrompt: !!context.skill?.systemPrompt,
+      systemPromptLength: context.skill?.systemPrompt?.length ?? 0,
+    }, `[LLM PIPELINE] START: chat=${req.params.chatId}, provider=${context.provider.name}, model=${resolvedModelKey}, messages=${context.messages.length}, stream=${wantsStream}`);
 
     const llmGuardDecision = await workspaceOperationGuard.check(buildLlmOperationContext({ workspaceId, providerId: context.provider.id ?? context.provider.providerType ?? 'unknown', model: resolvedModelKey, modelId: resolvedModelId, modelKey: context.modelInfo?.modelKey ?? resolvedModelKey, scenario: context.skillConfig ? 'skill' : 'chat', tokens: context.requestConfig.maxTokens }));
     if (!llmGuardDecision.allowed) {
@@ -841,10 +889,27 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       try {
         const completion = await completionPromise;
         llmCallCompleted = true;
+        const llmDurationMs = performance.now() - llmStartTime;
         const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
         const llmUsageMeasurement = measureTokensForModel(tokensTotal, { consumptionUnit: context.modelInfo?.consumptionUnit ?? 'TOKENS_1K', modelKey: context.modelInfo?.modelKey ?? resolvedModelKey });
         const llmPrice = calculatePriceSnapshot(context.modelInfo as ModelInfoForUsage, llmUsageMeasurement);
         const usageOperationId = operationId ?? executionId ?? randomUUID();
+
+        // Log LLM response (streaming)
+        logger.info({
+          component: 'LLM_PIPELINE',
+          step: 'response',
+          chatId: req.params.chatId,
+          skillId: context.skill?.id ?? null,
+          workspaceId,
+          providerId: context.provider.id,
+          model: resolvedModelKey,
+          isStreaming: true,
+          answerLength: completion.answer.length,
+          usageTokens: tokensTotal,
+          durationMs: Math.round(llmDurationMs),
+          answerPreview: completion.answer.substring(0, 200),
+        }, `[LLM PIPELINE] RESPONSE: ${completion.answer.length} chars, ${tokensTotal} tokens in ${Math.round(llmDurationMs)}ms (streaming)`);
 
         await safeLogStep('CALL_LLM', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { output: { usageTokens: tokensTotal, usageUnits: llmUsageMeasurement?.quantity ?? null, usageUnit: llmUsageMeasurement?.unit ?? null, creditsCharged: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null, responsePreview: completion.answer.slice(0, 160) } });
 
@@ -867,6 +932,24 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
         res.end();
       } catch (error) {
         const info = describeErrorForLog(error);
+        const llmErrorDurationMs = performance.now() - llmStartTime;
+        
+        // Log LLM error (streaming)
+        logger.error({
+          component: 'LLM_PIPELINE',
+          step: 'error',
+          chatId: req.params.chatId,
+          skillId: context.skill?.id ?? null,
+          workspaceId,
+          providerId: context.provider.id,
+          model: resolvedModelKey,
+          isStreaming: true,
+          errorCode: info.code,
+          errorMessage: info.message,
+          durationMs: Math.round(llmErrorDurationMs),
+          llmCallCompleted,
+        }, `[LLM PIPELINE] ERROR: ${info.message} in ${Math.round(llmErrorDurationMs)}ms (streaming)`);
+        
         if (!llmCallCompleted) await safeLogStep('CALL_LLM', SKILL_EXECUTION_STEP_STATUS.ERROR, { errorCode: info.code, errorMessage: info.message, diagnosticInfo: info.diagnosticInfo });
         if (forwarder) { try { await forwarder; } catch { /* ignore */ } }
         sendSseEvent(res, 'error', { message: error instanceof Error ? error.message : 'Ошибка генерации ответа' });
@@ -884,10 +967,27 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
     try {
       completion = await executeLlmCompletion(context.provider, accessToken, requestBody);
       llmCallCompleted = true;
+      const llmDurationMs = performance.now() - llmStartTime;
       const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
       llmUsageMeasurement = measureTokensForModel(tokensTotal, { consumptionUnit: context.modelInfo?.consumptionUnit ?? 'TOKENS_1K', modelKey: context.modelInfo?.modelKey ?? resolvedModelKey });
       llmPrice = calculatePriceSnapshot(context.modelInfo as ModelInfoForUsage, llmUsageMeasurement ?? null);
       const usageOperationId = operationId ?? executionId ?? randomUUID();
+
+      // Log LLM response (sync)
+      logger.info({
+        component: 'LLM_PIPELINE',
+        step: 'response',
+        chatId: req.params.chatId,
+        skillId: context.skill?.id ?? null,
+        workspaceId,
+        providerId: context.provider.id,
+        model: resolvedModelKey,
+        isStreaming: false,
+        answerLength: completion.answer.length,
+        usageTokens: tokensTotal,
+        durationMs: Math.round(llmDurationMs),
+        answerPreview: completion.answer.substring(0, 200),
+      }, `[LLM PIPELINE] RESPONSE: ${completion.answer.length} chars, ${tokensTotal} tokens in ${Math.round(llmDurationMs)}ms (sync)`);
 
       await safeLogStep('CALL_LLM', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { output: { usageTokens: tokensTotal, usageUnits: llmUsageMeasurement?.quantity ?? null, usageUnit: llmUsageMeasurement?.unit ?? null, creditsCharged: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null, responsePreview: completion.answer.slice(0, 160) } });
 
@@ -903,6 +1003,24 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       }
     } catch (error) {
       const info = describeErrorForLog(error);
+      const llmErrorDurationMs = performance.now() - llmStartTime;
+      
+      // Log LLM error (sync)
+      logger.error({
+        component: 'LLM_PIPELINE',
+        step: 'error',
+        chatId: req.params.chatId,
+        skillId: context.skill?.id ?? null,
+        workspaceId,
+        providerId: context.provider.id,
+        model: resolvedModelKey,
+        isStreaming: false,
+        errorCode: info.code,
+        errorMessage: info.message,
+        durationMs: Math.round(llmErrorDurationMs),
+        llmCallCompleted,
+      }, `[LLM PIPELINE] ERROR: ${info.message} in ${Math.round(llmErrorDurationMs)}ms (sync)`);
+      
       await safeLogStep('CALL_LLM', SKILL_EXECUTION_STEP_STATUS.ERROR, { errorCode: info.code, errorMessage: info.message, diagnosticInfo: info.diagnosticInfo });
       throw error;
     }
