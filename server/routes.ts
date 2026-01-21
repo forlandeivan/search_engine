@@ -4060,8 +4060,65 @@ async function runKnowledgeBaseRagPipeline(options: {
       vectorWeight = 0;
     }
 
+    // Context Caching: проверяем cache hit перед retrieval
+    const chatId = typeof body.chat_id === "string" ? body.chat_id.trim() : null;
+    const workspaceIdForCache = typeof body.workspace_id === "string" ? body.workspace_id.trim() : null;
+    let cacheHit = false;
+    let cachedCombinedResults: KnowledgeBaseRagCombinedChunk[] | null = null;
+
+    if (enableContextCaching && chatId && workspaceIdForCache) {
+      try {
+        // Инициализируем кэш для чата
+        getOrCreateCache(chatId, workspaceIdForCache, contextCacheTtlSeconds ?? undefined);
+        
+        // Проверяем, есть ли похожий кэшированный результат
+        const cachedResult = findSimilarCachedRetrieval(
+          chatId,
+          query,
+          undefined, // embeddingVector ещё не вычислен
+          0.85
+        );
+        
+        if (cachedResult && cachedResult.chunks.length > 0) {
+          cacheHit = true;
+          // Преобразуем кэшированные chunks в KnowledgeBaseRagCombinedChunk[]
+          cachedCombinedResults = cachedResult.chunks.map((chunk) => ({
+            chunkId: chunk.chunk_id,
+            documentId: chunk.doc_id,
+            docTitle: chunk.doc_title,
+            sectionTitle: chunk.section_title,
+            snippet: chunk.snippet,
+            text: chunk.text ?? chunk.snippet,
+            bm25Score: chunk.scores?.bm25 ?? 0,
+            vectorScore: chunk.scores?.vector ?? 0,
+            nodeId: chunk.node_id ?? null,
+            nodeSlug: chunk.node_slug ?? null,
+            knowledgeBaseId: chunk.knowledge_base_id ?? undefined,
+            combinedScore: chunk.score,
+            bm25Normalized: 0,
+            vectorNormalized: 0,
+          }));
+          
+          logger.info({
+            component: 'RAG_PIPELINE',
+            step: 'context_cache_hit',
+            chatId,
+            query: query.substring(0, 100),
+            cachedChunksCount: cachedCombinedResults.length,
+          }, '[RAG CACHE] Cache hit, using cached retrieval results');
+        }
+      } catch (error) {
+        logger.warn({
+          component: 'RAG_PIPELINE',
+          step: 'context_cache_hit_error',
+          chatId,
+          error: error instanceof Error ? error.message : String(error),
+        }, '[RAG CACHE] Cache hit check failed, proceeding with retrieval');
+      }
+    }
+
     const totalStart = performance.now();
-    emitStreamStatus("retrieving", "Ищу источники…");
+    emitStreamStatus("retrieving", cacheHit ? "Использую кэш…" : "Ищу источники…");
     const retrievalStart = performance.now();
     const suggestionLimit = Math.max(bm25Limit, vectorLimit, effectiveTopK);
 
@@ -4070,8 +4127,8 @@ async function runKnowledgeBaseRagPipeline(options: {
     >["sections"];
     let bm25Sections: SuggestSections = [];
 
-    // BM25 поиск выполняется только если bm25Weight > 0
-    if (bm25Weight > 0) {
+    // BM25 поиск выполняется только если bm25Weight > 0 И нет cache hit
+    if (bm25Weight > 0 && !cacheHit) {
       const bm25Step = startPipelineStep(
         "bm25_search",
         { limit: suggestionLimit, weight: bm25Weight, knowledgeBaseIds },
@@ -4129,7 +4186,8 @@ async function runKnowledgeBaseRagPipeline(options: {
       bm25ResultCount = 0;
     }
 
-    if (vectorWeight > 0) {
+    // Векторный поиск выполняется только если vectorWeight > 0 И нет cache hit
+    if (vectorWeight > 0 && !cacheHit) {
       const vectorStep = startPipelineStep(
         "vector_search",
         {
@@ -4693,25 +4751,37 @@ async function runKnowledgeBaseRagPipeline(options: {
 
     const combinedStep = startPipelineStep(
       "combine_results",
-      { topK: effectiveTopK, bm25Weight, vectorWeight },
+      { topK: effectiveTopK, bm25Weight, vectorWeight, cacheHit },
       "Combining retrieval results",
     );
 
-    let combinedResults = Array.from(aggregated.values())
-      .map((item) => {
-        const bm25Normalized = bm25Max > 0 ? item.bm25Score / bm25Max : 0;
-        const vectorNormalized = vectorMax > 0 ? item.vectorScore / vectorMax : 0;
-        const combinedScore = bm25Normalized * bm25Weight + vectorNormalized * vectorWeight;
-
-        return {
-          ...item,
-          combinedScore,
-          bm25Normalized,
-          vectorNormalized,
-          } satisfies KnowledgeBaseRagCombinedChunk;
-        })
-        .sort((a, b) => b.combinedScore - a.combinedScore);
+    let combinedResults: KnowledgeBaseRagCombinedChunk[];
     
+    if (cacheHit && cachedCombinedResults) {
+      // Используем кэшированные результаты
+      combinedResults = cachedCombinedResults;
+      logger.info({
+        component: 'RAG_PIPELINE',
+        step: 'using_cached_results',
+        cachedResultsCount: combinedResults.length,
+      }, '[RAG CACHE] Using cached combined results');
+    } else {
+      // Обычная логика объединения результатов
+      combinedResults = Array.from(aggregated.values())
+        .map((item) => {
+          const bm25Normalized = bm25Max > 0 ? item.bm25Score / bm25Max : 0;
+          const vectorNormalized = vectorMax > 0 ? item.vectorScore / vectorMax : 0;
+          const combinedScore = bm25Normalized * bm25Weight + vectorNormalized * vectorWeight;
+
+          return {
+            ...item,
+            combinedScore,
+            bm25Normalized,
+            vectorNormalized,
+            } satisfies KnowledgeBaseRagCombinedChunk;
+          })
+          .sort((a, b) => b.combinedScore - a.combinedScore);
+    }
 
     const { combinedResults: processedResults } = applyRetrievalPostProcessing({
       combinedResults,
@@ -4752,15 +4822,11 @@ async function runKnowledgeBaseRagPipeline(options: {
     retrievalDuration = performance.now() - retrievalStart;
     combinedStep.finish({ combined: combinedResultCount, vectorDocuments: vectorDocumentCount });
 
-    // Context Caching: сохраняем результаты retrieval в кэш и добавляем накопленные chunks
-    const chatId = typeof body.chat_id === "string" ? body.chat_id.trim() : null;
-    const workspaceIdForCache = typeof body.workspace_id === "string" ? body.workspace_id.trim() : null;
+    // Context Caching: сохраняем результаты retrieval в кэш (только если не было cache hit)
+    // chatId и workspaceIdForCache уже объявлены выше при проверке cache hit
     
-    if (enableContextCaching && chatId && workspaceIdForCache) {
+    if (enableContextCaching && chatId && workspaceIdForCache && !cacheHit) {
       try {
-        // Инициализируем кэш для чата
-        getOrCreateCache(chatId, workspaceIdForCache, contextCacheTtlSeconds ?? undefined);
-        
         // Преобразуем combinedResults в RagChunk[] для кэширования
         const chunksToCache: RagChunk[] = combinedResults.map((item) => ({
           chunk_id: item.chunkId,

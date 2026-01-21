@@ -8,7 +8,6 @@ import { indexingRulesService } from "./indexing-rules";
 import type { ChatConversationMessage } from "./chat-service";
 import { createLogger } from "./lib/logger";
 import { rewriteQuery, type QueryRewriteResult } from "./query-rewriter";
-import { storage } from "./storage";
 import {
   getOrCreateCache,
   addRetrievalToCache,

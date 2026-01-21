@@ -7,6 +7,7 @@ import type { AssistantActionState, ChatMessage } from "@/types/chat";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChatCitations } from "./ChatCitations";
+import { ChatSourcesPanel } from "./ChatSourcesPanel";
 import type { RagChunk } from "@/types/search";
 
 type ReadOnlyReason = "chat" | "skill";
@@ -30,6 +31,7 @@ type ChatMessagesAreaProps = {
   onOpenCard?: (cardId: string, fallbackTranscriptId?: string | null, defaultTabId?: string | null) => void;
   onRenameChat?: (title: string) => Promise<void>;
   workspaceId?: string;
+  isRagSkill?: boolean; // Является ли навык RAG-навыком
 };
 
 export default function ChatMessagesArea({
@@ -51,6 +53,7 @@ export default function ChatMessagesArea({
   onOpenCard,
   onRenameChat,
   workspaceId,
+  isRagSkill = false,
 }: ChatMessagesAreaProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -161,6 +164,14 @@ export default function ChatMessagesArea({
               >
                 {headerTitle}
               </h1>
+              
+              {/* Панель источников для RAG-навыков */}
+              {isRagSkill && chatId && workspaceId && (
+                <ChatSourcesPanel 
+                  chatId={chatId}
+                  workspaceId={workspaceId}
+                />
+              )}
             </div>
           ) : null}
           {isEditingTitle ? (

@@ -9,7 +9,7 @@ import { BotActionIndicatorRow } from "@/components/chat/BotActionIndicatorRow";
 import type { BotAction } from "@shared/schema";
 import { computeCurrentAction, countOtherActiveActions } from "@/lib/botAction";
 import { TranscriptCanvas } from "@/components/chat/TranscriptCanvas";
-import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM } from "@/hooks/useChats";
+import { useChats, useChatMessages, useCreateChat, useRenameChat, sendChatMessageLLM } from "@/hooks/useChats";
 import { throwIfResNotOk } from "@/lib/queryClient";
 import { useSkills } from "@/hooks/useSkills";
 import { formatApiErrorMessage, isApiError } from "@/lib/api-errors";
@@ -92,6 +92,11 @@ export default function ChatPage({ params }: ChatPageProps) {
   const botActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { createChat } = useCreateChat();
+  const { renameChat } = useRenameChat({
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["chats"] });
+    },
+  });
   const [creatingSkillId, setCreatingSkillId] = useState<string | null>(null);
 
   const {
@@ -1084,6 +1089,7 @@ export default function ChatPage({ params }: ChatPageProps) {
           <ChatMessagesArea
               chatTitle={chatTitle}
               skillName={skillLabel}
+              chatId={effectiveChatId ?? undefined}
               assistantAction={effectiveAssistantAction}
               isReadOnly={isReadOnlyChat}
               messages={visibleMessages}
@@ -1098,6 +1104,7 @@ export default function ChatPage({ params }: ChatPageProps) {
                 setOpenTranscript({ id, tabId: defaultTabId ?? null })
               }
               workspaceId={workspaceId}
+              isRagSkill={activeSkill?.mode === "rag"}
               onOpenCard={async (cardId, fallbackTranscriptId, defaultTabId) => {
                 if (!workspaceId) return;
                 try {
@@ -1126,6 +1133,9 @@ export default function ChatPage({ params }: ChatPageProps) {
                 }
               }}
               readOnlyReason={readOnlyReason}
+              onRenameChat={effectiveChatId ? async (title: string) => {
+                await renameChat({ chatId: effectiveChatId, title });
+              } : undefined}
             />
           <div className="shrink-0">
             <BotActionIndicatorRow action={currentBotAction} otherActiveCount={otherActiveCount > 0 ? otherActiveCount : undefined} />

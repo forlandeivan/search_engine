@@ -259,6 +259,98 @@ chatRouter.get('/sessions/:chatId/messages', asyncHandler(async (req, res) => {
 }));
 
 /**
+ * GET /sessions/:chatId/sources
+ * Get accumulated sources from all messages in the chat
+ */
+chatRouter.get('/sessions/:chatId/sources', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const chatId = req.params.chatId;
+  
+  // Проверяем доступ к чату
+  await getChatById(chatId, workspaceId, user.id);
+  
+  // Получаем все сообщения чата
+  const messages = await getChatMessages(chatId, workspaceId, user.id);
+  
+  // Накопление источников
+  const sourcesMap = new Map<string, {
+    chunk_id: string;
+    doc_id: string;
+    doc_title: string;
+    section_title: string | null;
+    snippet?: string;
+    score?: number;
+    totalScore: number;
+    usedInMessages: string[];
+    firstUsedAt: string;
+    node_id?: string | null;
+    node_slug?: string | null;
+    knowledge_base_id?: string | null;
+  }>();
+  
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    
+    const metadata = message.metadata;
+    if (!metadata || typeof metadata !== "object") continue;
+    
+    const citations = (metadata as { citations?: unknown }).citations;
+    if (!Array.isArray(citations)) continue;
+    
+    for (const citation of citations) {
+      if (typeof citation !== "object" || citation === null) continue;
+      
+      const citationRecord = citation as Record<string, unknown>;
+      const chunkId = typeof citationRecord.chunk_id === "string" ? citationRecord.chunk_id : null;
+      const docId = typeof citationRecord.doc_id === "string" ? citationRecord.doc_id : null;
+      
+      if (!chunkId && !docId) continue;
+      
+      const key = chunkId || docId || "";
+      const score = typeof citationRecord.score === "number" ? citationRecord.score : 0;
+      
+      if (sourcesMap.has(key)) {
+        const existing = sourcesMap.get(key)!;
+        if (!existing.usedInMessages.includes(message.id)) {
+          existing.usedInMessages.push(message.id);
+        }
+        existing.totalScore = Math.max(existing.totalScore, score);
+      } else {
+        sourcesMap.set(key, {
+          chunk_id: chunkId || "",
+          doc_id: docId || "",
+          doc_title: typeof citationRecord.doc_title === "string" ? citationRecord.doc_title : "",
+          section_title: typeof citationRecord.section_title === "string" ? citationRecord.section_title : null,
+          snippet: typeof citationRecord.snippet === "string" ? citationRecord.snippet : undefined,
+          score: score > 0 ? score : undefined,
+          totalScore: score,
+          usedInMessages: [message.id],
+          firstUsedAt: message.createdAt,
+          node_id: typeof citationRecord.node_id === "string" ? citationRecord.node_id : null,
+          node_slug: typeof citationRecord.node_slug === "string" ? citationRecord.node_slug : null,
+          knowledge_base_id: typeof citationRecord.knowledge_base_id === "string" ? citationRecord.knowledge_base_id : null,
+        });
+      }
+    }
+  }
+  
+  const sources = Array.from(sourcesMap.values())
+    .sort((a, b) => b.totalScore - a.totalScore);
+  
+  const totalDocuments = new Set(sources.map(s => s.doc_id)).size;
+  
+  res.json({
+    chatId,
+    totalSources: sources.length,
+    totalDocuments,
+    sources,
+  });
+}));
+
+/**
  * GET /sessions/:chatId/events
  * Subscribe to chat events (SSE)
  */

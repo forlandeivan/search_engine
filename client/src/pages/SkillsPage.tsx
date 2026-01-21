@@ -1247,6 +1247,77 @@ export function SkillFormContent({
                             />
                           )}
                         </div>
+
+                        {/* Context Caching */}
+                        <div className="space-y-4 border-t pt-4">
+                          <div className="flex items-center gap-2">
+                            <FormLabel className="text-sm font-medium">Кэширование контекста</FormLabel>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">
+                                    Переиспользует найденные документы в рамках одного диалога для ускорения ответов на уточняющие вопросы.
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+
+                          <FormField
+                            control={form.control}
+                            name="ragEnableContextCaching"
+                            render={({ field }) => (
+                              <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                                <div className="space-y-0.5">
+                                  <FormLabel className="text-sm font-medium">
+                                    Включить кэширование
+                                  </FormLabel>
+                                  <FormDescription className="text-xs text-muted-foreground">
+                                    Сохранять результаты поиска между запросами в диалоге
+                                  </FormDescription>
+                                </div>
+                                <FormControl>
+                                  <Switch
+                                    checked={field.value ?? false}
+                                    onCheckedChange={field.onChange}
+                                    disabled={controlsDisabled}
+                                  />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+
+                          {form.watch("ragEnableContextCaching") && (
+                            <FormField
+                              control={form.control}
+                              name="ragContextCacheTtlSeconds"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel className="text-sm font-medium">
+                                    Время жизни кэша (секунды)
+                                  </FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      min={60}
+                                      max={1800}
+                                      value={field.value ?? 300}
+                                      onChange={(e) => field.onChange(parseInt(e.target.value) || 300)}
+                                      disabled={controlsDisabled}
+                                    />
+                                  </FormControl>
+                                  <FormDescription className="text-xs text-muted-foreground">
+                                    По умолчанию: 300 секунд (5 минут). Минимум: 60, максимум: 1800.
+                                  </FormDescription>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          )}
+                        </div>
                       </div>
                     </div>
                     ) : null}
