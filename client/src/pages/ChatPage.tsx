@@ -1110,7 +1110,7 @@ export default function ChatPage({ params }: ChatPageProps) {
         onCreateChatForSkill={handleCreateChatForSkill}
         isCreatingChat={isDefaultCreating}
         creatingSkillId={creatingSkillId}
-        className="w-[400px] shrink-0"
+        className="w-[312px] shrink-0"
       />
 
       <section className={cn(
