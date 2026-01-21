@@ -75,7 +75,8 @@ export default function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { toast } = useToast();
   const MAX_ROWS = 10;
-  const disabledTooltip = disabled ? readOnlyHint ?? "Чат архивирован, ввод недоступен" : null;
+  // Показываем tooltip только когда есть readOnlyHint (архивация), а не просто при disabled (обработка запроса)
+  const disabledTooltip = readOnlyHint ?? null;
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
