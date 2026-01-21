@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -57,12 +57,31 @@ export function IndexingWizardModal({
   const [mode, setMode] = useState<WizardMode>("select");
   const [step, setStep] = useState<WizardStep>("embeddings-and-chunking");
   const [config, setConfig] = useState<IndexingWizardConfig>(initialConfig ?? defaultConfig);
+  const [configKey, setConfigKey] = useState(0); // Ключ для принудительного пересоздания компонентов
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
-  const [showResetDialog, setShowResetDialog] = useState(false);
   const [saveToPolicy, setSaveToPolicy] = useState(true);
   const [indexingMode, setIndexingMode] = useState<"full" | "changed">("changed");
   const [isEmbeddingsStepValid, setIsEmbeddingsStepValid] = useState(true);
+
+  // Синхронизация config при открытии модалки
+  useEffect(() => {
+    if (open && mode === "select") {
+      // При открытии модалки сбрасываем к начальному состоянию
+      const resetConfig = initialConfig ?? defaultConfig;
+      // Глубокое копирование конфигурации
+      const newConfig: IndexingWizardConfig = {
+        ...resetConfig,
+        schemaFields: resetConfig.schemaFields.map((field) => ({
+          ...field,
+          expression: [...field.expression],
+        })),
+      };
+      setConfig(newConfig);
+      setHasChanges(false);
+      setConfigKey((prev) => prev + 1);
+    }
+  }, [open, mode, initialConfig, defaultConfig]);
 
   // Проверка изменений
   const checkChanges = useCallback(() => {
@@ -90,6 +109,7 @@ export function IndexingWizardModal({
         setStep("embeddings-and-chunking");
         setConfig(initialConfig ?? defaultConfig);
         setHasChanges(false);
+        setConfigKey((prev) => prev + 1);
         onOpenChange(false);
       }
     } else {
@@ -97,6 +117,7 @@ export function IndexingWizardModal({
       setStep("embeddings-and-chunking");
       setConfig(initialConfig ?? defaultConfig);
       setHasChanges(false);
+      setConfigKey((prev) => prev + 1);
       onOpenChange(false);
     }
   }, [isSubmitting, hasChanges, mode, initialConfig, defaultConfig, onOpenChange]);
@@ -172,16 +193,21 @@ export function IndexingWizardModal({
 
   // Сброс настроек
   const handleReset = useCallback(() => {
-    if (confirm("Сбросить настройки к значениям из глобального профиля?")) {
-      setConfig(defaultConfig);
-      setHasChanges(false);
-      setShowResetDialog(false);
-      toast({
-        title: "Настройки сброшены",
-        description: "Применены значения из глобального профиля индексации",
-      });
-    }
-  }, [defaultConfig, toast]);
+    // Используем initialConfig если есть, иначе defaultConfig (как при инициализации)
+    const resetConfig = initialConfig ?? defaultConfig;
+    // Глубокое копирование конфигурации
+    const newConfig: IndexingWizardConfig = {
+      ...resetConfig,
+      schemaFields: resetConfig.schemaFields.map((field) => ({
+        ...field,
+        expression: [...field.expression],
+      })),
+    };
+    setConfig(newConfig);
+    setHasChanges(false);
+    // Принудительно пересоздаем компоненты шагов для избежания проблем с синхронизацией state
+    setConfigKey((prev) => prev + 1);
+  }, [initialConfig, defaultConfig]);
 
   // Запуск индексации из расширенного режима
   const handleStartIndexing = useCallback(async () => {
@@ -287,6 +313,7 @@ export function IndexingWizardModal({
                 {/* DEBUG: step = {step} */}
                 {step === "embeddings-and-chunking" ? (
                   <EmbeddingsAndChunkingStep
+                    key={`embeddings-${configKey}`}
                     config={{
                       embeddingsProvider: config.embeddingsProvider,
                       embeddingsModel: config.embeddingsModel,
@@ -313,6 +340,7 @@ export function IndexingWizardModal({
                   />
                 ) : step === "schema" ? (
                   <SchemaFieldsStep
+                    key={`schema-${configKey}`}
                     config={{ schemaFields: config.schemaFields }}
                     onChange={(newConfig) => {
                       setConfig({ ...config, ...newConfig });
@@ -366,7 +394,7 @@ export function IndexingWizardModal({
                 </Button>
               )}
               {mode === "advanced" && (
-                <Button variant="outline" onClick={() => setShowResetDialog(true)} disabled={isSubmitting}>
+                <Button variant="outline" onClick={handleReset} disabled={isSubmitting}>
                   <RotateCcw className="mr-2 h-4 w-4" />
                   Сбросить
                 </Button>
