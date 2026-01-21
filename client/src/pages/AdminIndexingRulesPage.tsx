@@ -190,6 +190,9 @@ export default function AdminIndexingRulesPage() {
       if (details?.field === "max_context_tokens") {
         form.setError("maxContextTokens", { message });
       }
+      if (details?.field === "context_input_limit") {
+        form.setError("contextInputLimit", { message });
+      }
       if (details?.field === "llm_max_tokens") {
         form.setError("llmMaxTokens", { message });
       }
@@ -309,8 +312,7 @@ export default function AdminIndexingRulesPage() {
                             disabled={providerFieldDisabled}
                             value={field.value}
                             onValueChange={(value) => {
-                              // Устанавливаем значения без валидации
-                              form.setValue("embeddingsProvider", value, { shouldValidate: false, shouldDirty: true });
+                              form.setValue("embeddingsProvider", value, { shouldValidate: true, shouldDirty: true });
                               form.setValue("embeddingsModel", "", { shouldValidate: false, shouldDirty: true });
                               form.clearErrors("embeddingsProvider");
                               form.clearErrors("embeddingsModel");
@@ -407,7 +409,7 @@ export default function AdminIndexingRulesPage() {
                               value={field.value ?? ""}
                               onChange={(event) => {
                                 form.clearErrors("embeddingsModel");
-                                field.onChange(event.target.value);
+                                form.setValue("embeddingsModel", event.target.value, { shouldValidate: true, shouldDirty: true });
                               }}
                             />
                           )}
@@ -460,7 +462,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? undefined : normalized);
+                              form.setValue("chunkSize", normalized === "" ? undefined : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
@@ -490,7 +492,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? undefined : normalized);
+                              form.setValue("chunkOverlap", normalized === "" ? undefined : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
@@ -531,7 +533,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? undefined : normalized);
+                              form.setValue("topK", normalized === "" ? undefined : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
@@ -561,7 +563,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? undefined : normalized);
+                              form.setValue("relevanceThreshold", normalized === "" ? undefined : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
@@ -599,7 +601,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? undefined : normalized);
+                              form.setValue("maxContextTokens", normalized === "" ? null : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
@@ -628,7 +630,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? null : normalized);
+                              form.setValue("contextInputLimit", normalized === "" ? null : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>
@@ -668,7 +670,7 @@ export default function AdminIndexingRulesPage() {
                             onChange={(event) => {
                               const raw = event.target.value;
                               const normalized = normalizeNumber(raw);
-                              field.onChange(normalized === "" ? null : normalized);
+                              form.setValue("llmMaxTokens", normalized === "" ? null : normalized, { shouldValidate: true, shouldDirty: true });
                             }}
                           />
                         </FormControl>

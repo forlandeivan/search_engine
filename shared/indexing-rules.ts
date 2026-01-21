@@ -35,7 +35,8 @@ export const indexingRulesSchema = z.object({
     .number()
     .int()
     .min(MIN_MAX_CONTEXT_TOKENS, `maxContextTokens должно быть не меньше ${MIN_MAX_CONTEXT_TOKENS}`)
-    .max(MAX_MAX_CONTEXT_TOKENS, `maxContextTokens должно быть не больше ${MAX_MAX_CONTEXT_TOKENS}`),
+    .max(MAX_MAX_CONTEXT_TOKENS, `maxContextTokens должно быть не больше ${MAX_MAX_CONTEXT_TOKENS}`)
+    .nullable(),
   contextInputLimit: z
     .number()
     .int()

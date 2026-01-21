@@ -562,7 +562,7 @@ export const indexingRules = pgTable("indexing_rules", {
   chunkOverlap: integer("chunk_overlap").notNull(),
   topK: integer("top_k").notNull(),
   relevanceThreshold: doublePrecision("relevance_threshold").notNull(),
-  maxContextTokens: integer("max_context_tokens").notNull().default(3000),
+  maxContextTokens: integer("max_context_tokens").default(3000),
   contextInputLimit: integer("context_input_limit"),
   llmMaxTokens: integer("llm_max_tokens").default(4096),
   citationsEnabled: boolean("citations_enabled").notNull().default(false),
