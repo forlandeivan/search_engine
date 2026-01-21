@@ -27,7 +27,7 @@ export function ChatCitations({
   className,
   enableGrouping = true,
 }: ChatCitationsProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false); // По умолчанию свернуто
 
   if (!citations || citations.length === 0) {
     return null;

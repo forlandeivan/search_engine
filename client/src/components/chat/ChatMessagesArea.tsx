@@ -7,7 +7,8 @@ import type { AssistantActionState, ChatMessage } from "@/types/chat";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChatCitations } from "./ChatCitations";
-import { ChatSourcesPanel } from "./ChatSourcesPanel";
+// TODO: Epic 8, US-5 - Накопленные источники диалога
+// import { ChatSourcesPanel } from "./ChatSourcesPanel";
 import type { RagChunk } from "@/types/search";
 
 type ReadOnlyReason = "chat" | "skill";
@@ -166,12 +167,13 @@ export default function ChatMessagesArea({
               </h1>
               
               {/* Панель источников для RAG-навыков */}
-              {isRagSkill && chatId && workspaceId && (
+              {/* TODO: Epic 8, US-5 - Накопленные источники диалога */}
+              {/* {isRagSkill && chatId && workspaceId && (
                 <ChatSourcesPanel 
                   chatId={chatId}
                   workspaceId={workspaceId}
                 />
-              )}
+              )} */}
             </div>
           ) : null}
           {isEditingTitle ? (
