@@ -18,9 +18,9 @@ import {
 } from "@/components/ui/sidebar";
 import {
   BookOpen,
-  Boxes,
   Brain,
   LayoutDashboard,
+  LibraryBig,
   MessageCircle,
   PanelLeft,
   PanelRight,
@@ -169,7 +169,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspace }: 
         {
           title: "Коллекции",
           url: "/vector/collections",
-          icon: Boxes,
+          icon: LibraryBig,
         },
         {
           title: "Документация API",

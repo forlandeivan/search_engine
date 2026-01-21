@@ -30,6 +30,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
 import DocumentChunksPanel from "@/components/knowledge-base/DocumentChunksPanel";
 import MarkdownRenderer from "@/components/ui/markdown";
@@ -145,6 +146,7 @@ import {
   ChevronDown,
   ChevronRight,
   Database,
+  Ellipsis,
   FileDown,
   FileJson,
   FileText,
@@ -165,7 +167,16 @@ import {
   Trash2,
   Layers,
   ExternalLink,
+  ChevronsUpDown,
+  CircleCheck,
+  CircleAlert,
+  CircleDashed,
 } from "lucide-react";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 
 // Import from decomposed modules
 import {
@@ -2520,99 +2531,83 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     const collectionName = workspaceId && detail.id ? buildKnowledgeCollectionName(detail.id, workspaceId) : null;
     
     return (
-    <Card>
-      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <CardTitle>{detail.name}</CardTitle>
-          <CardDescription>Последнее обновление: {formatDateTime(detail.updatedAt)}</CardDescription>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
-          <Button
-            type="button"
-            onClick={() => handleOpenCreateDocument(null, detail.name)}
-            className="w-full sm:w-auto"
-          >
-            <Plus className="mr-2 h-4 w-4" /> Добавить знания
-          </Button>
-          <div className="flex flex-col items-start gap-1">
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full sm:w-auto"
-                disabled={Boolean(
-                  startIndexingMutation.isPending ||
-                    indexingButtonDisabledReason ||
-                    !detail.rootNodes || detail.rootNodes.length === 0 ||
-                    !isIndexingConfigReady,
-                )}
-                title={
-                  !isIndexingConfigReady
-                    ? "Загрузка настроек индексации..."
-                    : indexingButtonDisabledReason ??
-                      ((!detail.rootNodes || detail.rootNodes.length === 0) ? "Нет документов для индексации" : undefined)
-                }
-                onClick={() => setIsIndexingWizardOpen(true)}
-              >
-                {startIndexingMutation.isPending ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Database className="mr-2 h-4 w-4" />
-                )}
-                Индексировать
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setLocation(`/knowledge/${detail.id}/indexing/history`)}
-                disabled={!detail.id}
-                className="w-full sm:w-auto"
-              >
-                <History className="mr-2 h-4 w-4" />
-                История индексаций
-              </Button>
+      <div className="space-y-6">
+        {/* Информация о базе знаний */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Обзор базы знаний</CardTitle>
+            <CardDescription>Последнее обновление: {formatDateTime(detail.updatedAt)}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {detail.description && (
+              <p className="text-sm text-muted-foreground">{detail.description}</p>
+            )}
+            
+            {/* Статистика */}
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <div className="rounded-lg border p-3">
+                <p className="text-sm text-muted-foreground">Документов</p>
+                <p className="text-2xl font-semibold">{indexingSummary?.totalDocuments ?? 0}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-sm text-muted-foreground">Проиндексировано</p>
+                <p className="text-2xl font-semibold">{indexingSummary?.upToDateDocuments ?? 0}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-sm text-muted-foreground">Устаревших</p>
+                <p className="text-2xl font-semibold">{indexingSummary?.outdatedDocuments ?? 0}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-sm text-muted-foreground">С ошибками</p>
+                <p className="text-2xl font-semibold">{indexingSummary?.errorDocuments ?? 0}</p>
+              </div>
             </div>
-            {/* Информация о статусе индексации */}
+
+            {/* Статус индексации */}
             {indexingSummary && !activeIndexingActionForBase && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2">
                 {isIndexingUpToDate && (
-                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800">
+                  <Badge variant="outline" className="rounded-full bg-green-500/15 text-green-700 border-green-500/25 dark:bg-green-500/10 dark:text-green-400 dark:border-green-500/20">
                     База знаний актуальна
                   </Badge>
                 )}
                 {isIndexingNotIndexed && hasIndexingDocuments && (
-                  <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-950 dark:text-yellow-300 dark:border-yellow-800">
+                  <Badge variant="outline" className="rounded-full bg-yellow-500/15 text-yellow-700 border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20">
                     Требуется индексация
                   </Badge>
                 )}
                 {!hasIndexingDocuments && (
-                  <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-950 dark:text-gray-300 dark:border-gray-800">
+                  <Badge variant="outline" className="rounded-full bg-gray-500/10 text-gray-600 border-gray-500/20 dark:bg-gray-500/10 dark:text-gray-400 dark:border-gray-500/15">
                     Нет документов
                   </Badge>
                 )}
               </div>
             )}
+
+            {/* Прогресс активной индексации */}
             {activeIndexingActionForBase && (
-              <div className="flex flex-col gap-1.5 w-full sm:w-auto mt-1">
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <Progress
-                      value={
-                        (() => {
-                          const processedDocuments = activeIndexingActionForBase.payload?.processedDocuments ?? 0;
-                          const totalDocumentsInBase = indexingSummary?.totalDocuments ?? 0;
-                          return totalDocumentsInBase > 0
-                            ? Math.round((processedDocuments / totalDocumentsInBase) * 100)
-                            : 0;
-                        })()
-                      }
-                      className="h-1.5"
-                    />
-                  </div>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+              <div className="rounded-lg border p-4 bg-blue-50/50 dark:bg-blue-950/20">
+                <div className="flex items-center gap-3 mb-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                  <span className="text-sm font-medium">
+                    {activeIndexingActionForBase.status === "processing" && "Индексация выполняется"}
+                    {activeIndexingActionForBase.status === "paused" && "Индексация на паузе"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Progress
+                    value={(() => {
+                      const processedDocuments = Number(activeIndexingActionForBase.payload?.processedDocuments ?? 0);
+                      const totalDocumentsInBase = indexingSummary?.totalDocuments ?? 0;
+                      return totalDocumentsInBase > 0
+                        ? Math.round((processedDocuments / totalDocumentsInBase) * 100)
+                        : 0;
+                    })()}
+                    className="flex-1 h-2"
+                  />
+                  <span className="text-sm text-muted-foreground">
                     {(() => {
-                      const processedDocuments = activeIndexingActionForBase.payload?.processedDocuments ?? 0;
+                      const processedDocuments = Number(activeIndexingActionForBase.payload?.processedDocuments ?? 0);
                       const totalDocumentsInBase = indexingSummary?.totalDocuments ?? 0;
                       return totalDocumentsInBase > 0
                         ? `${Math.round((processedDocuments / totalDocumentsInBase) * 100)}%`
@@ -2620,139 +2615,69 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                     })()}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setLocation(`/knowledge/${detail.id}/indexing/history`)}
-                  className="text-xs text-muted-foreground hover:text-foreground underline cursor-pointer text-left"
-                >
-                  {activeIndexingActionForBase.status === "processing" && "Индексация выполняется"}
-                  {activeIndexingActionForBase.status === "paused" && "Индексация на паузе"}
-                  {activeIndexingActionForBase.status === "canceled" && "Индексация отменена"}
-                  {activeIndexingActionForBase.status === "done" && "Индексация завершена"}
-                  {activeIndexingActionForBase.status === "error" && "Ошибка индексации"}
-                  {" • Перейти в историю"}
-                </button>
               </div>
             )}
-            {!activeIndexingActionForBase && (indexingButtonDisabledReason || !detail.rootNodes || detail.rootNodes.length === 0) && (
-              <span className="text-xs text-muted-foreground">
-                {indexingButtonDisabledReason ?? "Нет документов для индексации"}
-              </span>
+
+            {/* Ссылка на коллекцию Qdrant */}
+            {collectionName && vectorCollections.some((c) => c.name === collectionName) && (
+              <div className="flex items-center gap-2 text-sm">
+                <Layers className="h-4 w-4 text-muted-foreground" />
+                <span className="text-muted-foreground">Коллекция Qdrant:</span>
+                <Link
+                  href={`/vector/collections/${encodeURIComponent(collectionName)}`}
+                  className="flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
+                  title="Перейти к коллекции в Qdrant"
+                >
+                  {collectionName}
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
+              </div>
             )}
-          </div>
-          {crawlJobForSelectedBase && (
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full sm:w-auto"
-              disabled={!isCrawlJobTerminalForSelectedBase || isRetryingCrawl}
-              onClick={() => {
-                if (!isCrawlJobTerminalForSelectedBase) {
-                  return;
-                }
-                void retryCrawl();
-              }}
-            >
-              {isRetryingCrawl ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="mr-2 h-4 w-4" />
-              )}
-              {crawlJobForSelectedBase.status === "failed"
-                ? "Повторить краулинг"
-                : "Перезапустить краулинг"}
-            </Button>
-          )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="Действия с базой знаний">
-                  <MoreVertical className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {canManageKnowledgeBase && (
-                  <>
-                    <DropdownMenuItem onSelect={handleOpenResetIndexDialog}>
-                      <RefreshCw className="mr-2 h-4 w-4" /> Сбросить индекс
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
-                  onSelect={(event) => {
-                    event.preventDefault();
-                  setBaseDeleteTarget({
-                    id: detail.id,
-                    name: detail.name,
-                    description: detail.description,
-                    updatedAt: detail.updatedAt,
-                    rootNodes: detail.rootNodes,
-                  });
-                  setBaseDeleteConfirmation("");
+
+            {/* Кнопка перезапуска краулинга */}
+            {crawlJobForSelectedBase && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!isCrawlJobTerminalForSelectedBase || isRetryingCrawl}
+                onClick={() => {
+                  if (!isCrawlJobTerminalForSelectedBase) {
+                    return;
+                  }
+                  void retryCrawl();
                 }}
               >
-                <Trash2 className="mr-2 h-4 w-4" /> Удалить базу знаний
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <p className="text-sm text-muted-foreground">{detail.description}</p>
-        {collectionName && vectorCollections.some((c) => c.name === collectionName) && (
-          <div className="flex items-center gap-2 text-sm">
-            <Layers className="h-4 w-4 text-muted-foreground" />
-            <span className="text-muted-foreground">Коллекция Qdrant:</span>
-            <Link
-              href={`/vector/collections/${encodeURIComponent(collectionName)}`}
-              className="flex items-center text-primary hover:text-primary/80 transition-colors"
-              title="Перейти к коллекции в Qdrant"
-            >
-              <ExternalLink className="h-4 w-4" />
-            </Link>
-          </div>
-        )}
-        <Separator />
-        <div>
-          <h3 className="text-sm font-semibold mb-2">Структура базы</h3>
-          {(!detail.rootNodes || detail.rootNodes.length === 0) ? (
-            <p className="text-sm text-muted-foreground">
-              В базе ещё нет документов. Нажмите «Добавить знания», чтобы создать первый материал.
-            </p>
-          ) : (
-            <TreeMenu
-              baseId={detail.id}
-              nodes={detail.rootNodes ?? []}
-              activeNodeId={selectedNodeId}
-              expandedNodes={expandedNodeIds}
-              onToggle={handleToggleNode}
-            />
-          )}
-        </div>
+                {isRetryingCrawl ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                )}
+                {crawlJobForSelectedBase.status === "failed"
+                  ? "Повторить краулинг"
+                  : "Перезапустить краулинг"}
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* JSON Import */}
         {activeJsonImportJobId && workspaceId && (
-          <>
-            <Separator />
-            <div className="pt-4">
-              <JsonImportCard
-                jobId={activeJsonImportJobId}
-                baseId={detail.id}
-                workspaceId={workspaceId}
-                onComplete={() => {
-                  void basesQuery.refetch();
-                  void nodeDetailQuery.refetch();
-                  void indexingSummaryQuery.refetch();
-                  if (isIndexingChangesOpen) {
-                    void indexingChangesQuery.refetch();
-                  }
-                  setActiveJsonImportJobId(null);
-                }}
-              />
-            </div>
-          </>
+          <JsonImportCard
+            jobId={activeJsonImportJobId}
+            baseId={detail.id}
+            workspaceId={workspaceId}
+            onComplete={() => {
+              void basesQuery.refetch();
+              void nodeDetailQuery.refetch();
+              void indexingSummaryQuery.refetch();
+              if (isIndexingChangesOpen) {
+                void indexingChangesQuery.refetch();
+              }
+              setActiveJsonImportJobId(null);
+            }}
+          />
         )}
-      </CardContent>
-    </Card>
+      </div>
     );
   };
 
@@ -2964,115 +2889,312 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     Boolean(hierarchyDialogState) &&
     normalizedHierarchySelectedParentId !== hierarchyDialogState?.currentParentId;
 
+  // Определение статуса индикатора для Badge
+  const getStatusBadge = () => {
+    if (activeIndexingActionForBase?.status === "processing") {
+      return { 
+        variant: "outline" as const, 
+        className: "rounded-full bg-blue-500/15 text-blue-700 border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20",
+        label: "Индексация...",
+        icon: <Loader2 className="h-3 w-3 animate-spin" />,
+      };
+    }
+    if (isIndexingUpToDate) {
+      return { 
+        variant: "outline" as const, 
+        className: "rounded-full bg-green-500/15 text-green-700 border-green-500/25 dark:bg-green-500/10 dark:text-green-400 dark:border-green-500/20",
+        label: "Актуальна",
+        icon: <CircleCheck className="h-3 w-3" />,
+      };
+    }
+    if (indexingSummary && (indexingSummary.outdatedDocuments > 0 || isIndexingNotIndexed)) {
+      return { 
+        variant: "outline" as const, 
+        className: "rounded-full bg-yellow-500/15 text-yellow-700 border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20",
+        label: "Есть изменения",
+        icon: <CircleAlert className="h-3 w-3" />,
+      };
+    }
+    return { 
+      variant: "outline" as const, 
+      className: "rounded-full bg-gray-500/10 text-gray-600 border-gray-500/20 dark:bg-gray-500/10 dark:text-gray-400 dark:border-gray-500/15",
+      label: "Не индексирована",
+      icon: <CircleDashed className="h-3 w-3" />,
+    };
+  };
+
+  const statusBadge = selectedBase ? getStatusBadge() : null;
+
+  // Определение имени коллекции для header
+  const headerCollectionName = workspaceId && selectedBase?.id 
+    ? buildKnowledgeCollectionName(selectedBase.id, workspaceId) 
+    : null;
+  const hasVectorCollection = headerCollectionName && vectorCollections.some((c) => c.name === headerCollectionName);
+
   return (
-    <div className="flex h-full min-h-[calc(100vh-4rem)] bg-background">
-      <aside className="flex w-80 flex-col border-r">
-        <div className="space-y-4 border-b p-4">
-          <div>
-            <p className="text-sm font-semibold">База знаний</p>
-            <p className="text-xs text-muted-foreground">
-              Выберите раздел или документ. Содержимое загружается при переходе.
-            </p>
-          </div>
+    <div className="flex h-full min-h-[calc(100vh-4rem)] flex-col bg-background">
+      {/* Шапка страницы */}
+      <div className="flex items-center justify-between gap-4 border-b px-6 py-4">
+        <div className="flex items-center gap-4">
+          {/* Заголовок с выбором базы знаний */}
           {basesQuery.isLoading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Загрузка баз...
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span className="text-xl">Загрузка...</span>
             </div>
           ) : bases.length === 0 ? (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
-                Пока нет доступных баз знаний.
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Создайте первую базу через основную панель, чтобы начать работу с документами.
-              </p>
-            </div>
+            <h1 className="text-3xl font-semibold">Базы знаний</h1>
           ) : (
-            <div className="space-y-2">
-              <Select
-                value={selectedBase?.id ?? ""}
-                onValueChange={(value) => setLocation(`/knowledge/${value}`)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Выберите базу" />
-                </SelectTrigger>
-                <SelectContent>
-                  {bases.map((base) => (
-                    <SelectItem key={base.id} value={base.id}>
-                      {base.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+                >
+                  <h1 className="text-3xl font-semibold">
+                    {selectedBase?.name ?? "Выберите базу"}
+                  </h1>
+                  <ChevronsUpDown className="h-5 w-5 text-muted-foreground" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-80">
+                {bases.map((base) => {
+                  // Определяем цвет точки для каждой базы
+                  const isBaseIndexing = activeIndexingActions.some((a) => a.baseId === base.id);
+                  const status = base.indexStatus;
+                  const dotColor = isBaseIndexing
+                    ? "bg-blue-500 animate-pulse"
+                    : status === "up_to_date"
+                      ? "bg-green-500"
+                      : status === "outdated" || status === "partial" || status === "not_indexed" || !status
+                        ? "bg-yellow-500"
+                        : status === "error"
+                          ? "bg-red-500"
+                          : "bg-gray-400";
+                  
+                  return (
+                    <DropdownMenuItem
+                      key={base.id}
+                      onSelect={() => setLocation(`/knowledge/${base.id}`)}
+                      className={cn(
+                        "flex items-start gap-3 py-2",
+                        selectedBase?.id === base.id && "bg-accent"
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "mt-1.5 h-2 w-2 rounded-full shrink-0",
+                          dotColor
+                        )}
+                      />
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-medium truncate">{base.name}</span>
+                        {base.description && (
+                          <span className="text-xs text-muted-foreground truncate">{base.description}</span>
+                        )}
+                      </div>
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
+          {/* Badge статуса с HoverCard */}
+          {selectedBase && statusBadge && (
+            <HoverCard>
+              <HoverCardTrigger asChild>
+                <button type="button" className="cursor-pointer">
+                  <Badge 
+                    variant={statusBadge.variant}
+                    className={cn("gap-1.5", statusBadge.className)}
+                  >
+                    {statusBadge.icon}
+                    {statusBadge.label}
+                  </Badge>
+                </button>
+              </HoverCardTrigger>
+              <HoverCardContent className="w-80" align="start">
+                <div className="space-y-3">
+                  <div>
+                    <h4 className="font-semibold text-sm">{selectedBase.name}</h4>
+                    {selectedBase.description && (
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{selectedBase.description}</p>
+                    )}
+                  </div>
+                  <Separator />
+                  <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-xs">
+                    <span className="text-muted-foreground">Обновлено</span>
+                    <span className="text-right font-medium whitespace-nowrap">{formatDateTime(selectedBase.updatedAt)}</span>
+                    
+                    <span className="text-muted-foreground">Всего документов</span>
+                    <span className="text-right font-medium tabular-nums">{indexingSummary?.totalDocuments ?? 0}</span>
+                    
+                    <span className="text-muted-foreground">Проиндексировано</span>
+                    <span className="text-right font-medium tabular-nums text-green-600 dark:text-green-400">{indexingSummary?.upToDateDocuments ?? 0}</span>
+                    
+                    <span className="text-muted-foreground">Устаревших</span>
+                    <span className="text-right font-medium tabular-nums text-yellow-600 dark:text-yellow-400">{indexingSummary?.outdatedDocuments ?? 0}</span>
+                    
+                    <span className="text-muted-foreground">С ошибками</span>
+                    <span className="text-right font-medium tabular-nums text-red-600 dark:text-red-400">{indexingSummary?.errorDocuments ?? 0}</span>
+                  </div>
+                </div>
+              </HoverCardContent>
+            </HoverCard>
+          )}
+
+          {/* Button Group: Индексировать + Dropdown */}
+          {selectedBase && (
+            <ButtonGroup>
               <Button
                 type="button"
-                variant="secondary"
+                variant="outline"
                 size="sm"
-                className="w-full"
-                onClick={() => handleOpenCreateBase("blank")}
+                disabled={Boolean(
+                  startIndexingMutation.isPending ||
+                  indexingButtonDisabledReason ||
+                  !selectedBase.rootNodes || selectedBase.rootNodes.length === 0 ||
+                  !isIndexingConfigReady
+                )}
+                title={
+                  !isIndexingConfigReady
+                    ? "Загрузка настроек индексации..."
+                    : indexingButtonDisabledReason ??
+                      ((!selectedBase.rootNodes || selectedBase.rootNodes.length === 0) ? "Нет документов для индексации" : undefined)
+                }
+                onClick={() => setIsIndexingWizardOpen(true)}
               >
-                <Plus className="mr-2 h-4 w-4" /> Новая база знаний
+                {startIndexingMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Database className="mr-2 h-4 w-4" />
+                )}
+                Индексировать
               </Button>
-            </div>
-          )}
-          {selectedBase && (
-            <Button
-              asChild
-              variant={!selectedNodeId ? "default" : "outline"}
-              size="sm"
-              className="w-full"
-            >
-              <Link href={`/knowledge/${selectedBase.id}`}>Обзор базы</Link>
-            </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="px-2">
+                    <Ellipsis className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem
+                    onSelect={() => setLocation(`/knowledge/${selectedBase.id}/indexing/history`)}
+                  >
+                    <History className="mr-2 h-4 w-4" /> История индексаций
+                  </DropdownMenuItem>
+                  {canManageKnowledgeBase && (
+                    <DropdownMenuItem onSelect={handleOpenResetIndexDialog}>
+                      <RefreshCw className="mr-2 h-4 w-4" /> Сбросить индекс
+                    </DropdownMenuItem>
+                  )}
+                  {hasVectorCollection && headerCollectionName && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() => setLocation(`/vector/collections/${encodeURIComponent(headerCollectionName)}`)}
+                      >
+                        <Layers className="mr-2 h-4 w-4" /> Коллекция в Qdrant
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      setBaseDeleteTarget({
+                        id: selectedBase.id,
+                        name: selectedBase.name,
+                        description: selectedBase.description,
+                        updatedAt: selectedBase.updatedAt,
+                        rootNodes: selectedBase.rootNodes,
+                      });
+                      setBaseDeleteConfirmation("");
+                    }}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" /> Удалить базу знаний
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </ButtonGroup>
           )}
         </div>
-        <ScrollArea className="flex-1 p-4">
-          {!selectedBase ? (
-            bases.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Создайте базу знаний через кнопку на главной панели, чтобы увидеть структуру документов и загрузить материалы.
-              </p>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Выберите базу знаний, чтобы увидеть структуру документов.
-              </p>
-            )
-          ) : (!selectedBase.rootNodes || selectedBase.rootNodes.length === 0) ? (
-            <p className="text-sm text-muted-foreground">
-              В этой базе ещё нет документов.
-            </p>
-          ) : (
-            <TreeMenu
-              baseId={selectedBase.id}
-              nodes={selectedBase.rootNodes ?? []}
-              activeNodeId={selectedNodeId}
-              expandedNodes={expandedNodeIds}
-              onToggle={handleToggleNode}
-            />
-          )}
-        </ScrollArea>
-      </aside>
-      <main className="flex-1 overflow-y-auto p-6">
-        <div className="mx-auto flex max-w-4xl flex-col gap-6">
-          {bases.length === 0 ? (
-            <Card className="border border-dashed">
-              <CardHeader className="space-y-2 text-center">
-                <CardTitle>Нет ни одной базы знаний</CardTitle>
-                <CardDescription>
-                  Создайте базу, чтобы организовать документы, сформировать структуру и подключить векторный поиск.
-                </CardDescription>
-              </CardHeader>
-              <CardFooter className="justify-center pb-6">
-                <Button onClick={() => handleOpenCreateBase("blank")}>
-                  <Plus className="mr-2 h-4 w-4" /> Создать базу знаний
+
+        {/* Кнопка создания новой базы (справа) */}
+        <Button onClick={() => handleOpenCreateBase("blank")}>
+          <Plus className="mr-2 h-4 w-4" /> Новая база знаний
+        </Button>
+      </div>
+
+      {/* Основной контент */}
+      {bases.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center p-6">
+          <Card className="border border-dashed max-w-md w-full">
+            <CardHeader className="space-y-2 text-center">
+              <CardTitle>Нет ни одной базы знаний</CardTitle>
+              <CardDescription>
+                Создайте базу, чтобы организовать документы, сформировать структуру и подключить векторный поиск.
+              </CardDescription>
+            </CardHeader>
+            <CardFooter className="justify-center pb-6">
+              <Button onClick={() => handleOpenCreateBase("blank")}>
+                <Plus className="mr-2 h-4 w-4" /> Создать базу знаний
+              </Button>
+            </CardFooter>
+          </Card>
+        </div>
+      ) : (
+        <div className="flex flex-1 overflow-hidden">
+          {/* Левая колонка: структура базы */}
+          <div className="w-80 border-r flex flex-col shrink-0">
+            <div className="p-4 border-b">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold">Структура базы</h3>
+              </div>
+              {selectedBase && (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => handleOpenCreateDocument(null, selectedBase.name)}
+                >
+                  <Plus className="mr-2 h-4 w-4" /> Добавить знания
                 </Button>
-              </CardFooter>
-            </Card>
-          ) : (
-            renderContent()
-          )}
+              )}
+            </div>
+            <ScrollArea className="flex-1 p-4">
+              {!selectedBase ? (
+                <p className="text-sm text-muted-foreground">
+                  Выберите базу знаний, чтобы увидеть структуру документов.
+                </p>
+              ) : (!selectedBase.rootNodes || selectedBase.rootNodes.length === 0) ? (
+                <p className="text-sm text-muted-foreground">
+                  В базе ещё нет документов. Нажмите «Добавить знания», чтобы создать первый материал.
+                </p>
+              ) : (
+                <>
+                  <TreeMenu
+                    baseId={selectedBase.id}
+                    nodes={selectedBase.rootNodes ?? []}
+                    activeNodeId={selectedNodeId}
+                    expandedNodes={expandedNodeIds}
+                    onToggle={handleToggleNode}
+                  />
+                </>
+              )}
+            </ScrollArea>
+          </div>
+
+          {/* Правая колонка: содержимое */}
+          <main className="flex-1 overflow-y-auto p-6">
+            <div className="mx-auto max-w-4xl">
+              {renderContent()}
+            </div>
+          </main>
         </div>
-      </main>
+      )}
       {vectorizeDialogState && (
         <VectorizeKnowledgeDocumentDialog
           open={vectorizeDialogState.isOpen}
