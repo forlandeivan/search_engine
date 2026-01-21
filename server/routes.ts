@@ -4171,9 +4171,31 @@ async function runKnowledgeBaseRagPipeline(options: {
           candidates: bm25ResultCount,
           knowledgeBasesSearched: knowledgeBaseIds.length,
         });
+        
+        // Логирование результатов BM25
+        logger.info({
+          component: 'RAG_PIPELINE',
+          step: 'bm25_results',
+          query: query.substring(0, 100),
+          normalizedQuery: normalizedQuery.substring(0, 100),
+          resultCount: bm25ResultCount,
+          durationMs: Math.round(bm25Duration),
+          knowledgeBaseIds,
+          topScores: bm25Sections.slice(0, 5).map(s => ({
+            score: s.score,
+            docTitle: ((s as any).docTitle || (s as any).doc_title || '').substring(0, 50),
+            chunkId: (s as any).chunkId || (s as any).chunk_id,
+          })),
+        }, `[RAG] BM25 search completed: ${bm25ResultCount} results in ${Math.round(bm25Duration)}ms`);
       } catch (error) {
         bm25Duration = performance.now() - bm25Start;
         bm25Step.fail(error);
+        logger.error({
+          component: 'RAG_PIPELINE',
+          step: 'bm25_error',
+          error: error instanceof Error ? error.message : String(error),
+          durationMs: Math.round(bm25Duration),
+        }, `[RAG] BM25 search failed: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
       }
     } else {
@@ -4184,6 +4206,14 @@ async function runKnowledgeBaseRagPipeline(options: {
       );
       normalizedQuery = query;
       bm25ResultCount = 0;
+      
+      logger.info({
+        component: 'RAG_PIPELINE',
+        step: 'bm25_skipped',
+        reason: cacheHit ? 'cache_hit' : 'bm25_weight_zero',
+        bm25Weight,
+        cacheHit,
+      }, `[RAG] BM25 search skipped: ${cacheHit ? 'cache hit' : 'bm25Weight=0'}`);
     }
 
     // Векторный поиск выполняется только если vectorWeight > 0 И нет cache hit
@@ -4276,10 +4306,30 @@ async function runKnowledgeBaseRagPipeline(options: {
             vectorDimensions: embeddingResult.vector.length,
             response: embeddingResult.rawResponse,
           });
+          
+          // Логирование embedding
+          logger.info({
+            component: 'RAG_PIPELINE',
+            step: 'embedding_generated',
+            query: normalizedQuery.substring(0, 100),
+            providerId: embeddingProvider.id,
+            providerName: embeddingProvider.name,
+            model: embeddingProvider.model,
+            vectorDimensions: embeddingResult.vector.length,
+            usageTokens: embeddingUsageTokens,
+          }, `[RAG] Embedding generated: ${embeddingResult.vector.length} dimensions, ${embeddingUsageTokens ?? 'N/A'} tokens`);
         } catch (error) {
           embeddingUsageTokens = null;
           embeddingResultForMetadata = null;
           embeddingStep.fail(error);
+          
+          logger.error({
+            component: 'RAG_PIPELINE',
+            step: 'embedding_error',
+            query: normalizedQuery.substring(0, 100),
+            providerId: embeddingProviderId,
+            error: error instanceof Error ? error.message : String(error),
+          }, `[RAG] Embedding generation failed: ${error instanceof Error ? error.message : String(error)}`);
           throw error;
         }
 
@@ -4495,6 +4545,8 @@ async function runKnowledgeBaseRagPipeline(options: {
         }
 
         vectorResultCount = vectorChunks.length;
+        vectorDuration = performance.now() - vectorStart;
+        
         vectorStep.finish({
           hits: vectorResultCount,
           usageTokens: embeddingUsageTokens,
@@ -4505,9 +4557,32 @@ async function runKnowledgeBaseRagPipeline(options: {
             results: vectorSearchDetails,
           },
         });
+        
+        // Логирование результатов vector search
+        logger.info({
+          component: 'RAG_PIPELINE',
+          step: 'vector_results',
+          query: normalizedQuery.substring(0, 100),
+          resultCount: vectorResultCount,
+          durationMs: Math.round(vectorDuration),
+          collections: vectorCollectionsToSearch,
+          documentsFound: vectorDocumentIds.size,
+          topScores: vectorChunks.slice(0, 5).map(c => ({
+            score: c.score,
+            chunkId: c.chunkId,
+          })),
+        }, `[RAG] Vector search completed: ${vectorResultCount} results in ${Math.round(vectorDuration)}ms`);
       } catch (error) {
         vectorDuration = performance.now() - vectorStart;
         vectorStep.fail(error);
+        
+        logger.error({
+          component: 'RAG_PIPELINE',
+          step: 'vector_error',
+          error: error instanceof Error ? error.message : String(error),
+          durationMs: Math.round(vectorDuration),
+          collections: vectorCollectionsToSearch,
+        }, `[RAG] Vector search failed: ${error instanceof Error ? error.message : String(error)}`);
         throw error;
       }
     } else {
@@ -4516,6 +4591,15 @@ async function runKnowledgeBaseRagPipeline(options: {
         "Векторизация запроса",
         "Векторный поиск отключён",
       );
+      
+      logger.info({
+        component: 'RAG_PIPELINE',
+        step: 'vector_skipped',
+        reason: cacheHit ? 'cache_hit' : 'vector_weight_zero',
+        vectorWeight,
+        cacheHit,
+      }, `[RAG] Vector search skipped: ${cacheHit ? 'cache hit' : 'vectorWeight=0'}`);
+      
       skipPipelineStep("vector_search", "Векторный поиск", "Векторный поиск отключён");
     }
 
@@ -4821,6 +4905,30 @@ async function runKnowledgeBaseRagPipeline(options: {
     vectorDocumentCount = vectorResultCount !== null ? vectorDocumentIds.size : null;
     retrievalDuration = performance.now() - retrievalStart;
     combinedStep.finish({ combined: combinedResultCount, vectorDocuments: vectorDocumentCount });
+    
+    // Логирование объединённых результатов
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'combined_results',
+      query: query.substring(0, 100),
+      bm25ResultCount,
+      vectorResultCount,
+      combinedResultCount,
+      vectorDocumentCount,
+      retrievalDurationMs: Math.round(retrievalDuration),
+      bm25Weight,
+      vectorWeight,
+      effectiveTopK,
+      effectiveMinScore,
+      cacheHit,
+      topCombinedScores: combinedResults.slice(0, 5).map(c => ({
+        score: c.combinedScore,
+        bm25Score: c.bm25Score,
+        vectorScore: c.vectorScore,
+        docTitle: (c.docTitle || '').substring(0, 50),
+        chunkId: c.chunkId,
+      })),
+    }, `[RAG] Retrieval completed: ${combinedResultCount} combined from BM25(${bm25ResultCount ?? 0}) + Vector(${vectorResultCount ?? 0}) in ${Math.round(retrievalDuration)}ms`);
 
     // Context Caching: сохраняем результаты retrieval в кэш (только если не было cache hit)
     // chatId и workspaceIdForCache уже объявлены выше при проверке cache hit
@@ -5098,6 +5206,21 @@ async function runKnowledgeBaseRagPipeline(options: {
       wantsLlmStream && llmStreamIterator
         ? forwardLlmStreamEvents(llmStreamIterator, emitStreamEvent)
         : null;
+    // Логирование LLM запроса
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'llm_request',
+      query: normalizedQuery.substring(0, 100),
+      providerId: llmProviderId,
+      providerName: configuredProvider?.name ?? 'unknown',
+      model: selectedModelValue,
+      contextChunksCount: contextRecords.length,
+      contextLength: contextRecords.reduce((sum, r) => sum + ((r as any).text?.length ?? (r as any).content?.length ?? 0), 0),
+      hasConversationHistory: (conversationHistory?.length ?? 0) > 0,
+      historyMessagesCount: conversationHistory?.length ?? 0,
+      isStreaming: wantsLlmStream,
+    }, `[RAG] LLM request: ${selectedModelValue}, ${contextRecords.length} context chunks, streaming=${wantsLlmStream}`);
+    
     try {
       completion = await completionPromise;
       if (llmStreamForwarder) {
@@ -5110,6 +5233,18 @@ async function runKnowledgeBaseRagPipeline(options: {
         response: completion.rawResponse,
         answerPreview: completion.answer.slice(0, 160),
       });
+      
+      // Логирование LLM ответа
+      logger.info({
+        component: 'RAG_PIPELINE',
+        step: 'llm_response',
+        providerId: llmProviderId,
+        model: selectedModelValue,
+        answerLength: completion.answer.length,
+        usageTokens: llmUsageTokens,
+        durationMs: Math.round(llmDuration),
+        answerPreview: completion.answer.substring(0, 200),
+      }, `[RAG] LLM response: ${completion.answer.length} chars, ${llmUsageTokens ?? 'N/A'} tokens in ${Math.round(llmDuration)}ms`);
     } catch (error) {
       if (llmStreamForwarder) {
         try {
@@ -5120,6 +5255,16 @@ async function runKnowledgeBaseRagPipeline(options: {
       }
       llmDuration = performance.now() - llmStart;
       llmStep.fail(error);
+      
+      // Логирование ошибки LLM
+      logger.error({
+        component: 'RAG_PIPELINE',
+        step: 'llm_error',
+        providerId: llmProviderId,
+        model: selectedModelValue,
+        error: error instanceof Error ? error.message : String(error),
+        durationMs: Math.round(llmDuration),
+      }, `[RAG] LLM request failed: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
 

@@ -184,10 +184,13 @@ export async function rewriteQuery(
 
   // Быстрая проверка: нужна ли переформулировка?
   if (!needsRewriting(query, conversationHistory)) {
-    logger.debug({
-      originalQuery: query,
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'query_rewrite_skipped',
+      originalQuery: query.substring(0, 100),
       reason: "query_is_self_contained",
-    }, "[QUERY_REWRITER] Query does not need rewriting");
+      historyLength: conversationHistory.length,
+    }, `[RAG] Query rewrite skipped: query is self-contained`);
     
     return {
       originalQuery: query,
@@ -271,10 +274,12 @@ export async function rewriteQuery(
     const wasRewritten = trimmedRewritten !== query.trim();
 
     logger.info({
-      originalQuery: query,
-      rewrittenQuery: trimmedRewritten,
+      component: 'RAG_PIPELINE',
+      step: 'query_rewrite_result',
+      originalQuery: query.substring(0, 100),
+      rewrittenQuery: trimmedRewritten.substring(0, 100),
       wasRewritten,
-      durationMs: rewriteDuration,
+      durationMs: Math.round(rewriteDuration),
       historyLength: conversationHistory.length,
     }, wasRewritten ? "[QUERY_REWRITER] Query rewritten successfully" : "[QUERY_REWRITER] Query unchanged after rewrite");
 
@@ -286,9 +291,12 @@ export async function rewriteQuery(
     };
   } catch (error) {
     logger.warn({
-      originalQuery: query,
+      component: 'RAG_PIPELINE',
+      step: 'query_rewrite_error',
+      originalQuery: query.substring(0, 100),
       error: error instanceof Error ? error.message : String(error),
-    }, "[QUERY_REWRITER] Rewrite failed, using original query");
+      historyLength: conversationHistory.length,
+    }, `[RAG] Query rewrite failed: ${error instanceof Error ? error.message : String(error)}`);
     
     return {
       originalQuery: query,

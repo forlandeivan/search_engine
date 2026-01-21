@@ -487,16 +487,25 @@ export async function callRagForSkillChat(options: {
   }
   
   logger.info({
+    component: 'RAG_PIPELINE',
     step: "call_pipeline",
     chatId: options.chatId,
     skillId: options.skill.id,
+    skillName: options.skill.name,
+    workspaceId: options.workspaceId,
     queryLength: body.q.length,
     queryPreview: body.q.substring(0, 300),
     topK: body.top_k,
-    knowledgeBaseIds: body.kb_ids?.length ?? 0,
-    collections: body.collections?.length ?? 0,
+    knowledgeBaseIds: body.kb_ids,
+    collections: body.collections,
     historyMessagesCount: conversationHistory.length,
-  }, "[MULTI_TURN_RAG] Calling RAG pipeline with enhanced query and history");
+    llmProvider: body.llm?.provider,
+    llmModel: body.llm?.model,
+    bm25Weight: body.hybrid?.bm25?.weight,
+    vectorWeight: body.hybrid?.vector?.weight,
+    embeddingProviderId: body.hybrid?.vector?.embedding_provider_id,
+    hasStream: body.stream,
+  }, `[RAG] Pipeline call: skill="${options.skill.name}", query="${body.q.substring(0, 50)}...", topK=${body.top_k}, history=${conversationHistory.length}`);
   
   return await options.runPipeline({
     req: options.req,

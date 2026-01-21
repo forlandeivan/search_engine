@@ -680,25 +680,37 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
         }) as KnowledgeBaseRagPipelineResponse;
         
         logger.info({
-          step: "rag_chat_success",
+          component: 'RAG_PIPELINE',
+          step: "rag_pipeline_complete",
           chatId: req.params.chatId,
           skillId: context.skill.id,
+          skillName: context.skill.name,
+          workspaceId,
           answerLength: ragResult.response.answer.length,
           citationsCount: ragResult.response.citations?.length ?? 0,
+          chunksCount: ragResult.response.chunks?.length ?? 0,
           knowledgeBaseId: ragResult.response.knowledgeBaseId,
+          normalizedQuery: ragResult.response.normalizedQuery?.substring(0, 100),
+          usage: ragResult.response.usage,
+          timings: ragResult.response.timings,
           queryRewritingEnabled: context.skillConfig.ragConfig?.enableQueryRewriting ?? true,
-        }, "[MULTI_TURN_RAG] RAG pipeline completed successfully");
+          historyEnabled: context.skillConfig.ragConfig?.historyMessagesLimit !== 0,
+        }, `[RAG] Pipeline complete: ${ragResult.response.answer.length} chars answer, ${ragResult.response.citations?.length ?? 0} citations`);
         await safeLogStep('CALL_RAG_PIPELINE', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { output: { answerPreview: ragResult.response.answer.slice(0, 160), knowledgeBaseId: ragResult.response.knowledgeBaseId, usage: ragResult.response.usage ?? null } });
       } catch (ragError) {
         const info = describeErrorForLog(ragError);
         logger.error({
-          step: "rag_chat_error",
+          component: 'RAG_PIPELINE',
+          step: "rag_pipeline_error",
           chatId: req.params.chatId,
           skillId: context.skill.id,
+          skillName: context.skill?.name,
+          workspaceId,
           errorCode: info.code,
           errorMessage: info.message,
           diagnosticInfo: info.diagnosticInfo,
-        }, "[MULTI_TURN_RAG] RAG pipeline failed");
+          errorStack: ragError instanceof Error ? ragError.stack?.split('\n').slice(0, 5).join('\n') : undefined,
+        }, `[RAG] Pipeline failed: ${info.message}`);
         
         await safeLogStep('CALL_RAG_PIPELINE', SKILL_EXECUTION_STEP_STATUS.ERROR, { errorCode: info.code, errorMessage: info.message, diagnosticInfo: info.diagnosticInfo, input: ragStepInput });
         if (ragError instanceof SkillRagConfigurationError) throw new ChatServiceError(ragError.message, 400);
