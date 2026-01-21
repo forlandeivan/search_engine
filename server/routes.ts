@@ -354,6 +354,13 @@ function formatZodValidationError(error: z.ZodError, endpoint?: string): {
 import { callRagForSkillChat, SkillRagConfigurationError } from "./chat-rag";
 import { setRagPipelineImpl } from "./lib/rag-pipeline";
 import {
+  getOrCreateCache,
+  addRetrievalToCache,
+  findSimilarCachedRetrieval,
+  getAccumulatedChunks,
+  type RagChunk,
+} from "./rag-context-cache";
+import {
   fetchLlmCompletion,
   executeLlmCompletion,
   checkLlmProviderHealth,
@@ -3353,6 +3360,7 @@ const knowledgeRagRequestSchema = z.object({
       })
     )
     .optional(),
+  chat_id: z.string().trim().optional(), // ID чата для кэширования контекста
   hybrid: z
     .object({
       bm25: z
@@ -3642,8 +3650,10 @@ async function runKnowledgeBaseRagPipeline(options: {
     let effectiveMinScore = retrievalParams.minScore;
     let effectiveMaxContextTokens: number | null = indexingRules.maxContextTokens;
     
-    // Получаем настройку навыка для allowSources
+    // Получаем настройки навыка для allowSources и кэширования
     let skillShowSources: boolean | null = null;
+    let enableContextCaching: boolean | null = null;
+    let contextCacheTtlSeconds: number | null = null;
     if (normalizedSkillId) {
       try {
         const workspaceId = typeof body.workspace_id === "string" ? body.workspace_id.trim() : null;
@@ -3651,14 +3661,18 @@ async function runKnowledgeBaseRagPipeline(options: {
           const skill = await getSkillById(workspaceId, normalizedSkillId);
           if (skill) {
             skillShowSources = skill.ragConfig?.showSources ?? null;
+            enableContextCaching = skill.ragConfig?.enableContextCaching ?? null;
+            contextCacheTtlSeconds = skill.ragConfig?.contextCacheTtlSeconds ?? null;
             logger.info({
               component: 'RAG_PIPELINE',
               step: 'skill_config_check',
               skillId: normalizedSkillId,
               workspaceId,
               skillShowSources,
+              enableContextCaching,
+              contextCacheTtlSeconds,
               ragConfig: skill.ragConfig,
-            }, '[RAG] Skill config loaded for showSources check');
+            }, '[RAG] Skill config loaded for showSources and caching check');
           }
         }
       } catch (error) {
@@ -3666,7 +3680,7 @@ async function runKnowledgeBaseRagPipeline(options: {
           component: 'RAG_PIPELINE',
           step: 'skill_config_check',
           error: error instanceof Error ? error.message : String(error),
-        }, '[RAG] Failed to load skill for showSources check');
+        }, '[RAG] Failed to load skill for showSources and caching check');
       }
     }
     
@@ -4708,7 +4722,6 @@ async function runKnowledgeBaseRagPipeline(options: {
     });
     combinedResults = processedResults;
     
-
     if (allowSources) {
       combinedResults.forEach((item, index) => {
         emitStreamEvent("source", {
@@ -4738,6 +4751,96 @@ async function runKnowledgeBaseRagPipeline(options: {
     vectorDocumentCount = vectorResultCount !== null ? vectorDocumentIds.size : null;
     retrievalDuration = performance.now() - retrievalStart;
     combinedStep.finish({ combined: combinedResultCount, vectorDocuments: vectorDocumentCount });
+
+    // Context Caching: сохраняем результаты retrieval в кэш и добавляем накопленные chunks
+    const chatId = typeof body.chat_id === "string" ? body.chat_id.trim() : null;
+    const workspaceIdForCache = typeof body.workspace_id === "string" ? body.workspace_id.trim() : null;
+    
+    if (enableContextCaching && chatId && workspaceIdForCache) {
+      try {
+        // Инициализируем кэш для чата
+        getOrCreateCache(chatId, workspaceIdForCache, contextCacheTtlSeconds ?? undefined);
+        
+        // Преобразуем combinedResults в RagChunk[] для кэширования
+        const chunksToCache: RagChunk[] = combinedResults.map((item) => ({
+          chunk_id: item.chunkId,
+          doc_id: item.documentId,
+          doc_title: item.docTitle,
+          section_title: item.sectionTitle,
+          snippet: item.snippet,
+          text: item.text ?? item.snippet,
+          score: item.combinedScore,
+          scores: {
+            bm25: item.bm25Score,
+            vector: item.vectorScore,
+          },
+          node_id: item.nodeId ?? null,
+          node_slug: item.nodeSlug ?? null,
+          knowledge_base_id: item.knowledgeBaseId ?? null,
+        }));
+        
+        // Сохраняем результаты в кэш
+        addRetrievalToCache(chatId, {
+          query: query,
+          normalizedQuery: normalizedQuery,
+          chunks: chunksToCache,
+          timestamp: Date.now(),
+          embeddingVector: embeddingResultForMetadata?.vector,
+        });
+        
+        logger.info({
+          component: 'RAG_PIPELINE',
+          step: 'context_cache_save',
+          chatId,
+          chunksCount: chunksToCache.length,
+          query: query.substring(0, 100),
+        }, '[RAG CACHE] Saved retrieval results to cache');
+        
+        // Опционально: добавляем накопленные chunks из предыдущих запросов
+        const accumulatedChunks = getAccumulatedChunks(chatId, 5); // До 5 чанков из предыдущих запросов
+        if (accumulatedChunks.length > 0) {
+          const existingChunkIds = new Set(combinedResults.map(c => c.chunkId));
+          const newChunks = accumulatedChunks.filter(c => !existingChunkIds.has(c.chunk_id));
+          
+          if (newChunks.length > 0) {
+            // Преобразуем накопленные chunks в KnowledgeBaseRagCombinedChunk
+            const additionalChunks: KnowledgeBaseRagCombinedChunk[] = newChunks.map((chunk) => ({
+              chunkId: chunk.chunk_id,
+              documentId: chunk.doc_id,
+              docTitle: chunk.doc_title,
+              sectionTitle: chunk.section_title,
+              snippet: chunk.snippet,
+              text: chunk.text ?? chunk.snippet,
+              bm25Score: chunk.scores?.bm25 ?? 0,
+              vectorScore: chunk.scores?.vector ?? 0,
+              nodeId: chunk.node_id ?? null,
+              nodeSlug: chunk.node_slug ?? null,
+              knowledgeBaseId: chunk.knowledge_base_id ? chunk.knowledge_base_id : undefined,
+              combinedScore: chunk.score,
+              bm25Normalized: 0,
+              vectorNormalized: 0,
+            }));
+            
+            // Добавляем к combinedResults (с более низким приоритетом)
+            combinedResults = [...combinedResults, ...additionalChunks];
+            
+            logger.info({
+              component: 'RAG_PIPELINE',
+              step: 'context_cache_accumulated',
+              chatId,
+              additionalChunksCount: additionalChunks.length,
+            }, '[RAG CACHE] Added accumulated chunks from previous requests');
+          }
+        }
+      } catch (error) {
+        logger.warn({
+          component: 'RAG_PIPELINE',
+          step: 'context_cache_error',
+          chatId,
+          error: error instanceof Error ? error.message : String(error),
+        }, '[RAG CACHE] Failed to use context cache, continuing without cache');
+      }
+    }
 
     const contextRecords: LlmContextRecord[] = combinedResults.map((item, index) => ({
       index,

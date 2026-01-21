@@ -530,6 +530,8 @@ export function SkillFormContent({
         historyCharsLimit: 4000,
         enableQueryRewriting: true,
         queryRewriteModel: null,
+        enableContextCaching: false,
+        contextCacheTtlSeconds: 300,
         embeddingProviderId: null,
         bm25Weight: null,
         bm25Limit: null,
@@ -585,6 +587,8 @@ export function SkillFormContent({
         ragHistoryCharsLimit: ragConfig.historyCharsLimit ?? 4000,
         ragEnableQueryRewriting: ragConfig.enableQueryRewriting ?? true,
         ragQueryRewriteModel: ragConfig.queryRewriteModel ?? "",
+        ragEnableContextCaching: ragConfig.enableContextCaching ?? false,
+        ragContextCacheTtlSeconds: ragConfig.contextCacheTtlSeconds ?? 300,
         noCodeBearerToken: "",
         noCodeBearerTokenAction: noCodeConnection.tokenIsSet ? "keep" : "replace",
       };
@@ -1212,15 +1216,15 @@ export function SkillFormContent({
                                   </FormLabel>
                                   <FormControl>
                                     <Select
-                                      value={field.value ?? ""}
-                                      onValueChange={(value) => field.onChange(value || "")}
+                                      value={field.value && field.value !== "" ? field.value : "__default__"}
+                                      onValueChange={(value) => field.onChange(value === "__default__" ? "" : value)}
                                       disabled={controlsDisabled}
                                     >
                                       <SelectTrigger>
                                         <SelectValue placeholder="Использовать основную модель" />
                                       </SelectTrigger>
                                         <SelectContent>
-                                          <SelectItem value="">Основная модель навыка</SelectItem>
+                                          <SelectItem value="__default__">Основная модель навыка</SelectItem>
                                           {effectiveLlmOptions
                                             .filter((opt) => !opt.disabled)
                                             .map((opt) => {

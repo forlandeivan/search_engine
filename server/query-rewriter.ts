@@ -7,7 +7,8 @@
 
 import { performance } from "perf_hooks";
 import type { LlmProvider } from "@shared/schema";
-import { fetchAccessToken, executeLlmCompletion } from "./llm-client";
+import { executeLlmCompletion } from "./llm-client";
+import { fetchAccessToken } from "./llm-access-token";
 import { buildLlmRequestBody } from "./search/utils";
 import type { ChatConversationMessage } from "./chat-service";
 import { createLogger } from "./lib/logger";

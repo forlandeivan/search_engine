@@ -9,6 +9,13 @@ import type { ChatConversationMessage } from "./chat-service";
 import { createLogger } from "./lib/logger";
 import { rewriteQuery, type QueryRewriteResult } from "./query-rewriter";
 import { storage } from "./storage";
+import {
+  getOrCreateCache,
+  addRetrievalToCache,
+  findSimilarCachedRetrieval,
+  getAccumulatedChunks,
+  type RagChunk,
+} from "./rag-context-cache";
 
 const logger = createLogger("MULTI_TURN_RAG");
 
@@ -26,6 +33,7 @@ export type KnowledgeRagRequestPayload = {
   skill_id?: string;
   workspace_id?: string; // Для получения настроек навыка в pipeline
   conversation_history?: ChatConversationMessage[]; // История диалога для передачи в LLM
+  chat_id?: string; // ID чата для кэширования контекста
   hybrid: {
     bm25: {
       weight?: number;
@@ -473,6 +481,11 @@ export async function callRagForSkillChat(options: {
   
   // Добавляем историю в body для передачи в LLM completion
   body.conversation_history = conversationHistory;
+  
+  // Добавляем chatId для кэширования контекста
+  if (options.chatId) {
+    body.chat_id = options.chatId;
+  }
   
   logger.info({
     step: "call_pipeline",

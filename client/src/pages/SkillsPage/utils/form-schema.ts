@@ -50,6 +50,8 @@ export const skillFormSchema = z.object({
   ragHistoryCharsLimit: z.number().int().min(0).max(50000).default(4000),
   ragEnableQueryRewriting: z.boolean().default(true),
   ragQueryRewriteModel: z.string().max(200).optional().or(z.literal("")),
+  ragEnableContextCaching: z.boolean().default(false),
+  ragContextCacheTtlSeconds: z.number().int().min(60).max(1800).default(300), // от 1 минуты до 30 минут
 });
 
 export type SkillFormValues = z.infer<typeof skillFormSchema>;
@@ -82,4 +84,6 @@ export const defaultFormValues: SkillFormValues = {
   ragHistoryCharsLimit: 4000,
   ragEnableQueryRewriting: true,
   ragQueryRewriteModel: "",
+  ragEnableContextCaching: false,
+  ragContextCacheTtlSeconds: 300,
 };

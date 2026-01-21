@@ -198,6 +198,8 @@ const DEFAULT_RAG_CONFIG: SkillRagConfig = {
   historyCharsLimit: 4000,
   enableQueryRewriting: true,
   queryRewriteModel: null,
+  enableContextCaching: false,
+  contextCacheTtlSeconds: 300, // 5 минут
   mode: "all_collections",
   collectionIds: [],
   topK: 5,
@@ -445,6 +447,19 @@ function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig 
     return value;
   };
 
+  const sanitizeOptionalString = (value: string | null | undefined): string | undefined =>
+    typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+
+  const sanitizeContextCacheTtl = (value: number | null | undefined): number | null => {
+    if (typeof value !== "number" || !Number.isInteger(value)) {
+      return null;
+    }
+    if (value < 60 || value > 1800) {
+      return null; // от 1 минуты до 30 минут
+    }
+    return value;
+  };
+
   return {
     mode: normalizeRagModeFromValue(input.mode),
     collectionIds: normalizeCollectionIds(input.collectionIds),
@@ -456,6 +471,8 @@ function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig 
     historyCharsLimit: sanitizeHistoryCharsLimit(input.historyCharsLimit) ?? DEFAULT_RAG_CONFIG.historyCharsLimit,
     enableQueryRewriting: input.enableQueryRewriting ?? DEFAULT_RAG_CONFIG.enableQueryRewriting,
     queryRewriteModel: sanitizeOptionalString(input.queryRewriteModel) ?? DEFAULT_RAG_CONFIG.queryRewriteModel,
+    enableContextCaching: input.enableContextCaching ?? DEFAULT_RAG_CONFIG.enableContextCaching,
+    contextCacheTtlSeconds: sanitizeContextCacheTtl(input.contextCacheTtlSeconds) ?? DEFAULT_RAG_CONFIG.contextCacheTtlSeconds,
     bm25Weight: sanitizeWeight(input.bm25Weight),
     bm25Limit: sanitizeLimit(input.bm25Limit),
     vectorWeight: sanitizeWeight(input.vectorWeight),
@@ -532,6 +549,8 @@ function mapSkillRow(
       historyCharsLimit: row.ragHistoryCharsLimit ?? DEFAULT_RAG_CONFIG.historyCharsLimit,
       enableQueryRewriting: row.ragEnableQueryRewriting ?? DEFAULT_RAG_CONFIG.enableQueryRewriting,
       queryRewriteModel: row.ragQueryRewriteModel ?? DEFAULT_RAG_CONFIG.queryRewriteModel,
+      enableContextCaching: row.ragEnableContextCaching ?? DEFAULT_RAG_CONFIG.enableContextCaching,
+      contextCacheTtlSeconds: row.ragContextCacheTtlSeconds ?? DEFAULT_RAG_CONFIG.contextCacheTtlSeconds,
       bm25Weight: row.ragBm25Weight ?? DEFAULT_RAG_CONFIG.bm25Weight,
       bm25Limit: row.ragBm25Limit ?? DEFAULT_RAG_CONFIG.bm25Limit,
       vectorWeight: row.ragVectorWeight ?? DEFAULT_RAG_CONFIG.vectorWeight,
@@ -899,6 +918,8 @@ export async function createSkill(
       ragHistoryCharsLimit: effectiveRagConfig.historyCharsLimit,
       ragEnableQueryRewriting: effectiveRagConfig.enableQueryRewriting,
       ragQueryRewriteModel: effectiveRagConfig.queryRewriteModel,
+      ragEnableContextCaching: effectiveRagConfig.enableContextCaching,
+      ragContextCacheTtlSeconds: effectiveRagConfig.contextCacheTtlSeconds,
       ragMaxContextTokens: effectiveRagConfig.maxContextTokens,
       ragShowSources: effectiveRagConfig.showSources,
       ragBm25Weight: effectiveRagConfig.bm25Weight,
@@ -1171,6 +1192,8 @@ export async function updateSkill(
               ragHistoryCharsLimit: ragUpdates.historyCharsLimit,
               ragEnableQueryRewriting: ragUpdates.enableQueryRewriting,
               ragQueryRewriteModel: ragUpdates.queryRewriteModel,
+              ragEnableContextCaching: ragUpdates.enableContextCaching,
+              ragContextCacheTtlSeconds: ragUpdates.contextCacheTtlSeconds,
               ragBm25Weight: ragUpdates.bm25Weight,
               ragBm25Limit: ragUpdates.bm25Limit,
               ragVectorWeight: ragUpdates.vectorWeight,
@@ -1505,6 +1528,8 @@ export async function createUnicaChatSkillForWorkspace(
       ragHistoryCharsLimit: ragConfig.historyCharsLimit,
       ragEnableQueryRewriting: ragConfig.enableQueryRewriting,
       ragQueryRewriteModel: ragConfig.queryRewriteModel,
+      ragEnableContextCaching: ragConfig.enableContextCaching,
+      ragContextCacheTtlSeconds: ragConfig.contextCacheTtlSeconds,
     })
     .returning();
 

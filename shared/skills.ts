@@ -51,6 +51,8 @@ const ragConfigInputSchema = z.object({
   historyCharsLimit: z.number().int().min(0).max(50000).nullable().optional(),
   enableQueryRewriting: z.boolean().nullable().optional(),
   queryRewriteModel: z.string().max(200).nullable().optional(),
+  enableContextCaching: z.boolean().nullable().optional(),
+  contextCacheTtlSeconds: z.number().int().min(60).max(1800).nullable().optional(), // от 1 минуты до 30 минут
   bm25Weight: z.number().min(0).max(1).nullable().optional(),
   bm25Limit: z.number().int().min(1).max(50).nullable().optional(),
   vectorWeight: z.number().min(0).max(1).nullable().optional(),
@@ -163,6 +165,8 @@ export type SkillRagConfig = {
   historyCharsLimit: number | null;
   enableQueryRewriting: boolean | null;
   queryRewriteModel: string | null;
+  enableContextCaching: boolean | null;
+  contextCacheTtlSeconds: number | null;
   bm25Weight: number | null;
   bm25Limit: number | null;
   vectorWeight: number | null;

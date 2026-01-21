@@ -1631,6 +1631,8 @@ export const skills = pgTable(
   ragHistoryCharsLimit: integer("rag_history_chars_limit").default(4000),
   ragEnableQueryRewriting: boolean("rag_enable_query_rewriting").default(true),
   ragQueryRewriteModel: text("rag_query_rewrite_model"), // null = использовать основную модель
+  ragEnableContextCaching: boolean("rag_enable_context_caching").default(false),
+  ragContextCacheTtlSeconds: integer("rag_context_cache_ttl_seconds").default(300), // 5 минут по умолчанию
   ragBm25Weight: doublePrecision("rag_bm25_weight"),
     ragBm25Limit: integer("rag_bm25_limit"),
     ragVectorWeight: doublePrecision("rag_vector_weight"),
