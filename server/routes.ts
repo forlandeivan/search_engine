@@ -3348,7 +3348,9 @@ const knowledgeSuggestQuerySchema = z.object({
 
 const knowledgeRagRequestSchema = z.object({
   q: z.string().trim().min(1, "Укажите запрос"),
+  original_query_for_embedding: z.string().trim().optional(), // Оригинальный запрос без истории (для embedding)
   kb_id: z.string().trim().min(1, "Укажите базу знаний"),
+  kb_ids: z.array(z.string().trim().min(1)).optional(), // Список баз знаний
   top_k: z.coerce.number().int().min(MIN_TOP_K).max(MAX_TOP_K).default(DEFAULT_INDEXING_RULES.topK),
   skill_id: z.string().trim().optional(),
   workspace_id: z.string().trim().optional(),
@@ -3361,6 +3363,8 @@ const knowledgeRagRequestSchema = z.object({
     )
     .optional(),
   chat_id: z.string().trim().optional(), // ID чата для кэширования контекста
+  collection: z.string().trim().optional(), // Для обратной совместимости
+  collections: z.array(z.string().trim().min(1)).optional(), // Список коллекций
   hybrid: z
     .object({
       bm25: z
@@ -3374,6 +3378,7 @@ const knowledgeRagRequestSchema = z.object({
           weight: z.coerce.number().min(0).max(1).optional(),
           limit: z.coerce.number().int().min(1).max(50).optional(),
           collection: z.string().trim().optional(),
+          collections: z.array(z.string().trim().min(1)).optional(), // Список коллекций для vector
           embedding_provider_id: z.string().trim().optional(),
         })
         .default({}),
@@ -3716,7 +3721,11 @@ async function runKnowledgeBaseRagPipeline(options: {
   const emitStreamStatus = (stage: string, message: string) => {
     emitStreamEvent("status", { stage, message });
   };
-  const query = body.q.trim();
+  const query = body.q.trim(); // Расширенный запрос с историей (для LLM)
+  // Для embedding используем оригинальный запрос без истории (чтобы не превысить лимит токенов провайдера)
+  const queryForEmbedding = typeof body.original_query_for_embedding === "string" && body.original_query_for_embedding.trim().length > 0
+    ? body.original_query_for_embedding.trim()
+    : query; // Fallback на query, если original_query_for_embedding не указан
   // Поддержка нескольких БЗ: используем kb_ids если есть, иначе fallback на kb_id
   const knowledgeBaseIds = Array.isArray(body.kb_ids) && body.kb_ids.length > 0
     ? body.kb_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
@@ -3735,6 +3744,10 @@ async function runKnowledgeBaseRagPipeline(options: {
     component: 'RAG_PIPELINE',
     step: 'start',
     query: query.slice(0, 100),
+    queryLength: query.length,
+    queryForEmbedding: queryForEmbedding.slice(0, 100),
+    queryForEmbeddingLength: queryForEmbedding.length,
+    hasOriginalQueryForEmbedding: typeof body.original_query_for_embedding === "string" && body.original_query_for_embedding.trim().length > 0,
     kb_ids: knowledgeBaseIds,
     skill_id: normalizedSkillId,
     workspace_id: typeof body.workspace_id === "string" ? body.workspace_id : null,
@@ -3744,7 +3757,7 @@ async function runKnowledgeBaseRagPipeline(options: {
     hasStream: !!stream,
     wantsLlmStream,
     collections: Array.isArray(body.collections) ? body.collections : [body.collection].filter(Boolean),
-  }, `[RAG PIPELINE] START: query="${query.slice(0, 50)}...", kb_ids=[${knowledgeBaseIds.join(", ")}], skill_id=${normalizedSkillId || 'N/A'}`);
+  }, `[RAG PIPELINE] START: query=${query.length} chars, embeddingQuery=${queryForEmbedding.length} chars, kb_ids=[${knowledgeBaseIds.join(", ")}]`);
 
   if (!query) {
     throw new HttpError(400, "Укажите поисковый запрос");
@@ -4153,16 +4166,19 @@ async function runKnowledgeBaseRagPipeline(options: {
       );
       const bm25Start = performance.now();
       try {
+        // Для BM25 используем оригинальный запрос (без истории), чтобы избежать проблем с длинными запросами
+        const bm25Query = queryForEmbedding !== query ? queryForEmbedding : query;
+        
         // Выполняем BM25 поиск по всем выбранным БЗ и объединяем результаты
         const bm25ResultsPromises = knowledgeBaseIds.map((kbId) =>
-          storage.searchKnowledgeBaseSuggestions(kbId, query, suggestionLimit),
+          storage.searchKnowledgeBaseSuggestions(kbId, bm25Query, suggestionLimit),
         );
         const bm25Results = await Promise.all(bm25ResultsPromises);
         
         bm25Duration = performance.now() - bm25Start;
         
         // Используем normalizedQuery из первого результата
-        normalizedQuery = bm25Results[0]?.normalizedQuery || query;
+        normalizedQuery = bm25Results[0]?.normalizedQuery || bm25Query;
         
         // Объединяем результаты из всех БЗ
         const allBm25Sections: SuggestSections = [];
@@ -4193,8 +4209,11 @@ async function runKnowledgeBaseRagPipeline(options: {
         logger.info({
           component: 'RAG_PIPELINE',
           step: 'bm25_results',
-          query: query.substring(0, 100),
+          query: bm25Query.substring(0, 100),
           normalizedQuery: normalizedQuery.substring(0, 100),
+          originalQueryLength: queryForEmbedding.length,
+          enhancedQueryLength: query.length,
+          usingOriginalQuery: bm25Query !== query,
           resultCount: bm25ResultCount,
           durationMs: Math.round(bm25Duration),
           knowledgeBaseIds,
@@ -4203,7 +4222,7 @@ async function runKnowledgeBaseRagPipeline(options: {
             docTitle: ((s as any).docTitle || (s as any).doc_title || '').substring(0, 50),
             chunkId: (s as any).chunkId || (s as any).chunk_id,
           })),
-        }, `[RAG] BM25 search completed: ${bm25ResultCount} results in ${Math.round(bm25Duration)}ms`);
+        }, `[RAG] BM25 search completed: ${bm25ResultCount} results in ${Math.round(bm25Duration)}ms (using ${bm25Query !== query ? 'original' : 'enhanced'} query)`);
       } catch (error) {
         bm25Duration = performance.now() - bm25Start;
         bm25Step.fail(error);
@@ -4221,7 +4240,8 @@ async function runKnowledgeBaseRagPipeline(options: {
         "BM25 поиск",
         "BM25 поиск отключён (bm25Weight=0)",
       );
-      normalizedQuery = query;
+      // Если BM25 пропущен, используем оригинальный запрос для normalizedQuery
+      normalizedQuery = queryForEmbedding !== query ? queryForEmbedding : query;
       bm25ResultCount = 0;
       
       logger.info({
@@ -4262,19 +4282,28 @@ async function runKnowledgeBaseRagPipeline(options: {
         embeddingProviderId = embeddingProvider.id;
         selectedEmbeddingProvider = embeddingProvider;
 
+        // Для embedding ВСЕГДА используем queryForEmbedding (оригинальный запрос без истории)
+        // Это гарантирует, что мы не превысим лимит токенов провайдера embedding
+        // queryForEmbedding берётся из body.original_query_for_embedding (переписанный запрос без истории)
+        // или fallback на query если original_query_for_embedding не указан
+        const embeddingQuery = queryForEmbedding;
+        
         const embeddingStep = startPipelineStep(
           "vector_embedding",
           {
             providerId: embeddingProvider.id,
             model: embeddingProvider.model,
-            text: normalizedQuery,
+            text: embeddingQuery,
+            originalQueryLength: queryForEmbedding.length,
+            enhancedQueryLength: query.length,
+            usingOriginalQuery: embeddingQuery !== query,
           },
           "Векторизация запроса",
         );
 
         let embeddingResult: EmbeddingVectorResult;
         try {
-          const embeddingInputTokens = estimateTokens(normalizedQuery);
+          const embeddingInputTokens = estimateTokens(embeddingQuery);
           try {
             const embeddingModel = embeddingProvider.model 
               ? await tryResolveModel(embeddingProvider.model, { expectedType: "EMBEDDINGS" })
@@ -4296,20 +4325,20 @@ async function runKnowledgeBaseRagPipeline(options: {
           embeddingResult = await fetchEmbeddingVector(
             embeddingProvider,
             embeddingAccessToken,
-            normalizedQuery,
+            embeddingQuery, // Используем оригинальный запрос без истории
             {
               onBeforeRequest(details) {
                 embeddingStep.setInput({
                   providerId: embeddingProvider.id,
                   model: embeddingProvider.model,
-                  text: normalizedQuery,
+                  text: embeddingQuery, // Используем оригинальный запрос
                   request: details,
                 });
               },
             },
           );
           embeddingUsageTokens = embeddingResult.usageTokens ?? null;
-          const embeddingTokensForUsage = embeddingUsageTokens ?? estimateTokens(normalizedQuery);
+          const embeddingTokensForUsage = embeddingUsageTokens ?? estimateTokens(embeddingQuery);
           embeddingUsageMeasurement = measureTokensForModel(embeddingTokensForUsage, {
             consumptionUnit: "TOKENS_1K",
             modelKey: embeddingProvider.model ?? null,
@@ -4328,13 +4357,16 @@ async function runKnowledgeBaseRagPipeline(options: {
           logger.info({
             component: 'RAG_PIPELINE',
             step: 'embedding_generated',
-            query: normalizedQuery.substring(0, 100),
+            query: embeddingQuery.substring(0, 100),
+            originalQueryLength: queryForEmbedding.length,
+            enhancedQueryLength: query.length,
+            usingOriginalQuery: embeddingQuery !== query,
             providerId: embeddingProvider.id,
             providerName: embeddingProvider.name,
             model: embeddingProvider.model,
             vectorDimensions: embeddingResult.vector.length,
             usageTokens: embeddingUsageTokens,
-          }, `[RAG] Embedding generated: ${embeddingResult.vector.length} dimensions, ${embeddingUsageTokens ?? 'N/A'} tokens`);
+          }, `[RAG] Embedding generated: ${embeddingResult.vector.length} dimensions, ${embeddingUsageTokens ?? 'N/A'} tokens (using ${embeddingQuery !== query ? 'original' : 'enhanced'} query)`);
         } catch (error) {
           embeddingUsageTokens = null;
           embeddingResultForMetadata = null;
@@ -4343,10 +4375,13 @@ async function runKnowledgeBaseRagPipeline(options: {
           logger.error({
             component: 'RAG_PIPELINE',
             step: 'embedding_error',
-            query: normalizedQuery.substring(0, 100),
+            query: embeddingQuery.substring(0, 100),
+            originalQueryLength: queryForEmbedding.length,
+            enhancedQueryLength: query.length,
+            usingOriginalQuery: embeddingQuery !== query,
             providerId: embeddingProviderId,
             error: error instanceof Error ? error.message : String(error),
-          }, `[RAG] Embedding generation failed: ${error instanceof Error ? error.message : String(error)}`);
+          }, `[RAG] Embedding generation failed: ${error instanceof Error ? error.message : String(error)} (query length: ${embeddingQuery.length} chars, ${estimateTokens(embeddingQuery)} tokens)`);
           throw error;
         }
 
@@ -4354,8 +4389,8 @@ async function runKnowledgeBaseRagPipeline(options: {
           workspaceId,
           provider: embeddingProvider,
           modelKey: embeddingProvider.model ?? null,
-          tokensTotal: embeddingUsageMeasurement?.quantityRaw ?? embeddingUsageTokens ?? estimateTokens(normalizedQuery),
-          contentBytes: Buffer.byteLength(normalizedQuery, "utf8"),
+          tokensTotal: embeddingUsageMeasurement?.quantityRaw ?? embeddingUsageTokens ?? estimateTokens(embeddingQuery),
+          contentBytes: Buffer.byteLength(embeddingQuery, "utf8"), // Используем оригинальный запрос
           operationId: `rag-query-${randomUUID()}`,
         });
 

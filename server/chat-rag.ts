@@ -23,7 +23,8 @@ export type RagPipelineStream = {
 };
 
 export type KnowledgeRagRequestPayload = {
-  q: string;
+  q: string; // Расширенный запрос с историей (для LLM)
+  original_query_for_embedding?: string; // Оригинальный запрос без истории (для embedding)
   kb_id: string; // Оставляем для обратной совместимости, но может быть устаревшим
   kb_ids?: string[]; // Новое поле для списка БЗ
   top_k: number;
@@ -394,7 +395,8 @@ export async function buildSkillRagRequestPayload(options: {
     defaultVectorWeight;
 
   const request: KnowledgeRagRequestPayload = {
-    q: enhancedQuery, // Используем расширенный запрос с историей
+    q: enhancedQuery, // Расширенный запрос с историей (для LLM)
+    original_query_for_embedding: effectiveQuery, // Оригинальный запрос без истории (для embedding, чтобы не превысить лимит токенов)
     kb_id: firstKnowledgeBaseId, // Для обратной совместимости
     kb_ids: knowledgeBaseIds, // Новое поле для списка БЗ
     top_k: topK,
