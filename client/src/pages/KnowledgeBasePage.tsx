@@ -2899,6 +2899,16 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         icon: <Loader2 className="h-3 w-3 animate-spin" />,
       };
     }
+    // Важно: когда документов нет, это не "есть изменения" — просто нечего индексировать.
+    if (indexingSummary && (indexingSummary.totalDocuments ?? 0) === 0) {
+      return {
+        variant: "outline" as const,
+        className:
+          "rounded-full bg-gray-500/10 text-gray-600 border-gray-500/20 dark:bg-gray-500/10 dark:text-gray-400 dark:border-gray-500/15",
+        label: "Нет файлов",
+        icon: <CircleDashed className="h-3 w-3" />,
+      };
+    }
     if (isIndexingUpToDate) {
       return { 
         variant: "outline" as const, 
@@ -2962,15 +2972,18 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   // Определяем цвет точки для каждой базы
                   const isBaseIndexing = activeIndexingActions.some((a) => a.baseId === base.id);
                   const status = base.indexStatus;
+                  const hasFiles = Array.isArray(base.rootNodes) && base.rootNodes.length > 0;
                   const dotColor = isBaseIndexing
                     ? "bg-blue-500 animate-pulse"
-                    : status === "up_to_date"
-                      ? "bg-green-500"
-                      : status === "outdated" || status === "partial" || status === "not_indexed" || !status
-                        ? "bg-yellow-500"
-                        : status === "error"
-                          ? "bg-red-500"
-                          : "bg-gray-400";
+                    : !hasFiles
+                      ? "bg-gray-400"
+                      : status === "up_to_date"
+                        ? "bg-green-500"
+                        : status === "outdated" || status === "partial" || status === "not_indexed" || !status
+                          ? "bg-yellow-500"
+                          : status === "error"
+                            ? "bg-red-500"
+                            : "bg-gray-400";
                   
                   return (
                     <DropdownMenuItem
