@@ -165,6 +165,23 @@ export function EmbeddingsAndChunkingStep({
     }
   }, [selectedModel, availableModels, modelsLoading, chunkSize, chunkOverlap, onChange]);
 
+  // Проверка валидности конфигурации (должна быть до условных возвратов)
+  const isValid = useMemo(() => {
+    return (
+      chunkSize > 0 &&
+      chunkSize >= MIN_CHUNK_SIZE &&
+      chunkSize <= MAX_CHUNK_SIZE &&
+      chunkOverlap >= 0 &&
+      chunkOverlap < chunkSize &&
+      Boolean(selectedModel)
+    );
+  }, [chunkSize, chunkOverlap, selectedModel]);
+
+  // Уведомляем родительский компонент об изменении валидности (должен быть до условных возвратов)
+  useEffect(() => {
+    onValidationChange?.(isValid);
+  }, [isValid, onValidationChange]);
+
   if (modelsLoading) {
     return (
       <div className="space-y-4">
@@ -194,23 +211,6 @@ export function EmbeddingsAndChunkingStep({
   }
 
   const maxOverlap = Math.max(0, chunkSize - 1);
-
-  // Проверка валидности конфигурации
-  const isValid = useMemo(() => {
-    return (
-      chunkSize > 0 &&
-      chunkSize >= MIN_CHUNK_SIZE &&
-      chunkSize <= MAX_CHUNK_SIZE &&
-      chunkOverlap >= 0 &&
-      chunkOverlap < chunkSize &&
-      Boolean(selectedModel)
-    );
-  }, [chunkSize, chunkOverlap, selectedModel]);
-
-  // Уведомляем родительский компонент об изменении валидности
-  useEffect(() => {
-    onValidationChange?.(isValid);
-  }, [isValid, onValidationChange]);
 
   return (
     <div className="space-y-6">
