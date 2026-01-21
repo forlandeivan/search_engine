@@ -212,6 +212,7 @@ export type KnowledgeBaseSummary = {
   description: string;
   updatedAt: string;
   rootNodes: KnowledgeBaseTreeNode[];
+  indexStatus?: KnowledgeBaseIndexStatus;
 };
 
 export type KnowledgeBaseIndexingSummary = {

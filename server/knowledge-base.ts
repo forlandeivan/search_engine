@@ -26,6 +26,7 @@ import {
   knowledgeDocumentVersions,
   knowledgeDocumentChunkSets,
   knowledgeDocumentIndexState,
+  knowledgeBaseIndexState,
   knowledgeBaseIndexingJobs,
   knowledgeBaseNodeTypes,
   knowledgeNodeSourceTypes,
@@ -918,18 +919,36 @@ export async function listKnowledgeBases(workspaceId: string): Promise<Knowledge
   }
 
   const baseIds = bases.map((base) => base.id);
-  const nodes = baseIds.length
-    ? await db
-        .select()
-        .from(knowledgeNodes)
-        .where(inArray(knowledgeNodes.baseId, baseIds))
-        .orderBy(
-          asc(knowledgeNodes.baseId),
-          asc(knowledgeNodes.parentId),
-          asc(knowledgeNodes.position),
-          asc(knowledgeNodes.createdAt),
-        )
-    : [];
+  
+  // Fetch nodes and index states in parallel
+  const [nodes, indexStates] = await Promise.all([
+    baseIds.length
+      ? db
+          .select()
+          .from(knowledgeNodes)
+          .where(inArray(knowledgeNodes.baseId, baseIds))
+          .orderBy(
+            asc(knowledgeNodes.baseId),
+            asc(knowledgeNodes.parentId),
+            asc(knowledgeNodes.position),
+            asc(knowledgeNodes.createdAt),
+          )
+      : Promise.resolve([]),
+    baseIds.length
+      ? db
+          .select({
+            baseId: knowledgeBaseIndexState.baseId,
+            status: knowledgeBaseIndexState.status,
+          })
+          .from(knowledgeBaseIndexState)
+          .where(
+            and(
+              eq(knowledgeBaseIndexState.workspaceId, workspaceId),
+              inArray(knowledgeBaseIndexState.baseId, baseIds),
+            ),
+          )
+      : Promise.resolve([]),
+  ]);
 
   const nodesByBase = new Map<string, KnowledgeNodeRow[]>();
   for (const node of nodes) {
@@ -941,6 +960,11 @@ export async function listKnowledgeBases(workspaceId: string): Promise<Knowledge
     }
   }
 
+  const indexStatusByBase = new Map<string, KnowledgeBaseIndexStatus>();
+  for (const state of indexStates) {
+    indexStatusByBase.set(state.baseId, state.status);
+  }
+
   return bases.map((base) => {
     const baseNodes = nodesByBase.get(base.id) ?? [];
 
@@ -950,6 +974,7 @@ export async function listKnowledgeBases(workspaceId: string): Promise<Knowledge
       description: base.description,
       updatedAt: toIsoDate(base.updatedAt),
       rootNodes: buildStructure(baseNodes),
+      indexStatus: indexStatusByBase.get(base.id),
     } satisfies KnowledgeBaseSummary;
   });
 }
