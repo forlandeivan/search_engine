@@ -651,6 +651,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const activeIndexingActionForBase = selectedBase?.id
     ? activeIndexingActions.find((action) => action.baseId === selectedBase.id)
     : undefined;
+  const prevActiveIndexingActionIdRef = useRef<string | null>(null);
   const searchSettingsQueryKey = useMemo(
     () =>
       selectedBase
@@ -682,6 +683,47 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   useEffect(() => {
     setIsIndexingChangesOpen(false);
   }, [selectedBase?.id]);
+  useEffect(() => {
+    // Когда активная индексация для базы пропадает/завершается — подтягиваем свежую сводку,
+    // чтобы бадж статуса обновился без перезагрузки страницы.
+    if (!selectedBase?.id) {
+      prevActiveIndexingActionIdRef.current = null;
+      return;
+    }
+
+    const currentActionId = activeIndexingActionForBase?.actionId ?? null;
+    const prevActionId = prevActiveIndexingActionIdRef.current;
+
+    const finishedStatuses = new Set(["done", "canceled", "error"]);
+    const isFinishedNow =
+      Boolean(activeIndexingActionForBase?.status) &&
+      finishedStatuses.has(activeIndexingActionForBase!.status);
+
+    // Сценарий A: индексация закончилась и действие исчезло из списка активных
+    const becameInactive = Boolean(prevActionId) && !currentActionId;
+    // Сценарий B: бэкенд вернул финальный статус, но действие ещё видно в active
+    const becameFinished = Boolean(currentActionId) && isFinishedNow;
+
+    if (becameInactive || becameFinished) {
+      void indexingSummaryQuery.refetch();
+      if (isIndexingChangesOpen) {
+        void indexingChangesQuery.refetch();
+      }
+      // Обновляем список баз (точки/статусы) и прочие связанные данные.
+      queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
+      setIndexingActionId(null);
+    }
+
+    prevActiveIndexingActionIdRef.current = currentActionId;
+  }, [
+    selectedBase?.id,
+    activeIndexingActionForBase?.actionId,
+    activeIndexingActionForBase?.status,
+    indexingSummaryQuery,
+    indexingChangesQuery,
+    isIndexingChangesOpen,
+    queryClient,
+  ]);
   useEffect(() => {
     if (!isQuickSwitcherOpen) {
       return;
@@ -2628,7 +2670,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   className="flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
                   title="Перейти к коллекции в Qdrant"
                 >
-                  {collectionName}
+                  Открыть
                   <ExternalLink className="h-3 w-3" />
                 </Link>
               </div>
@@ -2899,6 +2941,22 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         icon: <Loader2 className="h-3 w-3 animate-spin" />,
       };
     }
+    // Если индексация только что запущена, но список активных действий ещё не обновился (опрашивается раз в ~2с),
+    // показываем синий статус сразу по наличию actionId.
+    if (
+      indexingActionId &&
+      indexingStatusQuery.data?.status !== "done" &&
+      indexingStatusQuery.data?.status !== "canceled" &&
+      indexingStatusQuery.data?.status !== "error"
+    ) {
+      return {
+        variant: "outline" as const,
+        className:
+          "rounded-full bg-blue-500/15 text-blue-700 border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20",
+        label: "Индексация...",
+        icon: <Loader2 className="h-3 w-3 animate-spin" />,
+      };
+    }
     // Важно: когда документов нет, это не "есть изменения" — просто нечего индексировать.
     if (indexingSummary && (indexingSummary.totalDocuments ?? 0) === 0) {
       return {
@@ -3020,7 +3078,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 <button type="button" className="cursor-pointer">
                   <Badge 
                     variant={statusBadge.variant}
-                    className={cn("gap-1.5", statusBadge.className)}
+                    className={cn("gap-1.5 border-0", statusBadge.className)}
                   >
                     {statusBadge.icon}
                     {statusBadge.label}
