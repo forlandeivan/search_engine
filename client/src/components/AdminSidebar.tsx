@@ -65,6 +65,10 @@ export default function AdminSidebar({ user, workspace }: AdminSidebarProps) {
 
   const sections: Array<{ label?: string; items: SidebarItem[] }> = [
     {
+      label: "Приложение",
+      items: [{ title: "К пользовательскому меню", url: "/", icon: ArrowLeft }],
+    },
+    {
       items: [
         { title: "Рабочие пространства", url: "/admin/workspaces", icon: Building2 },
         { title: "Пользователи", url: "/admin/users", icon: Users },
@@ -115,10 +119,7 @@ export default function AdminSidebar({ user, workspace }: AdminSidebarProps) {
         { title: "ASR executions", url: "/admin/asr-executions", icon: Mic },
       ],
     },
-    {
-      label: "Приложение",
-      items: [{ title: "К пользовательскому меню", url: "/", icon: ArrowLeft }],
-    },
+    
   ];
 
   return (
