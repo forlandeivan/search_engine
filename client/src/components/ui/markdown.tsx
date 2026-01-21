@@ -20,6 +20,15 @@ export function MarkdownRenderer({ markdown, className }: MarkdownRendererProps)
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeSlug], [rehypeAutolinkHeadings, { behavior: "wrap" }]]}
+        components={{
+          table: ({ children, ...props }) => (
+            <div className="my-4 w-full overflow-x-auto">
+              <table {...props} className="min-w-full border-collapse">
+                {children}
+              </table>
+            </div>
+          ),
+        }}
       >
         {markdown}
       </ReactMarkdown>

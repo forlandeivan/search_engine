@@ -674,6 +674,7 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       return res.status(202).json({ accepted: true, userMessage: userMessageRecord });
     }
 
+    const pipelineStartTime = performance.now();
     const context = await buildChatLlmContext(req.params.chatId, workspaceId, user.id, { executionId });
 
     // RAG skill handling
@@ -693,6 +694,22 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
 
       let ragResult: KnowledgeBaseRagPipelineResponse | null = null;
       try {
+        // Создаем stream handler если нужен streaming
+        const streamHandler = wantsStream ? {
+          onEvent: (eventName: string, payload?: unknown) => {
+            sendSseEvent(res, eventName, payload);
+          }
+        } : null;
+        
+        // Устанавливаем SSE headers до вызова pipeline если нужен streaming
+        if (wantsStream) {
+          streamingResponseStarted = true;
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('Connection', 'keep-alive');
+          res.setHeader('X-Accel-Buffering', 'no');
+        }
+        
         ragResult = await callRagForSkillChat({ 
           req, 
           skill: context.skillConfig, 
@@ -701,7 +718,7 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
           chatId: req.params.chatId, // Передаем chatId для получения истории
           excludeMessageId: userMessageRecord?.id, // Исключаем текущее сообщение из истории
           runPipeline: runKnowledgeBaseRagPipeline, 
-          stream: null 
+          stream: streamHandler
         }) as KnowledgeBaseRagPipelineResponse;
         
         logger.info({
@@ -786,23 +803,8 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       }
 
       if (wantsStream) {
-        streamingResponseStarted = true;
-        res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-        res.setHeader('Cache-Control', 'no-cache, no-transform');
-        res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Accel-Buffering', 'no');
-
-        const answer = ragResult.response.answer;
-        const chunkSize = 5;
-        for (let i = 0; i < answer.length; i += chunkSize) {
-          const chunk = answer.substring(i, i + chunkSize);
-          if (chunk.length > 0) {
-            sendSseEvent(res, 'delta', { text: chunk });
-            await new Promise((resolve) => setTimeout(resolve, 50));
-          }
-        }
-
-        const assistantMessage = await writeAssistantMessage(req.params.chatId, workspaceId, user.id, answer, metadata);
+        // Streaming уже выполнен в pipeline, просто отправляем done event
+        const assistantMessage = await writeAssistantMessage(req.params.chatId, workspaceId, user.id, ragResult.response.answer, metadata);
         
         logger.info({
           component: 'CHAT_RAG',
@@ -825,8 +827,27 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
     }
 
     // Standard LLM completion (no RAG)
+    let stepStartTime = performance.now();
+    
     const requestBody = buildChatCompletionRequestBody(context, { stream: wantsStream });
+    const step1Duration = performance.now() - stepStartTime;
+    logger.info({
+      component: 'LLM_PIPELINE',
+      step: '1_build_request_body',
+      chatId: req.params.chatId,
+      durationMs: Math.round(step1Duration),
+    }, `[LLM PIPELINE] Step 1: Build request body - ${Math.round(step1Duration)}ms`);
+    
+    stepStartTime = performance.now();
     const accessToken = await fetchAccessToken(context.provider);
+    const step2Duration = performance.now() - stepStartTime;
+    logger.info({
+      component: 'LLM_PIPELINE',
+      step: '2_fetch_access_token',
+      chatId: req.params.chatId,
+      durationMs: Math.round(step2Duration),
+    }, `[LLM PIPELINE] Step 2: Fetch access token - ${Math.round(step2Duration)}ms`);
+    
     const totalPromptChars = Array.isArray(requestBody[context.requestConfig.messagesField]) ? JSON.stringify(requestBody[context.requestConfig.messagesField]).length : 0;
     const resolvedModelKey = context.model ?? context.provider.model ?? null;
     const resolvedModelId = context.modelInfo?.id ?? null;
@@ -855,16 +876,32 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       systemPromptLength: context.skill?.systemPrompt?.length ?? 0,
     }, `[LLM PIPELINE] START: chat=${req.params.chatId}, provider=${context.provider.name}, model=${resolvedModelKey}, messages=${context.messages.length}, stream=${wantsStream}`);
 
+    stepStartTime = performance.now();
     const llmGuardDecision = await workspaceOperationGuard.check(buildLlmOperationContext({ workspaceId, providerId: context.provider.id ?? context.provider.providerType ?? 'unknown', model: resolvedModelKey, modelId: resolvedModelId, modelKey: context.modelInfo?.modelKey ?? resolvedModelKey, scenario: context.skillConfig ? 'skill' : 'chat', tokens: context.requestConfig.maxTokens }));
+    const step3Duration = performance.now() - stepStartTime;
+    logger.info({
+      component: 'LLM_PIPELINE',
+      step: '3_guard_check',
+      chatId: req.params.chatId,
+      durationMs: Math.round(step3Duration),
+    }, `[LLM PIPELINE] Step 3: Guard check - ${Math.round(step3Duration)}ms`);
     if (!llmGuardDecision.allowed) {
       throw new OperationBlockedError(mapDecisionToPayload(llmGuardDecision, { workspaceId, operationType: 'LLM_REQUEST', meta: { llm: { provider: context.provider.id, model: resolvedModelKey, modelId: resolvedModelId, modelKey: context.modelInfo?.modelKey ?? resolvedModelKey } } }));
     }
 
     // Preflight credits check
+    stepStartTime = performance.now();
     const promptTokensEstimate = Math.ceil(totalPromptChars / 4);
     const maxOutputTokens = context.requestConfig.maxTokens ?? null;
     try {
       await ensureCreditsForLlmPreflight(workspaceId, context.modelInfo as ModelInfoForUsage, promptTokensEstimate, maxOutputTokens);
+      const step4Duration = performance.now() - stepStartTime;
+      logger.info({
+        component: 'LLM_PIPELINE',
+        step: '4_credits_check',
+        chatId: req.params.chatId,
+        durationMs: Math.round(step4Duration),
+      }, `[LLM PIPELINE] Step 4: Credits check - ${Math.round(step4Duration)}ms`);
     } catch (error) {
       if (handlePreflightError(res, error)) return;
       throw error;
@@ -882,6 +919,7 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
 
       await safeLogStep('STREAM_TO_CLIENT_START', SKILL_EXECUTION_STEP_STATUS.RUNNING, { input: { chatId: req.params.chatId, workspaceId, stream: true } });
 
+      stepStartTime = performance.now();
       const completionPromise = executeLlmCompletion(context.provider, accessToken, requestBody, { stream: true });
       const streamIterator = completionPromise.streamIterator;
       const forwarder = streamIterator && forwardLlmStreamEvents(streamIterator, (eventName: string, payload?: unknown) => sendSseEvent(res, eventName, payload));
@@ -889,7 +927,14 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       try {
         const completion = await completionPromise;
         llmCallCompleted = true;
+        const step5Duration = performance.now() - stepStartTime;
         const llmDurationMs = performance.now() - llmStartTime;
+        logger.info({
+          component: 'LLM_PIPELINE',
+          step: '5_llm_call',
+          chatId: req.params.chatId,
+          durationMs: Math.round(step5Duration),
+        }, `[LLM PIPELINE] Step 5: LLM call - ${Math.round(step5Duration)}ms`);
         const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
         const llmUsageMeasurement = measureTokensForModel(tokensTotal, { consumptionUnit: context.modelInfo?.consumptionUnit ?? 'TOKENS_1K', modelKey: context.modelInfo?.modelKey ?? resolvedModelKey });
         const llmPrice = calculatePriceSnapshot(context.modelInfo as ModelInfoForUsage, llmUsageMeasurement);
@@ -913,6 +958,7 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
 
         await safeLogStep('CALL_LLM', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { output: { usageTokens: tokensTotal, usageUnits: llmUsageMeasurement?.quantity ?? null, usageUnit: llmUsageMeasurement?.unit ?? null, creditsCharged: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null, responsePreview: completion.answer.slice(0, 160) } });
 
+        stepStartTime = performance.now();
         if (tokensTotal) {
           try {
             await recordLlmUsageEvent({ workspaceId, executionId: usageOperationId, provider: context.provider.id ?? context.provider.providerType ?? 'unknown', model: resolvedModelKey ?? 'unknown', modelId: resolvedModelId ?? null, tokensTotal: llmUsageMeasurement?.quantityRaw ?? tokensTotal, appliedCreditsPerUnit: llmPrice?.appliedCreditsPerUnitCents ?? null, creditsCharged: llmPrice?.creditsChargedCents ?? null, occurredAt: new Date() });
@@ -923,9 +969,32 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
             logger.error({ err: usageError }, `[usage] Failed to record LLM tokens for operation ${usageOperationId}`);
           }
         }
+        const step6Duration = performance.now() - stepStartTime;
+        logger.info({
+          component: 'LLM_PIPELINE',
+          step: '6_record_usage',
+          chatId: req.params.chatId,
+          durationMs: Math.round(step6Duration),
+        }, `[LLM PIPELINE] Step 6: Record usage - ${Math.round(step6Duration)}ms`);
 
         if (forwarder) await forwarder;
+        stepStartTime = performance.now();
         const assistantMessage = await writeAssistantMessage(req.params.chatId, workspaceId, user.id, completion.answer);
+        const step7Duration = performance.now() - stepStartTime;
+        logger.info({
+          component: 'LLM_PIPELINE',
+          step: '7_write_message',
+          chatId: req.params.chatId,
+          durationMs: Math.round(step7Duration),
+        }, `[LLM PIPELINE] Step 7: Write message - ${Math.round(step7Duration)}ms`);
+        
+        const totalDuration = performance.now() - pipelineStartTime;
+        logger.info({
+          component: 'LLM_PIPELINE',
+          step: 'total',
+          chatId: req.params.chatId,
+          durationMs: Math.round(totalDuration),
+        }, `[LLM PIPELINE] TOTAL: ${Math.round(totalDuration)}ms`);
         sendSseEvent(res, 'done', { assistantMessageId: assistantMessage.id, userMessageId: userMessageRecord?.id ?? null, usage: { llmTokens: llmUsageMeasurement?.quantityRaw ?? tokensTotal, llmUnits: llmUsageMeasurement?.quantity ?? null, llmUnit: llmUsageMeasurement?.unit ?? null, llmCredits: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null } });
         await safeLogStep('STREAM_TO_CLIENT_FINISH', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { output: { reason: 'completed' } });
         await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
@@ -965,9 +1034,17 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
     let llmUsageMeasurement: ReturnType<typeof measureTokensForModel> | null = null;
     let llmPrice: ReturnType<typeof calculatePriceSnapshot> = null;
     try {
+      stepStartTime = performance.now();
       completion = await executeLlmCompletion(context.provider, accessToken, requestBody);
       llmCallCompleted = true;
+      const step5Duration = performance.now() - stepStartTime;
       const llmDurationMs = performance.now() - llmStartTime;
+      logger.info({
+        component: 'LLM_PIPELINE',
+        step: '5_llm_call',
+        chatId: req.params.chatId,
+        durationMs: Math.round(step5Duration),
+      }, `[LLM PIPELINE] Step 5: LLM call - ${Math.round(step5Duration)}ms`);
       const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
       llmUsageMeasurement = measureTokensForModel(tokensTotal, { consumptionUnit: context.modelInfo?.consumptionUnit ?? 'TOKENS_1K', modelKey: context.modelInfo?.modelKey ?? resolvedModelKey });
       llmPrice = calculatePriceSnapshot(context.modelInfo as ModelInfoForUsage, llmUsageMeasurement ?? null);
@@ -991,6 +1068,7 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
 
       await safeLogStep('CALL_LLM', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { output: { usageTokens: tokensTotal, usageUnits: llmUsageMeasurement?.quantity ?? null, usageUnit: llmUsageMeasurement?.unit ?? null, creditsCharged: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null, responsePreview: completion.answer.slice(0, 160) } });
 
+      stepStartTime = performance.now();
       if (tokensTotal) {
         try {
           await recordLlmUsageEvent({ workspaceId, executionId: usageOperationId, provider: context.provider.id ?? context.provider.providerType ?? 'unknown', model: resolvedModelKey ?? 'unknown', modelId: resolvedModelId ?? null, tokensTotal: llmUsageMeasurement?.quantityRaw ?? tokensTotal, appliedCreditsPerUnit: llmPrice?.appliedCreditsPerUnitCents ?? null, creditsCharged: llmPrice?.creditsChargedCents ?? null, occurredAt: new Date() });
@@ -1001,6 +1079,13 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
           logger.error({ err: usageError }, `[usage] Failed to record LLM tokens for operation ${usageOperationId}`);
         }
       }
+      const step6Duration = performance.now() - stepStartTime;
+      logger.info({
+        component: 'LLM_PIPELINE',
+        step: '6_record_usage',
+        chatId: req.params.chatId,
+        durationMs: Math.round(step6Duration),
+      }, `[LLM PIPELINE] Step 6: Record usage - ${Math.round(step6Duration)}ms`);
     } catch (error) {
       const info = describeErrorForLog(error);
       const llmErrorDurationMs = performance.now() - llmStartTime;
@@ -1025,7 +1110,24 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       throw error;
     }
 
+    stepStartTime = performance.now();
     const assistantMessage = await writeAssistantMessage(req.params.chatId, workspaceId, user.id, completion.answer);
+    const step7Duration = performance.now() - stepStartTime;
+    logger.info({
+      component: 'LLM_PIPELINE',
+      step: '7_write_message',
+      chatId: req.params.chatId,
+      durationMs: Math.round(step7Duration),
+    }, `[LLM PIPELINE] Step 7: Write message - ${Math.round(step7Duration)}ms`);
+    
+    const totalDuration = performance.now() - pipelineStartTime;
+    logger.info({
+      component: 'LLM_PIPELINE',
+      step: 'total',
+      chatId: req.params.chatId,
+      durationMs: Math.round(totalDuration),
+    }, `[LLM PIPELINE] TOTAL: ${Math.round(totalDuration)}ms`);
+    
     logger.info(`[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} sync response finished`);
     await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
     res.json({ message: assistantMessage, userMessage: userMessageRecord, usage: { llmTokens: completion.usageTokens ?? Math.ceil(completion.answer.length / 4), llmUnits: llmUsageMeasurement?.quantity ?? null, llmUnit: llmUsageMeasurement?.unit ?? null, llmCredits: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null } });
