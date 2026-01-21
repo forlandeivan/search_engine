@@ -43,8 +43,8 @@ export function EmbeddingsAndChunkingStep({
 }: EmbeddingsAndChunkingStepProps) {
   const [selectedProvider, setSelectedProvider] = useState(config.embeddingsProvider || "");
   const [selectedModel, setSelectedModel] = useState(config.embeddingsModel || "");
-  const [chunkSize, setChunkSize] = useState(config.chunkSize || 800);
-  const [chunkOverlap, setChunkOverlap] = useState(config.chunkOverlap || 0);
+  const [chunkSize, setChunkSize] = useState<number | "">(config.chunkSize || 800);
+  const [chunkOverlap, setChunkOverlap] = useState<number | "">(config.chunkOverlap || 0);
   const [chunkSizeError, setChunkSizeError] = useState<string | null>(null);
   const [chunkOverlapError, setChunkOverlapError] = useState<string | null>(null);
 
@@ -71,60 +71,71 @@ export function EmbeddingsAndChunkingStep({
   );
 
   // Валидация и обновление chunkSize
-  const updateChunkSize = (value: number) => {
-    // Всегда обновляем значение, даже если оно невалидно
-    const newChunkSize = Math.round(value);
-    setChunkSize(newChunkSize);
-
-    // Показываем ошибку только для подсказки, но не блокируем ввод
-    if (value < MIN_CHUNK_SIZE) {
+  const handleChunkSizeChange = (value: string) => {
+    if (value === "") {
+      setChunkSize("");
+      setChunkSizeError(null);
+      return;
+    }
+    const numValue = Number.parseInt(value, 10);
+    if (Number.isNaN(numValue)) {
+      return;
+    }
+    setChunkSize(numValue);
+    if (numValue < MIN_CHUNK_SIZE) {
       setChunkSizeError(`Минимальный размер чанка: ${MIN_CHUNK_SIZE}`);
-    } else if (value > MAX_CHUNK_SIZE) {
+    } else if (numValue > MAX_CHUNK_SIZE) {
       setChunkSizeError(`Максимальный размер чанка: ${MAX_CHUNK_SIZE}`);
     } else {
       setChunkSizeError(null);
+      // Автоматически ограничиваем chunkOverlap
+      if (typeof chunkOverlap === "number" && chunkOverlap >= numValue) {
+        setChunkOverlap(Math.max(0, numValue - 1));
+      }
     }
-
-    // Автоматически ограничиваем chunkOverlap
-    let newOverlap = chunkOverlap;
-    if (chunkOverlap >= newChunkSize) {
-      newOverlap = Math.max(0, newChunkSize - 1);
-      setChunkOverlap(newOverlap);
-    }
-    
-    onChange({
-      embeddingsProvider: selectedProvider,
-      embeddingsModel: selectedModel,
-      chunkSize: newChunkSize,
-      chunkOverlap: newOverlap,
-    });
   };
 
   // Валидация и обновление chunkOverlap
-  const updateChunkOverlap = (value: number) => {
-    // Всегда обновляем значение, даже если оно невалидно
-    const newOverlap = Math.round(value);
-    setChunkOverlap(newOverlap);
-
-    // Показываем ошибку только для подсказки, но не блокируем ввод
-    if (value < 0) {
+  const handleChunkOverlapChange = (value: string) => {
+    if (value === "") {
+      setChunkOverlap("");
+      setChunkOverlapError(null);
+      return;
+    }
+    const numValue = Number.parseInt(value, 10);
+    if (Number.isNaN(numValue)) {
+      return;
+    }
+    setChunkOverlap(numValue);
+    if (numValue < 0) {
       setChunkOverlapError("Перекрытие не может быть отрицательным");
-    } else if (value >= chunkSize) {
+    } else if (typeof chunkSize === "number" && numValue >= chunkSize) {
       setChunkOverlapError(`Перекрытие должно быть меньше размера чанка (${chunkSize})`);
     } else {
       setChunkOverlapError(null);
     }
-
-    onChange({
-      embeddingsProvider: selectedProvider,
-      embeddingsModel: selectedModel,
-      chunkSize,
-      chunkOverlap: newOverlap,
-    });
   };
 
+  // Отправляем изменения при валидных значениях
+  useEffect(() => {
+    if (
+      typeof chunkSize === "number" &&
+      typeof chunkOverlap === "number" &&
+      chunkSize >= MIN_CHUNK_SIZE &&
+      chunkSize <= MAX_CHUNK_SIZE &&
+      chunkOverlap >= 0 &&
+      chunkOverlap < chunkSize
+    ) {
+      onChange({
+        embeddingsProvider: selectedProvider,
+        embeddingsModel: selectedModel,
+        chunkSize,
+        chunkOverlap,
+      });
+    }
+  }, [chunkSize, chunkOverlap, selectedProvider, selectedModel, onChange]);
 
-  // Синхронизация с внешним config (только при изменении внешнего config)
+  // Синхронизация с внешним config
   useEffect(() => {
     if (
       config.embeddingsProvider !== selectedProvider ||
@@ -134,8 +145,8 @@ export function EmbeddingsAndChunkingStep({
     ) {
       setSelectedProvider(config.embeddingsProvider || "");
       setSelectedModel(config.embeddingsModel || "");
-      setChunkSize(config.chunkSize);
-      setChunkOverlap(config.chunkOverlap);
+      setChunkSize(config.chunkSize || 800);
+      setChunkOverlap(config.chunkOverlap || 0);
     }
   }, [config.embeddingsProvider, config.embeddingsModel, config.chunkSize, config.chunkOverlap]);
 
@@ -154,11 +165,13 @@ export function EmbeddingsAndChunkingStep({
         if (modelKey && firstModel.providerId) {
           setSelectedModel(modelKey);
           setSelectedProvider(firstModel.providerId);
+          const currentChunkSize = typeof chunkSize === "number" ? chunkSize : 800;
+          const currentChunkOverlap = typeof chunkOverlap === "number" ? chunkOverlap : 0;
           onChange({
             embeddingsProvider: firstModel.providerId,
             embeddingsModel: modelKey,
-            chunkSize,
-            chunkOverlap,
+            chunkSize: currentChunkSize,
+            chunkOverlap: currentChunkOverlap,
           });
         }
       }
@@ -168,9 +181,10 @@ export function EmbeddingsAndChunkingStep({
   // Проверка валидности конфигурации (должна быть до условных возвратов)
   const isValid = useMemo(() => {
     return (
-      chunkSize > 0 &&
+      typeof chunkSize === "number" &&
       chunkSize >= MIN_CHUNK_SIZE &&
       chunkSize <= MAX_CHUNK_SIZE &&
+      typeof chunkOverlap === "number" &&
       chunkOverlap >= 0 &&
       chunkOverlap < chunkSize &&
       Boolean(selectedModel)
@@ -210,7 +224,7 @@ export function EmbeddingsAndChunkingStep({
     );
   }
 
-  const maxOverlap = Math.max(0, chunkSize - 1);
+  const maxOverlap = typeof chunkSize === "number" ? Math.max(0, chunkSize - 1) : 0;
 
   return (
     <div className="space-y-6">
@@ -241,11 +255,13 @@ export function EmbeddingsAndChunkingStep({
                     const modelKey = model.providerModelKey || model.key;
                     setSelectedModel(modelKey);
                     setSelectedProvider(model.providerId);
+                    const currentChunkSize = typeof chunkSize === "number" ? chunkSize : 800;
+                    const currentChunkOverlap = typeof chunkOverlap === "number" ? chunkOverlap : 0;
                     onChange({
                       embeddingsProvider: model.providerId,
                       embeddingsModel: modelKey,
-                      chunkSize,
-                      chunkOverlap,
+                      chunkSize: currentChunkSize,
+                      chunkOverlap: currentChunkOverlap,
                     });
                   }
                 }}
@@ -274,11 +290,13 @@ export function EmbeddingsAndChunkingStep({
                 onChange={(e) => {
                   const value = e.target.value;
                   setSelectedModel(value);
+                  const currentChunkSize = typeof chunkSize === "number" ? chunkSize : 800;
+                  const currentChunkOverlap = typeof chunkOverlap === "number" ? chunkOverlap : 0;
                   onChange({
                     embeddingsProvider: selectedProvider,
                     embeddingsModel: value,
-                    chunkSize,
-                    chunkOverlap,
+                    chunkSize: currentChunkSize,
+                    chunkOverlap: currentChunkOverlap,
                   });
                 }}
                 disabled={disabled}
@@ -302,19 +320,7 @@ export function EmbeddingsAndChunkingStep({
               min={MIN_CHUNK_SIZE}
               max={MAX_CHUNK_SIZE}
               value={chunkSize}
-              onChange={(e) => {
-                const inputValue = e.target.value;
-                // Позволяем пустую строку для удобства редактирования
-                if (inputValue === "") {
-                  setChunkSize(0);
-                  setChunkSizeError(`Минимальный размер чанка: ${MIN_CHUNK_SIZE}`);
-                  return;
-                }
-                const value = Number.parseInt(inputValue, 10);
-                if (!Number.isNaN(value)) {
-                  updateChunkSize(value);
-                }
-              }}
+              onChange={(e) => handleChunkSizeChange(e.target.value)}
               disabled={disabled}
             />
             {chunkSizeError && <p className="text-sm text-destructive">{chunkSizeError}</p>}
@@ -338,19 +344,7 @@ export function EmbeddingsAndChunkingStep({
               min={0}
               max={maxOverlap}
               value={chunkOverlap}
-              onChange={(e) => {
-                const inputValue = e.target.value;
-                // Позволяем пустую строку для удобства редактирования
-                if (inputValue === "") {
-                  setChunkOverlap(0);
-                  setChunkOverlapError(null);
-                  return;
-                }
-                const value = Number.parseInt(inputValue, 10);
-                if (!Number.isNaN(value)) {
-                  updateChunkOverlap(value);
-                }
-              }}
+              onChange={(e) => handleChunkOverlapChange(e.target.value)}
               disabled={disabled}
             />
             {chunkOverlapError && <p className="text-sm text-destructive">{chunkOverlapError}</p>}
