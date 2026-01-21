@@ -66,7 +66,9 @@ type SourceCardProps = {
 function SourceCard({ source, workspaceId }: SourceCardProps) {
   const documentUrl = buildDocumentUrl(source, workspaceId);
   const usageCount = source.usedInMessages?.length ?? 1;
-  const relevancePercent = ((source.totalScore || source.score || 0) * 100).toFixed(0);
+  // Используем vector score для релевантности (более точный показатель), fallback на combined score
+  const relevanceScore = source.scores?.vector ?? source.score ?? 0;
+  const relevancePercent = (relevanceScore * 100).toFixed(0);
 
   return (
     <div className="rounded-lg border bg-card p-3">

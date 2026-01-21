@@ -211,11 +211,15 @@ export function CitationCard({ citation, workspaceId, index }: CitationCardProps
               {citation.node_slug}
             </span>
           )}
-          {typeof citation.score === "number" && (
-            <span className="inline-flex items-center gap-0.5">
-              Релевантность: {(citation.score * 100).toFixed(0)}%
-            </span>
-          )}
+          {(() => {
+            // Используем vector score для отображения релевантности (более точный показатель)
+            const relevanceScore = citation.scores?.vector ?? citation.score;
+            return typeof relevanceScore === "number" ? (
+              <span className="inline-flex items-center gap-0.5">
+                Релевантность: {(relevanceScore * 100).toFixed(0)}%
+              </span>
+            ) : null;
+          })()}
         </div>
       </div>
     </div>

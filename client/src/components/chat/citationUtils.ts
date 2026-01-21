@@ -30,10 +30,14 @@ export function groupCitationsByDocument(citations: RagChunk[]): GroupedCitation
 
     const group = groupMap.get(docId)!;
     group.chunks.push(citation);
-    group.totalScore += citation.score || 0;
     
-    if ((citation.score || 0) > group.topScore) {
-      group.topScore = citation.score || 0;
+    // Используем vector score для релевантности (более точный показатель),
+    // fallback на combined score если vector score недоступен
+    const relevanceScore = citation.scores?.vector ?? citation.score ?? 0;
+    group.totalScore += relevanceScore;
+    
+    if (relevanceScore > group.topScore) {
+      group.topScore = relevanceScore;
     }
   }
 
@@ -41,9 +45,13 @@ export function groupCitationsByDocument(citations: RagChunk[]): GroupedCitation
   const groups = Array.from(groupMap.values());
   groups.sort((a, b) => b.topScore - a.topScore);
 
-  // Сортируем чанки внутри каждой группы
+  // Сортируем чанки внутри каждой группы по vector score (или combined score)
   for (const group of groups) {
-    group.chunks.sort((a, b) => (b.score || 0) - (a.score || 0));
+    group.chunks.sort((a, b) => {
+      const scoreA = a.scores?.vector ?? a.score ?? 0;
+      const scoreB = b.scores?.vector ?? b.score ?? 0;
+      return scoreB - scoreA;
+    });
   }
 
   return groups;

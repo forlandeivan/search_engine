@@ -92,19 +92,23 @@ export function SourcePreviewCard({ citation, className }: SourcePreviewCardProp
       </div>
 
       {/* Релевантность */}
-      {typeof citation.score === "number" && (
-        <div className="mt-3 flex items-center gap-2">
-          <div className="h-1.5 flex-1 rounded-full bg-muted">
-            <div 
-              className="h-full rounded-full bg-primary"
-              style={{ width: `${Math.min(citation.score * 100, 100)}%` }}
-            />
+      {(() => {
+        // Используем vector score для отображения релевантности (более точный показатель)
+        const relevanceScore = citation.scores?.vector ?? citation.score;
+        return typeof relevanceScore === "number" ? (
+          <div className="mt-3 flex items-center gap-2">
+            <div className="h-1.5 flex-1 rounded-full bg-muted">
+              <div 
+                className="h-full rounded-full bg-primary"
+                style={{ width: `${Math.min(relevanceScore * 100, 100)}%` }}
+              />
+            </div>
+            <span className="text-xs font-medium text-muted-foreground">
+              {(relevanceScore * 100).toFixed(0)}%
+            </span>
           </div>
-          <span className="text-xs font-medium text-muted-foreground">
-            {(citation.score * 100).toFixed(0)}%
-          </span>
-        </div>
-      )}
+        ) : null;
+      })()}
 
       {/* Подсказка */}
       <p className="mt-3 text-center text-[10px] text-muted-foreground">

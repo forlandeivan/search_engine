@@ -131,11 +131,15 @@ function ChunkItem({ chunk, index, isLast }: ChunkItemProps) {
           <p className="text-xs text-muted-foreground leading-relaxed">
             "{displaySnippet}"
           </p>
-          {typeof chunk.score === "number" && (
-            <p className="mt-1 text-[10px] text-muted-foreground">
-              Релевантность: {(chunk.score * 100).toFixed(0)}%
-            </p>
-          )}
+          {(() => {
+            // Используем vector score для отображения релевантности (более точный показатель)
+            const relevanceScore = chunk.scores?.vector ?? chunk.score;
+            return typeof relevanceScore === "number" ? (
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                Релевантность: {(relevanceScore * 100).toFixed(0)}%
+              </p>
+            ) : null;
+          })()}
         </div>
       </div>
     </div>
