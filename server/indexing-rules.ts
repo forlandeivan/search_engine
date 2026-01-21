@@ -79,6 +79,7 @@ class DbIndexingRulesRepository implements IndexingRulesRepository {
           relevanceThreshold: values.relevanceThreshold,
           maxContextTokens: values.maxContextTokens,
           contextInputLimit: values.contextInputLimit,
+          llmMaxTokens: values.llmMaxTokens,
           citationsEnabled: values.citationsEnabled,
           updatedByAdminId: values.updatedByAdminId ?? null,
           updatedAt: sql`CURRENT_TIMESTAMP`,
@@ -104,6 +105,7 @@ function mapToDto(row: StoredIndexingRules | null): IndexingRulesDto {
     relevanceThreshold: row.relevanceThreshold,
     maxContextTokens: row.maxContextTokens,
     contextInputLimit: row.contextInputLimit,
+    llmMaxTokens: row.llmMaxTokens ?? DEFAULT_INDEXING_RULES.llmMaxTokens,
     citationsEnabled: row.citationsEnabled,
   };
 }
@@ -235,6 +237,7 @@ export class IndexingRulesService {
       relevanceThreshold: values.relevanceThreshold,
       maxContextTokens: values.maxContextTokens,
       contextInputLimit: values.contextInputLimit,
+      llmMaxTokens: values.llmMaxTokens,
       citationsEnabled: values.citationsEnabled,
       updatedByAdminId: actorAdminId ?? existing?.updatedByAdminId ?? null,
       createdAt: existing?.createdAt ?? new Date(),

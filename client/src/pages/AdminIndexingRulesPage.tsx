@@ -35,6 +35,8 @@ import {
   MAX_TOP_K,
   MIN_RELEVANCE_THRESHOLD,
   MIN_TOP_K,
+  MIN_LLM_MAX_TOKENS,
+  MAX_LLM_MAX_TOKENS,
   indexingRulesSchema,
   type IndexingRulesDto,
 } from "@shared/indexing-rules";
@@ -187,6 +189,9 @@ export default function AdminIndexingRulesPage() {
       }
       if (details?.field === "max_context_tokens") {
         form.setError("maxContextTokens", { message });
+      }
+      if (details?.field === "llm_max_tokens") {
+        form.setError("llmMaxTokens", { message });
       }
       toast({ title: "Ошибка сохранения", description: message, variant: "destructive" });
     }
@@ -629,6 +634,46 @@ export default function AdminIndexingRulesPage() {
                         </FormControl>
                         <FormDescription>
                           Ограничивает объём истории диалога, отправляемой в обработку. Меньше — дешевле, но меньше "память" диалога. Оставьте пустым, чтобы использовать дефолт.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </section>
+
+              <Separator />
+
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold">LLM</h3>
+                  <p className="text-sm text-muted-foreground">Параметры генерации ответов языковой моделью.</p>
+                </div>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="llmMaxTokens"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel htmlFor="indexing-llm-max-tokens">Макс. токенов ответа LLM</FormLabel>
+                        <FormControl>
+                          <Input
+                            id="indexing-llm-max-tokens"
+                            type="number"
+                            min={MIN_LLM_MAX_TOKENS}
+                            max={MAX_LLM_MAX_TOKENS}
+                            step={256}
+                            disabled={disableInputs}
+                            value={field.value ?? ""}
+                            onChange={(event) => {
+                              const raw = event.target.value;
+                              const normalized = normalizeNumber(raw);
+                              field.onChange(normalized === "" ? null : normalized);
+                            }}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Максимальное количество токенов в ответе LLM. Увеличьте для длинных ответов (анализ документов, отчёты). По умолчанию 4096.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>

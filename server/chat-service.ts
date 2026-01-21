@@ -880,8 +880,13 @@ export async function buildChatLlmContext(
     }
   }
 
-  // Используем contextInputLimit из правил индексации вместо настройки навыка
+  // Используем contextInputLimit и llmMaxTokens из правил индексации
   const indexingRules = await indexingRulesService.getIndexingRules();
+
+  // Применяем llmMaxTokens из профиля индексации (если не переопределён в настройках Unica Chat)
+  if (requestOverrides.maxTokens === undefined && indexingRules.llmMaxTokens) {
+    requestConfig.maxTokens = indexingRules.llmMaxTokens;
+  }
 
   await logExecutionStepForChat(executionId, "RESOLVE_LLM_PROVIDER_CONFIG", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
     input: { ...providerLogInput, providerId },
@@ -897,7 +902,9 @@ export async function buildChatLlmContext(
         topP: requestOverrides.topP ?? null,
         maxTokens: requestOverrides.maxTokens ?? null,
         contextInputLimit: indexingRules.contextInputLimit ?? null,
+        llmMaxTokens: indexingRules.llmMaxTokens ?? null,
       },
+      effectiveMaxTokens: requestConfig.maxTokens ?? null,
     },
   });
 
