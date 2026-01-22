@@ -25,6 +25,8 @@ export interface EmailSender {
 export enum SystemEmailType {
   RegistrationConfirmation = "RegistrationConfirmation",
   PasswordReset = "PasswordReset",
+  WorkspaceInvitation = "WorkspaceInvitation",
+  WorkspaceMemberAdded = "WorkspaceMemberAdded",
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

@@ -41,6 +41,15 @@ import {
   WorkspaceIconError,
   getWorkspaceIcon,
 } from '../workspace-icon-service';
+import {
+  createInvitation,
+  listPendingInvitations,
+  cancelInvitation,
+  resendInvitation,
+  getInvitationWithWorkspaceById,
+  InvitationError,
+} from '../workspace-invitation-service';
+import { workspaceInvitationEmailService } from '../email-sender-registry';
 
 const workspaceLogger = createLogger('workspace');
 
@@ -114,6 +123,16 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined 
 
 function isWorkspaceAdmin(role: (typeof workspaceMemberRoles)[number]): boolean {
   return role === 'owner' || role === 'manager';
+}
+
+function resolveFrontendBaseUrl(req: Request): string {
+  const envBase = process.env.FRONTEND_URL || process.env.PUBLIC_URL;
+  if (envBase) return envBase;
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && origin.startsWith('http')) return origin;
+  const host = req.headers.host;
+  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+  return host ? `${proto}://${host}` : 'http://localhost:5000';
 }
 
 function toWorkspaceMemberResponse(
@@ -282,6 +301,9 @@ workspaceRouter.get('/members', asyncHandler(async (req, res) => {
 /**
  * POST /api/workspaces/members
  * Invite member to workspace
+ * 
+ * If user exists: adds to workspace immediately and sends notification
+ * If user doesn't exist: creates invitation and sends invite email
  */
 workspaceRouter.post('/members', asyncHandler(async (req, res) => {
   const user = getAuthorizedUser(req, res);
@@ -290,25 +312,93 @@ workspaceRouter.post('/members', asyncHandler(async (req, res) => {
   try {
     const payload = inviteWorkspaceMemberSchema.parse(req.body);
     const normalizedEmail = payload.email.trim().toLowerCase();
-    const targetUser = await storage.getUserByEmail(normalizedEmail);
-    if (!targetUser) {
-      return res.status(404).json({ message: 'Пользователь с таким email не найден' });
-    }
-
     const { id: workspaceId } = getRequestWorkspace(req);
-    const existingMembers = await storage.listWorkspaceMembers(workspaceId);
-    if (existingMembers.some((entry) => entry.user.id === targetUser.id)) {
-      return res.status(409).json({ message: 'Пользователь уже состоит в рабочем пространстве' });
+
+    // Get workspace info for email
+    const workspace = await storage.getWorkspace(workspaceId);
+    if (!workspace) {
+      return res.status(404).json({ message: 'Рабочее пространство не найдено' });
     }
 
-    await storage.addWorkspaceMember(workspaceId, targetUser.id, payload.role);
-    const updatedMembers = await storage.listWorkspaceMembers(workspaceId);
-    res.status(201).json({
-      members: updatedMembers.map((entry) => toWorkspaceMemberResponse(entry, user.id)),
-    });
+    // Check if current user has permission to invite
+    const currentMembership = await storage.getWorkspaceMember(user.id, workspaceId);
+    if (!currentMembership || !isWorkspaceAdmin(currentMembership.role)) {
+      return res.status(403).json({ message: 'Только владелец или менеджер могут приглашать участников' });
+    }
+
+    const targetUser = await storage.getUserByEmail(normalizedEmail);
+    
+    if (targetUser) {
+      // User exists - add directly to workspace
+      const existingMembers = await storage.listWorkspaceMembers(workspaceId);
+      if (existingMembers.some((entry) => entry.user.id === targetUser.id)) {
+        return res.status(409).json({ message: 'Пользователь уже состоит в рабочем пространстве' });
+      }
+
+      await storage.addWorkspaceMember(workspaceId, targetUser.id, payload.role);
+      
+      // Send notification email (non-blocking)
+      const baseUrl = resolveFrontendBaseUrl(req);
+      const workspaceLink = `${baseUrl}/?workspace=${workspaceId}`;
+      workspaceInvitationEmailService.sendWorkspaceMemberAddedEmail({
+        recipientEmail: targetUser.email,
+        recipientName: targetUser.fullName,
+        workspaceName: workspace.name,
+        inviterName: user.fullName,
+        workspaceLink,
+      }).catch((err) => {
+        workspaceLogger.error({ err, userId: targetUser.id, workspaceId }, 'Failed to send member added email');
+      });
+
+      const updatedMembers = await storage.listWorkspaceMembers(workspaceId);
+      return res.status(201).json({
+        added: true,
+        invited: false,
+        members: updatedMembers.map((entry) => toWorkspaceMemberResponse(entry, user.id)),
+      });
+    } else {
+      // User doesn't exist - create invitation
+      const result = await createInvitation({
+        workspaceId,
+        email: normalizedEmail,
+        role: payload.role,
+        invitedByUserId: user.id,
+      });
+
+      // Send invitation email
+      const baseUrl = resolveFrontendBaseUrl(req);
+      const inviteLink = `${baseUrl}/invite/${result.invitation.token}`;
+      
+      await workspaceInvitationEmailService.sendWorkspaceInvitationEmail({
+        recipientEmail: normalizedEmail,
+        workspaceName: workspace.name,
+        inviterName: user.fullName,
+        inviteLink,
+      });
+
+      return res.status(201).json({
+        added: false,
+        invited: true,
+        invitation: {
+          id: result.invitation.id,
+          email: result.invitation.email,
+          expiresAt: result.invitation.expiresAt.toISOString(),
+        },
+      });
+    }
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Некорректные данные', details: error.issues });
+    }
+    if (error instanceof InvitationError) {
+      const statusCodes: Record<string, number> = {
+        ALREADY_MEMBER: 409,
+        INVITATION_EXISTS: 409,
+      };
+      return res.status(statusCodes[error.code] || 400).json({ 
+        message: error.message,
+        code: error.code,
+      });
     }
     throw error;
   }
@@ -379,6 +469,110 @@ workspaceRouter.delete('/members/:memberId', asyncHandler(async (req, res) => {
 
   const updatedMembers = await storage.listWorkspaceMembers(workspaceId);
   res.json({ members: updatedMembers.map((entry) => toWorkspaceMemberResponse(entry, user.id)) });
+}));
+
+// ============================================================================
+// Invitation Endpoints
+// ============================================================================
+
+/**
+ * GET /api/workspaces/invitations
+ * List pending invitations for current workspace
+ */
+workspaceRouter.get('/invitations', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  
+  const invitations = await listPendingInvitations(workspaceId);
+  
+  res.json({
+    invitations: invitations.map((inv) => ({
+      id: inv.id,
+      email: inv.email,
+      role: inv.role,
+      createdAt: inv.createdAt.toISOString(),
+      expiresAt: inv.expiresAt.toISOString(),
+      invitedBy: inv.invitedBy,
+    })),
+  });
+}));
+
+/**
+ * DELETE /api/workspaces/invitations/:invitationId
+ * Cancel an invitation
+ */
+workspaceRouter.delete('/invitations/:invitationId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const { invitationId } = req.params;
+
+  // Check permission
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+  if (!membership || !isWorkspaceAdmin(membership.role)) {
+    return res.status(403).json({ message: 'Только владелец или менеджер могут отменять приглашения' });
+  }
+
+  const cancelled = await cancelInvitation(invitationId, workspaceId);
+  
+  if (!cancelled) {
+    return res.status(404).json({ message: 'Приглашение не найдено или уже использовано' });
+  }
+
+  res.status(204).send();
+}));
+
+/**
+ * POST /api/workspaces/invitations/:invitationId/resend
+ * Resend an invitation with new token
+ */
+workspaceRouter.post('/invitations/:invitationId/resend', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const { invitationId } = req.params;
+
+  // Check permission
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+  if (!membership || !isWorkspaceAdmin(membership.role)) {
+    return res.status(403).json({ message: 'Только владелец или менеджер могут повторно отправлять приглашения' });
+  }
+
+  const updated = await resendInvitation(invitationId, workspaceId);
+  
+  if (!updated) {
+    return res.status(404).json({ message: 'Приглашение не найдено или уже использовано' });
+  }
+
+  // Get workspace info for email
+  const workspace = await storage.getWorkspace(workspaceId);
+  if (!workspace) {
+    return res.status(404).json({ message: 'Рабочее пространство не найдено' });
+  }
+
+  // Send invitation email
+  const baseUrl = resolveFrontendBaseUrl(req);
+  const inviteLink = `${baseUrl}/invite/${updated.token}`;
+  
+  await workspaceInvitationEmailService.sendWorkspaceInvitationEmail({
+    recipientEmail: updated.email,
+    workspaceName: workspace.name,
+    inviterName: user.fullName,
+    inviteLink,
+  });
+
+  res.json({
+    invitation: {
+      id: updated.id,
+      email: updated.email,
+      expiresAt: updated.expiresAt.toISOString(),
+    },
+    message: 'Приглашение отправлено повторно',
+  });
 }));
 
 /**

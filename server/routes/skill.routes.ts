@@ -230,77 +230,11 @@ skillRouter.get('/:skillId/actions', asyncHandler(async (req, res) => {
 }));
 
 /**
- * PUT /:skillId/actions/:actionId
- * Update skill action configuration
- */
-skillRouter.put('/:skillId/actions/:actionId', asyncHandler(async (req, res) => {
-  const user = getAuthorizedUser(req, res);
-  if (!user) return;
-
-  const { skillId, actionId } = req.params;
-  const body = req.body ?? {};
-
-  if (typeof body.enabled !== 'boolean') {
-    return res.status(400).json({ message: 'enabled is required' });
-  }
-  if (
-    !Array.isArray(body.enabledPlacements) ||
-    body.enabledPlacements.some((p: unknown) => !actionPlacements.includes(p as ActionPlacement))
-  ) {
-    return res.status(400).json({ message: 'invalid enabledPlacements' });
-  }
-  const enabledPlacements = body.enabledPlacements as ActionPlacement[];
-
-  const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
-  const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
-  const skill = await getSkillById(workspaceId, skillId);
-  if (!skill) {
-    return res.status(404).json({ message: 'Skill not found' });
-  }
-
-  const action = await actionsRepository.getByIdForWorkspace(skill.workspaceId, actionId);
-  if (!action) {
-    return res.status(404).json({ message: 'Action not found for this workspace' });
-  }
-
-  // Check that enabledPlacements ⊆ action.placements
-  const allowedPlacements = (action.placements ?? []) as ActionPlacement[];
-  const isSubset = enabledPlacements.every((p: ActionPlacement) => allowedPlacements.includes(p));
-  if (!isSubset) {
-    return res.status(400).json({ message: 'enabledPlacements must be subset of action.placements' });
-  }
-
-  const updatedSkillAction = await skillActionsRepository.upsertForSkill(
-    skill.workspaceId,
-    skillId,
-    actionId,
-    {
-      enabled: body.enabled,
-      enabledPlacements,
-      labelOverride:
-        typeof body.labelOverride === 'string' || body.labelOverride === null
-          ? body.labelOverride
-          : undefined,
-    },
-  );
-
-  res.json({
-    action,
-    skillAction: {
-      enabled: updatedSkillAction.enabled,
-      enabledPlacements: updatedSkillAction.enabledPlacements,
-      labelOverride: updatedSkillAction.labelOverride,
-    },
-    ui: {
-      effectiveLabel: updatedSkillAction.labelOverride ?? action.label,
-      editable: true,
-    },
-  });
-}));
-
-/**
  * POST /:skillId/actions/:actionId/run
  * Run action on transcript or selection
+ * 
+ * NOTE: This route must be defined BEFORE /:skillId/actions/:actionId
+ * to ensure Express matches the more specific path first.
  */
 skillRouter.post('/:skillId/actions/:actionId/run', asyncHandler(async (req, res) => {
   const user = getAuthorizedUser(req, res);
@@ -385,6 +319,75 @@ skillRouter.post('/:skillId/actions/:actionId/run', asyncHandler(async (req, res
       message: error instanceof Error ? error.message : 'Не удалось выполнить действие' 
     });
   }
+}));
+
+/**
+ * PUT /:skillId/actions/:actionId
+ * Update skill action configuration
+ */
+skillRouter.put('/:skillId/actions/:actionId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { skillId, actionId } = req.params;
+  const body = req.body ?? {};
+
+  if (typeof body.enabled !== 'boolean') {
+    return res.status(400).json({ message: 'enabled is required' });
+  }
+  if (
+    !Array.isArray(body.enabledPlacements) ||
+    body.enabledPlacements.some((p: unknown) => !actionPlacements.includes(p as ActionPlacement))
+  ) {
+    return res.status(400).json({ message: 'invalid enabledPlacements' });
+  }
+  const enabledPlacements = body.enabledPlacements as ActionPlacement[];
+
+  const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+  const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+  const skill = await getSkillById(workspaceId, skillId);
+  if (!skill) {
+    return res.status(404).json({ message: 'Skill not found' });
+  }
+
+  const action = await actionsRepository.getByIdForWorkspace(skill.workspaceId, actionId);
+  if (!action) {
+    return res.status(404).json({ message: 'Action not found for this workspace' });
+  }
+
+  // Check that enabledPlacements ⊆ action.placements
+  const allowedPlacements = (action.placements ?? []) as ActionPlacement[];
+  const isSubset = enabledPlacements.every((p: ActionPlacement) => allowedPlacements.includes(p));
+  if (!isSubset) {
+    return res.status(400).json({ message: 'enabledPlacements must be subset of action.placements' });
+  }
+
+  const updatedSkillAction = await skillActionsRepository.upsertForSkill(
+    skill.workspaceId,
+    skillId,
+    actionId,
+    {
+      enabled: body.enabled,
+      enabledPlacements,
+      labelOverride:
+        typeof body.labelOverride === 'string' || body.labelOverride === null
+          ? body.labelOverride
+          : undefined,
+    },
+  );
+
+  res.json({
+    action,
+    skillAction: {
+      enabled: updatedSkillAction.enabled,
+      enabledPlacements: updatedSkillAction.enabledPlacements,
+      labelOverride: updatedSkillAction.labelOverride,
+    },
+    ui: {
+      effectiveLabel: updatedSkillAction.labelOverride ?? action.label,
+      editable: true,
+    },
+  });
 }));
 
 /**

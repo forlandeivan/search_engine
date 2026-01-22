@@ -22,6 +22,13 @@ import { SmtpSendError } from '../smtp-email-sender';
 import { EmailValidationError } from '../email';
 import type { PublicUser, User } from '@shared/schema';
 import { ensureWorkspaceContext, buildSessionResponse as buildAuthSessionResponse } from '../auth';
+import {
+  getInvitationByToken,
+  validateInvitation,
+  acceptInvitation,
+  acceptInvitationForNewUser,
+  InvitationError,
+} from '../workspace-invitation-service';
 
 const authLogger = createLogger('auth');
 
@@ -304,5 +311,238 @@ authRouter.post('/logout', (req, res, next) => {
     res.json({ success: true });
   });
 });
+
+// ============================================================================
+// Invitation Endpoints
+// ============================================================================
+
+/**
+ * GET /api/auth/invite/:token
+ * Check invitation token and return invitation info
+ */
+authRouter.get('/invite/:token', asyncHandler(async (req, res) => {
+  const { token } = req.params;
+  
+  if (!token || token.length > 512) {
+    return res.json({ valid: false, error: 'INVALID_TOKEN' });
+  }
+
+  const invitationData = await getInvitationByToken(token);
+  
+  if (!invitationData) {
+    return res.json({ valid: false, error: 'INVALID_TOKEN' });
+  }
+
+  const { invitation, workspace, invitedBy, userExists } = invitationData;
+  const validationError = validateInvitation(invitation);
+
+  if (validationError) {
+    return res.json({ valid: false, error: validationError });
+  }
+
+  res.json({
+    valid: true,
+    invitation: {
+      id: invitation.id,
+      email: invitation.email,
+      role: invitation.role,
+      expiresAt: invitation.expiresAt.toISOString(),
+    },
+    workspace: {
+      id: workspace.id,
+      name: workspace.name,
+      iconUrl: workspace.iconUrl,
+    },
+    invitedBy,
+    userExists,
+  });
+}));
+
+/**
+ * POST /api/auth/accept-invite
+ * Accept invitation for logged-in user
+ */
+authRouter.post('/accept-invite', asyncHandler(async (req, res, next) => {
+  const user = req.user as PublicUser | undefined;
+  
+  if (!user) {
+    return res.status(401).json({ message: 'Требуется авторизация' });
+  }
+
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  
+  if (!token || token.length > 512) {
+    return res.status(400).json({ message: 'Недействительный токен' });
+  }
+
+  try {
+    const result = await acceptInvitation(token, user.id);
+    
+    // Update session with new workspace
+    if (req.session) {
+      req.session.activeWorkspaceId = result.workspaceId;
+      req.session.workspaceId = result.workspaceId;
+    }
+
+    // Get updated workspace context
+    const context = await ensureWorkspaceContext(req, user);
+    const sessionResponse = buildAuthSessionResponse(user, context);
+
+    res.json({
+      success: true,
+      workspace: {
+        id: result.workspaceId,
+        role: result.role,
+      },
+      ...sessionResponse,
+    });
+  } catch (error) {
+    if (error instanceof InvitationError) {
+      const statusCodes: Record<string, number> = {
+        INVALID_TOKEN: 400,
+        EXPIRED: 400,
+        CANCELLED: 400,
+        ALREADY_ACCEPTED: 400,
+        ALREADY_MEMBER: 409,
+        EMAIL_MISMATCH: 403,
+        NOT_FOUND: 404,
+      };
+      return res.status(statusCodes[error.code] || 400).json({
+        message: error.message,
+        code: error.code,
+      });
+    }
+    throw error;
+  }
+}));
+
+/**
+ * POST /api/auth/complete-invite
+ * Complete registration via invitation (for new users)
+ */
+authRouter.post('/complete-invite', asyncHandler(async (req, res, next) => {
+  const completeInviteSchema = z.object({
+    token: z.string().min(1).max(512),
+    password: z.string()
+      .min(8, 'Пароль должен быть не менее 8 символов')
+      .max(100, 'Пароль слишком длинный')
+      .refine(
+        (p) => /[A-Za-z]/.test(p) && /[0-9]/.test(p),
+        'Пароль должен содержать буквы и цифры',
+      ),
+    fullName: z.string()
+      .trim()
+      .min(1, 'Введите имя')
+      .max(255, 'Имя слишком длинное'),
+  });
+
+  let payload;
+  try {
+    payload = completeInviteSchema.parse(req.body);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        message: error.issues[0]?.message ?? 'Некорректные данные',
+        details: error.issues,
+      });
+    }
+    throw error;
+  }
+
+  // Validate token
+  const invitationData = await getInvitationByToken(payload.token);
+  
+  if (!invitationData) {
+    return res.status(400).json({ message: 'Недействительный токен приглашения', code: 'INVALID_TOKEN' });
+  }
+
+  const { invitation, workspace } = invitationData;
+  const validationError = validateInvitation(invitation);
+
+  if (validationError) {
+    const messages: Record<string, string> = {
+      ALREADY_ACCEPTED: 'Приглашение уже использовано',
+      CANCELLED: 'Приглашение было отменено',
+      EXPIRED: 'Срок действия приглашения истёк',
+    };
+    return res.status(400).json({
+      message: messages[validationError] || 'Недействительное приглашение',
+      code: validationError,
+    });
+  }
+
+  // Check if user already exists
+  const existingUser = await storage.getUserByEmail(invitation.email);
+  if (existingUser) {
+    return res.status(409).json({
+      message: 'Пользователь с таким email уже существует. Пожалуйста, войдите в систему.',
+      code: 'USER_EXISTS',
+    });
+  }
+
+  // Create user
+  const passwordHash = await bcrypt.hash(payload.password, 12);
+  const fullName = payload.fullName.trim();
+  const parts = fullName.split(/\s+/);
+  const firstName = parts[0] || '';
+  const lastName = parts.slice(1).join(' ') || '';
+
+  let newUser: User;
+  try {
+    newUser = await storage.createUser({
+      email: invitation.email,
+      fullName,
+      firstName,
+      lastName,
+      phone: '',
+      passwordHash,
+    });
+  } catch (createError) {
+    // Check if user was created by race condition
+    const existing = await storage.getUserByEmail(invitation.email);
+    if (existing) {
+      return res.status(409).json({
+        message: 'Пользователь с таким email уже существует',
+        code: 'USER_EXISTS',
+      });
+    }
+    throw createError;
+  }
+
+  // Confirm email (invitation confirms email ownership)
+  await storage.confirmUserEmail(newUser.id);
+
+  // Accept invitation
+  try {
+    await acceptInvitationForNewUser(payload.token, newUser.id);
+  } catch (error) {
+    authLogger.error({ error, userId: newUser.id }, 'Failed to accept invitation for new user');
+    // Don't fail - user is already created
+  }
+
+  // Log in user
+  const safeUser = toPublicUser(newUser);
+  
+  req.logIn(safeUser, async (loginError) => {
+    if (loginError) {
+      return next(loginError);
+    }
+
+    // Set workspace in session
+    if (req.session) {
+      req.session.activeWorkspaceId = invitation.workspaceId;
+      req.session.workspaceId = invitation.workspaceId;
+    }
+
+    try {
+      const context = await ensureWorkspaceContext(req, safeUser);
+      const sessionResponse = buildAuthSessionResponse(safeUser, context);
+      res.status(201).json(sessionResponse);
+    } catch (contextError) {
+      authLogger.error({ error: contextError, userId: newUser.id }, 'Failed to get workspace context');
+      res.status(201).json({ user: safeUser });
+    }
+  });
+}));
 
 export default authRouter;

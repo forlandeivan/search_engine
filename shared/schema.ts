@@ -300,6 +300,29 @@ export const workspaceMembers = pgTable(
   }),
 );
 
+export const workspaceInvitations = pgTable(
+  "workspace_invitations",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    email: varchar("email", { length: 255 }).notNull(),
+    role: workspaceMemberRoleEnum("role").$type<WorkspaceMemberRole>().notNull().default("user"),
+    token: varchar("token", { length: 255 }).notNull().unique(),
+    invitedByUserId: varchar("invited_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("workspace_invitations_workspace_idx").on(table.workspaceId),
+    emailIdx: index("workspace_invitations_email_idx").on(table.email),
+    expiresIdx: index("workspace_invitations_expires_idx").on(table.expiresAt),
+  }),
+);
+
 export const workspaceUsageMonth = pgTable(
   "workspace_usage_month",
   {
@@ -2726,6 +2749,8 @@ export type Workspace = typeof workspaces.$inferSelect;
 export type WorkspaceInsert = typeof workspaces.$inferInsert;
 export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
 export type WorkspaceMemberInsert = typeof workspaceMembers.$inferInsert;
+export type WorkspaceInvitation = typeof workspaceInvitations.$inferSelect;
+export type WorkspaceInvitationInsert = typeof workspaceInvitations.$inferInsert;
 export type FileStorageProvider = typeof fileStorageProviders.$inferSelect;
 export type FileStorageProviderInsert = typeof fileStorageProviders.$inferInsert;
 export type File = typeof files.$inferSelect;

@@ -112,6 +112,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 import DashboardPage from "@/pages/DashboardPage";
 import AuthPage from "@/pages/AuthPage";
 import VerifyEmailPage from "@/pages/VerifyEmailPage";
+import AcceptInvitePage from "@/pages/AcceptInvitePage";
 import NotFound from "@/pages/not-found";
 import ProfilePage from "@/pages/ProfilePage";
 
@@ -418,6 +419,9 @@ function AppContent() {
         <Route path="/auth/verify-email">
           <VerifyEmailPage />
         </Route>
+        <Route path="/invite/:token">
+          <AcceptInvitePage />
+        </Route>
         <Route>
           <AuthPage />
         </Route>
@@ -432,6 +436,9 @@ function AppContent() {
       <Switch>
         <Route path="/auth/verify-email">
           <VerifyEmailPage />
+        </Route>
+        <Route path="/invite/:token">
+          <AcceptInvitePage />
         </Route>
         <Route>
           <AuthPage />
@@ -458,6 +465,9 @@ function AppContent() {
       <Switch key={appKey}>
         <Route path={/^\/admin(?:\/.*)?$/i}>
           {user.role === "admin" ? <AdminAppShell user={user} workspace={workspace} /> : <UnauthorizedPage />}
+        </Route>
+        <Route path="/invite/:token">
+          <AcceptInvitePage />
         </Route>
         <Route>
           <MainAppShell user={user} workspace={workspace} />

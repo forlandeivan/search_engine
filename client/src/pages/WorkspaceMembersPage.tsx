@@ -31,8 +31,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Trash2, RefreshCw, Clock, Mail } from "lucide-react";
 import type { WorkspaceMemberRole } from "@shared/schema";
+
+// ============================================================================
+// Types
+// ============================================================================
 
 const inviteMemberSchema = z.object({
   email: z.string().trim().email("Введите корректный email"),
@@ -61,13 +65,52 @@ type MembersResponse = {
   members: WorkspaceMember[];
 };
 
+type InviteMemberResponse = {
+  added: boolean;
+  invited: boolean;
+  members?: WorkspaceMember[];
+  invitation?: {
+    id: string;
+    email: string;
+    expiresAt: string;
+  };
+};
+
+type PendingInvitation = {
+  id: string;
+  email: string;
+  role: WorkspaceMemberRole;
+  createdAt: string;
+  expiresAt: string;
+  invitedBy: {
+    fullName: string | null;
+    email: string;
+  } | null;
+};
+
+type InvitationsResponse = {
+  invitations: PendingInvitation[];
+};
+
+// ============================================================================
+// Component
+// ============================================================================
+
 export default function WorkspaceMembersPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
+  // Fetch members
   const membersQuery = useQuery({
     queryKey: ["/api/workspaces/members"],
     queryFn: getQueryFn<MembersResponse>({ on401: "returnNull" }),
+    staleTime: 0,
+  });
+
+  // Fetch pending invitations
+  const invitationsQuery = useQuery({
+    queryKey: ["/api/workspaces/invitations"],
+    queryFn: getQueryFn<InvitationsResponse>({ on401: "returnNull" }),
     staleTime: 0,
   });
 
@@ -76,25 +119,39 @@ export default function WorkspaceMembersPage() {
     defaultValues: { email: "", role: "user" },
   });
 
-  const inviteMemberMutation = useMutation<MembersResponse, Error, InviteMemberValues>({
+  // Invite member mutation
+  const inviteMemberMutation = useMutation<InviteMemberResponse, Error, InviteMemberValues>({
     mutationFn: async (values) => {
       const res = await apiRequest("POST", "/api/workspaces/members", values);
-      return (await res.json()) as MembersResponse;
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Не удалось отправить приглашение");
+      }
+      return (await res.json()) as InviteMemberResponse;
     },
     onSuccess: (data) => {
-      queryClient.setQueryData(["/api/workspaces/members"], data);
-      inviteForm.reset({ email: "", role: data.members.find((member) => member.isYou)?.role ?? "user" });
-      toast({ title: "Приглашение отправлено" });
+      inviteForm.reset({ email: "", role: "user" });
+      
+      if (data.added) {
+        // User was added directly
+        queryClient.invalidateQueries({ queryKey: ["/api/workspaces/members"] });
+        toast({ title: "Пользователь добавлен в рабочее пространство" });
+      } else if (data.invited) {
+        // Invitation was sent
+        queryClient.invalidateQueries({ queryKey: ["/api/workspaces/invitations"] });
+        toast({ title: `Приглашение отправлено на ${data.invitation?.email}` });
+      }
     },
     onError: (error: Error) => {
       toast({
-        title: "Не удалось добавить участника",
+        title: "Не удалось отправить приглашение",
         description: error.message,
         variant: "destructive",
       });
     },
   });
 
+  // Update member role mutation
   const updateRoleMutation = useMutation<
     MembersResponse,
     Error,
@@ -117,6 +174,7 @@ export default function WorkspaceMembersPage() {
     },
   });
 
+  // Remove member mutation
   const removeMemberMutation = useMutation<MembersResponse, Error, { memberId: string }>({
     mutationFn: async ({ memberId }) => {
       const res = await apiRequest("DELETE", `/api/workspaces/members/${memberId}`);
@@ -135,13 +193,61 @@ export default function WorkspaceMembersPage() {
     },
   });
 
+  // Cancel invitation mutation
+  const cancelInvitationMutation = useMutation<void, Error, string>({
+    mutationFn: async (invitationId) => {
+      const res = await apiRequest("DELETE", `/api/workspaces/invitations/${invitationId}`);
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Не удалось отменить приглашение");
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/workspaces/invitations"] });
+      toast({ title: "Приглашение отменено" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Не удалось отменить приглашение",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Resend invitation mutation
+  const resendInvitationMutation = useMutation<void, Error, string>({
+    mutationFn: async (invitationId) => {
+      const res = await apiRequest("POST", `/api/workspaces/invitations/${invitationId}/resend`);
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Не удалось отправить приглашение повторно");
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/workspaces/invitations"] });
+      toast({ title: "Приглашение отправлено повторно" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Не удалось отправить приглашение повторно",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const isLoading = membersQuery.isLoading;
   const isUnauthorized = !isLoading && membersQuery.data === null;
   const members = membersQuery.data?.members ?? [];
+  const invitations = invitationsQuery.data?.invitations ?? [];
 
   const canInvite = !inviteMemberMutation.isPending;
-
   const inviteEmailError = inviteForm.formState.errors.email?.message;
+
+  // ============================================================================
+  // Render Members Table
+  // ============================================================================
 
   let membersContent: ReactNode;
   if (membersQuery.isError) {
@@ -177,7 +283,7 @@ export default function WorkspaceMembersPage() {
             <TableHead className="w-[280px]">Имя</TableHead>
             <TableHead>Email</TableHead>
             <TableHead className="w-[180px]">Роль</TableHead>
-            <TableHead className="w-[120px]">Статус</TableHead>
+            <TableHead className="w-[120px]">Добавлен</TableHead>
             <TableHead className="text-right w-[80px]">Действия</TableHead>
           </TableRow>
         </TableHeader>
@@ -240,13 +346,19 @@ export default function WorkspaceMembersPage() {
     );
   }
 
+  // ============================================================================
+  // Render
+  // ============================================================================
+
   return (
     <div className="flex flex-col gap-6 p-6">
+      {/* Invite Form */}
       <Card className="max-w-2xl">
         <CardHeader>
           <CardTitle>Пригласить участника</CardTitle>
           <CardDescription>
-            Добавьте пользователя по email и выберите его роль в рабочем пространстве.
+            Добавьте пользователя по email. Если пользователь уже зарегистрирован, он будет добавлен сразу. 
+            Если нет — ему придёт приглашение на почту.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -300,6 +412,104 @@ export default function WorkspaceMembersPage() {
         </CardContent>
       </Card>
 
+      {/* Pending Invitations */}
+      {invitations.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5" />
+              Ожидающие приглашения
+              <Badge variant="secondary">{invitations.length}</Badge>
+            </CardTitle>
+            <CardDescription>
+              Пользователи, которые ещё не приняли приглашение
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Email</TableHead>
+                  <TableHead className="w-[140px]">Роль</TableHead>
+                  <TableHead className="w-[120px]">Отправлено</TableHead>
+                  <TableHead className="w-[160px]">Истекает</TableHead>
+                  <TableHead className="text-right w-[100px]">Действия</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {invitations.map((invitation) => {
+                  const expiresAt = new Date(invitation.expiresAt);
+                  const now = new Date();
+                  const hoursLeft = (expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60);
+                  const isExpiringSoon = hoursLeft < 24 && hoursLeft > 0;
+                  
+                  const isCancelling = cancelInvitationMutation.isPending && 
+                    cancelInvitationMutation.variables === invitation.id;
+                  const isResending = resendInvitationMutation.isPending && 
+                    resendInvitationMutation.variables === invitation.id;
+                  
+                  return (
+                    <TableRow key={invitation.id}>
+                      <TableCell className="font-medium">{invitation.email}</TableCell>
+                      <TableCell>{roleLabels[invitation.role]}</TableCell>
+                      <TableCell>
+                        <div className="text-sm text-muted-foreground">
+                          {new Date(invitation.createdAt).toLocaleDateString("ru-RU")}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm text-muted-foreground">
+                            {expiresAt.toLocaleDateString("ru-RU")}
+                          </span>
+                          {isExpiringSoon && (
+                            <Badge variant="outline" className="text-yellow-600 border-yellow-600">
+                              Скоро истекает
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => resendInvitationMutation.mutate(invitation.id)}
+                            disabled={isResending || isCancelling}
+                            title="Отправить повторно"
+                          >
+                            {isResending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => cancelInvitationMutation.mutate(invitation.id)}
+                            disabled={isCancelling || isResending}
+                            title="Отменить приглашение"
+                          >
+                            {isCancelling ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Members List */}
       <Card>
         <CardHeader>
           <CardTitle>Участники</CardTitle>
