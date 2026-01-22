@@ -1264,6 +1264,16 @@ chatRouter.post('/sessions/:chatId/messages/file', fileUpload.single('file'), as
       metadata: messageMetadata,
     });
 
+    // Schedule chat title generation from audio file name
+    scheduleChatTitleGenerationIfNeeded({
+      chatId,
+      workspaceId,
+      userId: user.id,
+      messageText: fileName,
+      messageMetadata,
+      chatTitle: chat.title,
+    });
+
     // Upload file to provider
     const uploadedFile = await uploadFileToProvider({
       fileId: fileRecord.id,
