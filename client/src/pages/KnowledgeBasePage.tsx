@@ -53,7 +53,8 @@ import { IndexingWizardModal } from "@/components/knowledge-base/indexing";
 import { useKnowledgeBaseIndexingPolicy } from "@/hooks/useKnowledgeBaseIndexingPolicy";
 import { useIndexingRules } from "@/hooks/useIndexingRules";
 import { convertPolicyToWizardConfig, convertRulesToWizardConfig } from "@/lib/indexing-config-converter";
-import { DEFAULT_SCHEMA_FIELDS } from "@shared/knowledge-base-indexing";
+import { DEFAULT_SCHEMA_FIELDS, type IndexingWizardConfig } from "@shared/knowledge-base-indexing";
+import { DEFAULT_INDEXING_RULES } from "@shared/indexing-rules";
 import { ragDefaults, searchDefaults } from "@/constants/searchSettings";
 import {
   mergeChunkSearchSettings,
@@ -610,7 +611,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const { data: policyData } = useKnowledgeBaseIndexingPolicy(selectedBase?.id ?? null, workspaceId ?? "");
 
   // Загрузка глобальных правил индексации
-  const { data: globalRules, isLoading: isGlobalRulesLoading } = useIndexingRules();
+  const { data: globalRules, isLoading: isGlobalRulesLoading, isError: isGlobalRulesError } = useIndexingRules();
 
   // Преобразование в конфиг визарда
   const indexingPolicyConfig = useMemo(() => {
@@ -629,7 +630,27 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   }, [globalRules]);
 
   // Флаг готовности конфигурации индексации
-  const isIndexingConfigReady = Boolean(globalIndexingConfig);
+  // Конфиг готов, если он загружен, или если загрузка завершилась с ошибкой (можно использовать дефолтные настройки)
+  const isIndexingConfigReady = Boolean(globalIndexingConfig) || (isGlobalRulesError && !isGlobalRulesLoading);
+
+  // Дефолтная конфигурация для визарда (используется, если globalIndexingConfig еще не загружен)
+  const defaultWizardConfig: IndexingWizardConfig = useMemo(() => {
+    if (globalIndexingConfig) {
+      return globalIndexingConfig;
+    }
+    // Используем дефолтные правила индексации
+    return {
+      chunkSize: DEFAULT_INDEXING_RULES.chunkSize,
+      chunkOverlap: DEFAULT_INDEXING_RULES.chunkOverlap,
+      embeddingsProvider: DEFAULT_INDEXING_RULES.embeddingsProvider,
+      embeddingsModel: DEFAULT_INDEXING_RULES.embeddingsModel,
+      topK: DEFAULT_INDEXING_RULES.topK,
+      relevanceThreshold: DEFAULT_INDEXING_RULES.relevanceThreshold,
+      maxContextTokens: (DEFAULT_INDEXING_RULES.maxContextTokens ?? 3000) as number,
+      citationsEnabled: DEFAULT_INDEXING_RULES.citationsEnabled,
+      schemaFields: DEFAULT_SCHEMA_FIELDS,
+    };
+  }, [globalIndexingConfig]);
   const [isIndexingChangesOpen, setIsIndexingChangesOpen] = useState(false);
   const indexingChangesQuery = useKnowledgeBaseIndexingChanges(
     workspaceId,
@@ -2536,6 +2557,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const isIndexingInProgress = indexingStatus === "indexing";
   const isIndexingUpToDate = indexingStatus === "up_to_date";
   const isIndexingNotIndexed = indexingStatus === "not_indexed";
+  const isIndexingOutdated = indexingStatus === "outdated";
+  const isIndexingPartial = indexingStatus === "partial";
   const indexingButtonDisabledReason = (() => {
     if (!indexingSummary) {
       if (indexingSummaryQuery.isError) {
@@ -2551,6 +2574,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
     if (isIndexingUpToDate) {
       return "База знаний актуальна, все документы проиндексированы";
+    }
+    // Для статусов outdated и partial кнопка должна быть активна (возвращаем null)
+    if (isIndexingOutdated || isIndexingPartial) {
+      return null;
+    }
+    // Для статуса not_indexed, если есть документы, кнопка должна быть активна
+    if (isIndexingNotIndexed && hasIndexingDocuments) {
+      return null;
     }
     if (isIndexingNotIndexed) {
       return "В базе знаний нет документов для индексации";
@@ -3125,8 +3156,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 disabled={Boolean(
                   startIndexingMutation.isPending ||
                   indexingButtonDisabledReason ||
-                  !selectedBase.rootNodes || selectedBase.rootNodes.length === 0 ||
-                  !isIndexingConfigReady
+                  // Для статусов outdated и partial разрешаем индексацию даже если rootNodes пустой
+                  // (документы могут быть, но не отображаться в rootNodes)
+                  (!(isIndexingOutdated || isIndexingPartial) && (!selectedBase.rootNodes || selectedBase.rootNodes.length === 0)) ||
+                  // Для статусов outdated и partial разрешаем индексацию даже если настройки еще загружаются
+                  // (в визарде можно использовать дефолтные настройки)
+                  (!(isIndexingOutdated || isIndexingPartial) && !isIndexingConfigReady)
                 )}
                 title={
                   !isIndexingConfigReady
@@ -3709,14 +3744,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           setIsJsonImportWizardOpen(false);
         }}
       />
-      {selectedBase && globalIndexingConfig && (
+      {selectedBase && (
         <IndexingWizardModal
           open={isIndexingWizardOpen}
           onOpenChange={setIsIndexingWizardOpen}
           baseId={selectedBase.id}
           workspaceId={workspaceId ?? ""}
           initialConfig={indexingPolicyConfig ?? undefined}
-          defaultConfig={globalIndexingConfig}
+          defaultConfig={defaultWizardConfig}
           onIndexingStarted={handleIndexingStarted}
           baseInfo={{
             id: selectedBase.id,

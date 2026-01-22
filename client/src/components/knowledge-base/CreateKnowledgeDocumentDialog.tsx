@@ -867,6 +867,8 @@ export function CreateKnowledgeDocumentDialog({
       : "Далее";
   const jsonAlertMessage = jsonPreviewError ? uploadError : jsonError || uploadError;
 
+  const formId = "knowledge-document-form";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -879,7 +881,11 @@ export function CreateKnowledgeDocumentDialog({
           <DialogTitle>{dialogTitle}</DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-6 pb-6 pt-4 min-h-0">
+        <form
+          id={formId}
+          onSubmit={handleSubmit}
+          className="flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-6 pb-6 pt-4 min-h-0"
+        >
           <div className="space-y-4">
             {(!isJsonImport || jsonStep === "upload") && (
               <>
@@ -1214,7 +1220,7 @@ export function CreateKnowledgeDocumentDialog({
                     {importHtml && (
                       <div className="space-y-2">
                         <Label>Предпросмотр содержимого</Label>
-                        <div className="prose prose-sm max-h-64 overflow-auto rounded-md border bg-muted/40 p-3">
+                        <div className="prose prose-sm max-h-64 w-full max-w-none overflow-auto rounded-md border bg-muted/40 p-3">
                           <div
                             dangerouslySetInnerHTML={{
                               __html: applyTitleToImportedHtml(
@@ -1384,6 +1390,7 @@ export function CreateKnowledgeDocumentDialog({
               </Button>
               <Button
                 type="submit"
+                form={formId}
                 disabled={
                   isSubmitting ||
                   isReadingFile ||
