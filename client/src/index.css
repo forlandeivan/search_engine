@@ -385,11 +385,53 @@ body.chat-scroll-locked {
   }
 }
 
-/* Subtle scrollbars for chat areas (similar to ChatGPT) */
+/* Subtle scrollbars for all scrollable areas (similar to ChatGPT) */
+/* Note: scrollbar-gutter is intentionally omitted to prevent layout shifts */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.45); /* slate-400 for light theme */
+  border-radius: 999px;
+  border: 2px solid transparent;
+}
+
+.dark *::-webkit-scrollbar-thumb {
+  background-color: rgba(71, 85, 105, 0.5); /* slate-600 for dark theme */
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(100, 116, 139, 0.6); /* slate-500 for light theme */
+}
+
+.dark *::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(100, 116, 139, 0.7); /* slate-500 for dark theme */
+}
+
+/* Firefox scrollbar styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent; /* slate-400 for light theme */
+}
+
+.dark * {
+  scrollbar-color: rgba(71, 85, 105, 0.5) transparent; /* slate-600 for dark theme */
+}
+
+/* Legacy class for backward compatibility */
 .chat-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.5) transparent; /* slate-400 */
-  scrollbar-gutter: stable;
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+
+.dark .chat-scroll {
+  scrollbar-color: rgba(71, 85, 105, 0.5) transparent;
 }
 
 .chat-scroll::-webkit-scrollbar {
@@ -406,6 +448,14 @@ body.chat-scroll-locked {
   border: 2px solid transparent;
 }
 
+.dark .chat-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(71, 85, 105, 0.5);
+}
+
 .chat-scroll::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(100, 116, 139, 0.6); /* slate-500 */
+  background-color: rgba(100, 116, 139, 0.6);
+}
+
+.dark .chat-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(100, 116, 139, 0.7);
 }
