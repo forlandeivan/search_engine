@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Loader2, Paperclip, Send, X, Mic } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,10 @@ type ChatInputProps = {
   fileUploadState?: { fileName: string; size: number | null; status: "uploading" | "error" } | null;
 };
 
+export type ChatInputHandle = {
+  handleFileDrop: (file: File) => void;
+};
+
 const ACCEPTED_AUDIO_TYPES = ".ogg,.webm,.wav,.mp3,.m4a,.aac,.flac";
 const MAX_FILE_SIZE_MB = 500;
 
@@ -53,7 +57,7 @@ function EqualizerIcon() {
   );
 }
 
-export default function ChatInput({
+const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput({
   onSend,
   onTranscribe,
   onSendFile,
@@ -66,7 +70,7 @@ export default function ChatInput({
   chatId = null,
   disableAudioTranscription = false,
   fileUploadState = null,
-}: ChatInputProps) {
+}, ref) {
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -595,6 +599,37 @@ export default function ChatInput({
     [validateAudioFile, disableAudioTranscription, handlePreUploadAudio],
   );
 
+  // Handler for files dropped from parent component (page-level drag & drop)
+  const handleExternalFileDrop = useCallback(
+    (file: File) => {
+      if (disabled) return;
+      
+      // Check if it's an audio file
+      if (file.type?.startsWith("audio/")) {
+        if (validateAudioFile(file)) {
+          if (!disableAudioTranscription) {
+            // Pre-upload file to S3 immediately when attached
+            void handlePreUploadAudio(file);
+          } else if (onSendFile) {
+            void onSendFile(file);
+          }
+        }
+        return;
+      }
+      
+      // For non-audio files, use the file upload handler
+      if (onSendFile) {
+        void handleSendFile(file);
+      }
+    },
+    [disabled, validateAudioFile, disableAudioTranscription, handlePreUploadAudio, onSendFile, handleSendFile],
+  );
+
+  // Expose handleFileDrop method via ref for parent components
+  useImperativeHandle(ref, () => ({
+    handleFileDrop: handleExternalFileDrop,
+  }), [handleExternalFileDrop]);
+
   useEffect(() => {
     autoResize();
   }, [value, autoResize]);
@@ -826,4 +861,6 @@ export default function ChatInput({
       </div>
     </div>
   );
-}
+});
+
+export default ChatInput;

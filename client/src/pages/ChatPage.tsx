@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { Upload } from "lucide-react";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
-import ChatInput, { type TranscribePayload } from "@/components/chat/ChatInput";
+import ChatInput, { type TranscribePayload, type ChatInputHandle } from "@/components/chat/ChatInput";
 import { BotActionIndicatorRow } from "@/components/chat/BotActionIndicatorRow";
 import type { BotAction } from "@shared/schema";
 import { computeCurrentAction, countOtherActiveActions } from "@/lib/botAction";
@@ -90,6 +91,9 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [botActionsByChatId, setBotActionsByChatId] = useState<Record<string, BotAction[]>>({});
   const [openTranscript, setOpenTranscript] = useState<{ id: string; tabId?: string | null } | null>(null);
   const botActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isPageDragOver, setIsPageDragOver] = useState(false);
+  const dragCounterRef = useRef(0);
+  const chatInputRef = useRef<ChatInputHandle | null>(null);
 
   const { createChat } = useCreateChat();
   const { renameChat } = useRenameChat({
@@ -1067,6 +1071,48 @@ export default function ChatPage({ params }: ChatPageProps) {
     return computeCurrentAction(allActions, effectiveChatId);
   }, [botActionsByChatId, effectiveChatId]);
 
+  // Page-level drag & drop handlers for better UX (drop anywhere in chat area)
+  const handlePageDragEnter = useCallback((e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isReadOnlyChat) return;
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsPageDragOver(true);
+    }
+  }, [isReadOnlyChat]);
+
+  const handlePageDragLeave = useCallback((e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsPageDragOver(false);
+    }
+  }, []);
+
+  const handlePageDragOver = useCallback((e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handlePageDrop = useCallback((e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsPageDragOver(false);
+    if (isReadOnlyChat) return;
+    
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    
+    // Forward the file to ChatInput component
+    if (chatInputRef.current?.handleFileDrop) {
+      chatInputRef.current.handleFileDrop(file);
+    }
+  }, [isReadOnlyChat]);
+
   // Подсчитываем количество других активных actions (для опционального счётчика "+N")
   const otherActiveCount = useMemo(() => {
     if (!effectiveChatId || !currentBotAction) return 0;
@@ -1113,10 +1159,26 @@ export default function ChatPage({ params }: ChatPageProps) {
         className="w-[312px] shrink-0"
       />
 
-      <section className={cn(
-        "flex min-h-0 flex-1 overflow-hidden",
-        openTranscript ? "flex-row" : "flex-col"
-      )}>
+      <section 
+        className={cn(
+          "relative flex min-h-0 flex-1 overflow-hidden",
+          openTranscript ? "flex-row" : "flex-col"
+        )}
+        onDragEnter={handlePageDragEnter}
+        onDragLeave={handlePageDragLeave}
+        onDragOver={handlePageDragOver}
+        onDrop={handlePageDrop}
+      >
+        {/* Drag & Drop Overlay */}
+        {isPageDragOver && !isReadOnlyChat && (
+          <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-primary bg-primary/5 p-8">
+              <Upload className="h-12 w-12 text-primary" />
+              <p className="text-lg font-medium text-primary">Отпустите файл для загрузки</p>
+              <p className="text-sm text-muted-foreground">Поддерживаются аудио и другие файлы</p>
+            </div>
+          </div>
+        )}
         <div className="flex min-h-0 flex-col flex-1 overflow-hidden">
           <ChatMessagesArea
               chatTitle={chatTitle}
@@ -1172,6 +1234,7 @@ export default function ChatPage({ params }: ChatPageProps) {
           <div className="shrink-0">
             <BotActionIndicatorRow action={currentBotAction} otherActiveCount={otherActiveCount > 0 ? otherActiveCount : undefined} />
           <ChatInput
+            ref={chatInputRef}
             onSend={handleSend}
             onTranscribe={handleTranscription}
             onSendFile={handleSendFile}
