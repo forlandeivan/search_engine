@@ -597,12 +597,13 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
         actionId,
         operationId,
         elapsed: Date.now() - completeStartTime,
-      }, '[AUTO-ACTION-START] Starting auto-action');
+        transcriptTextLength: transcriptText.length,
+      }, '[AUTO-ACTION-START] Starting auto-action with input text');
       
       if (asrExecutionId) {
         await asrExecutionLogService.addEvent(asrExecutionId, {
           stage: 'auto_action_triggered',
-          details: { skillId: skill.id, actionId },
+          details: { skillId: skill.id, actionId, transcriptTextLength: transcriptText.length },
         });
       }
       
@@ -652,7 +653,14 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
       });
 
       const updatedPreviewText = (resultAction.text ?? transcriptText).slice(0, 200);
-      logger.info({ chatId: chat.id, actionId: action.id }, 'Auto-action success');
+      logger.info({ 
+        chatId: chat.id, 
+        actionId: action.id,
+        originalTextLength: transcriptText.length,
+        resultTextLength: resultAction.text?.length || 0,
+        previewLength: updatedPreviewText.length,
+        applied: resultAction.applied,
+      }, '[AUTO-ACTION-SUCCESS] Auto-action completed successfully');
       
       await storage.updateChatCard(card.id, { previewText: updatedPreviewText });
       

@@ -901,7 +901,15 @@ class YandexSttAsyncService {
         const extractStartTime = Date.now();
         const chunks = operationData.response.chunks || [];
         
-        console.info(`[yandex-stt-async] [EXTRACT-START] Extracting text from ${chunks.length} chunks, operationId: ${operationId}`);
+        console.info(`[yandex-stt-async] [EXTRACT-START] Extracting text from ${chunks.length} chunks, operationId: ${operationId}, durationSeconds: ${cached.durationSeconds}`);
+        
+        // Log first few chunks for debugging
+        if (chunks.length > 0) {
+          console.info(`[yandex-stt-async] [EXTRACT-DEBUG] First chunk sample:`, JSON.stringify(chunks[0]).substring(0, 200));
+          if (chunks.length > 1) {
+            console.info(`[yandex-stt-async] [EXTRACT-DEBUG] Last chunk sample:`, JSON.stringify(chunks[chunks.length - 1]).substring(0, 200));
+          }
+        }
         
         const text = chunks
           .map((chunk) => {
@@ -922,7 +930,8 @@ class YandexSttAsyncService {
           .join(" ")
           .trim();
 
-        console.info(`[yandex-stt-async] [EXTRACT-DONE] Text extracted: ${text.length} chars, took ${Date.now() - extractStartTime}ms`);
+        console.info(`[yandex-stt-async] [EXTRACT-DONE] Text extracted: ${text.length} chars from ${chunks.length} chunks (avg ${Math.round(text.length / Math.max(1, chunks.length))} chars/chunk), took ${Date.now() - extractStartTime}ms, duration: ${cached.durationSeconds}s, expected chars: ~${Math.round((cached.durationSeconds || 0) * 8)} (assuming ~8 chars/sec speech)`);
+
 
         cached.status = "completed";
         cached.result = { text, lang: "ru-RU" };

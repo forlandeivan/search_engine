@@ -65,7 +65,16 @@ export async function runTranscriptActionCommon(payload: AutoActionRunPayload): 
     ...logContext,
     actionLabel: action.label,
     textLength: transcriptText.length,
+    inputType: action.inputType,
+    outputMode: action.outputMode,
   }, '[ACTION-START] Starting transcript action');
+
+  logger.info({
+    ...logContext,
+    transcriptTextPreview: transcriptText.substring(0, 200),
+    transcriptTextLength: transcriptText.length,
+    promptLength: action.promptTemplate.length,
+  }, '[ACTION-INPUT] Input text for action');
 
   const executionMetadata = {
     trigger: logContext.trigger ?? 'manual_action',
@@ -130,6 +139,8 @@ export async function runTranscriptActionCommon(payload: AutoActionRunPayload): 
       usageTokens: completion.usageTokens,
       llmTime: Date.now() - llmStartTime,
       elapsed: Date.now() - actionStartTime,
+      responseLength: completion.answer?.length || 0,
+      responsePreview: completion.answer?.substring(0, 200),
     }, '[ACTION-LLM-DONE] LLM call completed');
 
     if (executionId) {
@@ -212,13 +223,43 @@ export async function runTranscriptActionCommon(payload: AutoActionRunPayload): 
     if (typeof context.selectionText === 'string' && context.selectionText.length > 0) {
       const full = transcript.fullText ?? '';
       newText = full.replace(context.selectionText, llmText);
+      logger.info({
+        ...logContext,
+        originalFullTextLength: full.length,
+        selectionLength: context.selectionText.length,
+        llmTextLength: llmText.length,
+        newTextLength: newText.length,
+      }, '[ACTION-REPLACE] Replaced selection in transcript');
     }
+  } else {
+    logger.info({
+      ...logContext,
+      inputType: action.inputType,
+      originalTranscriptLength: transcript.fullText?.length || 0,
+      llmTextLength: llmText.length,
+    }, '[ACTION-REPLACE] Full text replacement mode');
   }
+
+  logger.info({
+    ...logContext,
+    beforeUpdateLength: transcript.fullText?.length || 0,
+    afterUpdateLength: newText.length,
+    textTruncated: newText.length < llmText.length,
+  }, '[ACTION-UPDATE] About to update transcript in database');
 
   await storage.updateTranscript(transcriptId, {
     fullText: newText,
     lastEditedByUserId: userId,
   });
+  
+  // Verify the update
+  const verifyTranscript = await storage.getTranscriptById?.(transcriptId);
+  logger.info({
+    ...logContext,
+    savedLength: verifyTranscript?.fullText?.length || 0,
+    expectedLength: newText.length,
+    lengthMismatch: (verifyTranscript?.fullText?.length || 0) !== newText.length,
+  }, '[ACTION-UPDATE-VERIFY] Verified transcript after update');
   
   if (executionId) {
     await skillExecutionLogService.markExecutionSuccess(executionId);
@@ -228,6 +269,7 @@ export async function runTranscriptActionCommon(payload: AutoActionRunPayload): 
     ...logContext,
     applied: true,
     resultLength: llmText.length,
+    finalTranscriptLength: verifyTranscript?.fullText?.length || 0,
     totalTime: Date.now() - actionStartTime,
   }, '[ACTION-SUCCESS] Transcript action applied successfully');
 
