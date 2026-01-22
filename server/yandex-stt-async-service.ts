@@ -303,6 +303,8 @@ export interface TranscribeOperationStatus {
   operationId: string;
   status: "pending" | "completed" | "failed";
   result?: { text: string; lang: string };
+  /** Shorthand for result?.text */
+  text?: string;
   error?: string;
   chatId?: string;
   transcriptId?: string;
@@ -322,7 +324,17 @@ interface SecretValues {
 
 class YandexSttAsyncService {
   async startAsyncTranscription(options: AsyncTranscribeOptions): Promise<AsyncTranscribeResponse> {
+    const startTime = Date.now();
     let { audioBuffer, mimeType, userId, workspaceId, originalFileName, chatId, transcriptId, executionId } = options;
+
+    console.info(`[yandex-stt-async] [START] Starting transcription pipeline`, {
+      fileSize: audioBuffer.length,
+      mimeType,
+      userId,
+      workspaceId,
+      chatId,
+      transcriptId,
+    });
 
     const providerDetail = await speechProviderService.getActiveSttProviderOrThrow();
     const { provider, secrets } = providerDetail;
@@ -380,6 +392,8 @@ class YandexSttAsyncService {
     const audioDurationSeconds = await probeAudioDurationSeconds(audioBuffer);
     if (!audioDurationSeconds || audioDurationSeconds <= 0) {
       console.warn("[yandex-stt-async] audio duration probe returned empty result; will rely on fallback timing");
+    } else {
+      console.info(`[yandex-stt-async] [PROBE] Audio duration: ${audioDurationSeconds}s, elapsed: ${Date.now() - startTime}ms`);
     }
 
     const guardDecision = await workspaceOperationGuard.check(
@@ -432,10 +446,12 @@ class YandexSttAsyncService {
     }
 
     if (needsConversion(mimeType)) {
+      const conversionStartTime = Date.now();
       try {
-        console.info(`[yandex-stt-async] Converting ${mimeType} to OGG...`);
+        console.info(`[yandex-stt-async] [CONVERT-START] Converting ${mimeType} to OGG, elapsed: ${Date.now() - startTime}ms`);
         audioBuffer = await convertAudioToOgg(audioBuffer, mimeType);
         mimeType = "audio/ogg";
+        console.info(`[yandex-stt-async] [CONVERT-DONE] Conversion took ${Date.now() - conversionStartTime}ms, total elapsed: ${Date.now() - startTime}ms`);
       } catch (conversionError) {
         console.error("[yandex-stt-async] Conversion failed:", conversionError);
         throw new YandexSttAsyncError(
@@ -448,7 +464,7 @@ class YandexSttAsyncService {
 
     const lang = options.lang ?? (config.languageCode as string) ?? "ru-RU";
 
-    console.info(`[yandex-stt-async] Starting async transcription: ${audioBuffer.length} bytes, lang=${lang}, user=${userId}`);
+    console.info(`[yandex-stt-async] [UPLOAD-START] Uploading to S3: ${audioBuffer.length} bytes, lang=${lang}, elapsed: ${Date.now() - startTime}ms`);
 
     const s3Credentials: ObjectStorageCredentials = {
       accessKeyId: s3AccessKeyId,
@@ -457,6 +473,7 @@ class YandexSttAsyncService {
     };
 
     let uploadResult;
+    const uploadStartTime = Date.now();
     try {
       uploadResult = await yandexObjectStorageService.uploadAudioFile(
         audioBuffer,
@@ -464,7 +481,7 @@ class YandexSttAsyncService {
         s3Credentials,
         originalFileName
       );
-      console.info(`[yandex-stt-async] File uploaded to Object Storage: ${uploadResult.uri}`);
+      console.info(`[yandex-stt-async] [UPLOAD-DONE] File uploaded to S3: ${uploadResult.uri}, took ${Date.now() - uploadStartTime}ms, total elapsed: ${Date.now() - startTime}ms`);
     } catch (error) {
       if (error instanceof ObjectStorageError) {
         throw new YandexSttAsyncError(error.message, 500, error.code);
@@ -495,8 +512,9 @@ class YandexSttAsyncService {
         },
       };
 
-      console.info(`[yandex-stt-async] Sending async STT request with URI: ${uploadResult.uri}`);
+      console.info(`[yandex-stt-async] [API-START] Sending async STT request with URI: ${uploadResult.uri}, elapsed: ${Date.now() - startTime}ms`);
 
+      const apiStartTime = Date.now();
       const response = await fetch(YANDEX_ASYNC_STT_ENDPOINT, {
         method: "POST",
         headers: {
@@ -539,6 +557,8 @@ class YandexSttAsyncService {
 
       const operationResponse = await response.json() as { id?: string };
 
+      console.info(`[yandex-stt-async] [API-DONE] Received operation ID, API call took ${Date.now() - apiStartTime}ms, total elapsed: ${Date.now() - startTime}ms`);
+
       if (!operationResponse.id) {
         try {
           await yandexObjectStorageService.deleteFile(uploadResult.objectKey, s3Credentials);
@@ -569,7 +589,12 @@ class YandexSttAsyncService {
         executionId,
       });
 
-      console.info(`[yandex-stt-async] Operation started: ${operationId}`);
+      console.info(`[yandex-stt-async] [SUCCESS] Transcription started, operationId: ${operationId}, total time: ${Date.now() - startTime}ms`, {
+        operationId,
+        transcriptId,
+        chatId,
+        durationSeconds: audioDurationSeconds,
+      });
 
       return {
         operationId,
@@ -596,14 +621,17 @@ class YandexSttAsyncService {
   }
 
   async getOperationStatus(userId: string, operationId: string): Promise<TranscribeOperationStatus> {
+    const pollStartTime = Date.now();
     const cacheId = `${userId}_${operationId}`;
     const cached = operationsCache.get(cacheId);
 
     if (!cached) {
+      console.warn(`[yandex-stt-async] [POLL] Operation not found in cache: ${operationId}`);
       throw new YandexSttAsyncError("Операция не найдена", 404, "NOT_FOUND");
     }
 
     if (cached.status !== "pending") {
+      console.info(`[yandex-stt-async] [POLL] Operation already completed: ${operationId}, status: ${cached.status}`);
       return {
         operationId,
         status: cached.status,
@@ -625,6 +653,9 @@ class YandexSttAsyncService {
       }
 
       const iamToken = await yandexIamTokenService.getIamToken(serviceAccountKey);
+
+      const age = Date.now() - (cached.createdAt ? cached.createdAt.getTime() : 0);
+      console.info(`[yandex-stt-async] [POLL-CHECK] Checking operation status, age: ${Math.round(age / 1000)}s, operationId: ${operationId}`);
 
       const httpProxyAgent = process.env.HTTP_PROXY ? createHttpProxyAgent(process.env.HTTP_PROXY) : undefined;
       const httpsProxyAgent = process.env.HTTPS_PROXY ? createHttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
@@ -678,8 +709,10 @@ class YandexSttAsyncService {
       const operationData = await response.json() as {
         done?: boolean;
         error?: { message: string; code: number };
-        response?: { chunks: Array<{ alternatives: Array<{ text: string }> }> };
+        response?: { chunks: Array<{ alternatives: Array<{ text: string; confidence?: number }> }> };
       };
+
+      console.info(`[yandex-stt-async] [POLL-RESULT] Operation status received, done: ${operationData.done}, hasError: ${Boolean(operationData.error)}, pollTime: ${Date.now() - pollStartTime}ms`);
 
       if (operationData.error) {
         cached.status = "failed";
@@ -711,7 +744,11 @@ class YandexSttAsyncService {
       }
 
       if (operationData.done && operationData.response) {
+        const extractStartTime = Date.now();
         const chunks = operationData.response.chunks || [];
+        
+        console.info(`[yandex-stt-async] [EXTRACT-START] Extracting text from ${chunks.length} chunks, operationId: ${operationId}`);
+        
         const text = chunks
           .map((chunk) => {
             const alternatives = chunk.alternatives || [];
@@ -731,14 +768,11 @@ class YandexSttAsyncService {
           .join(" ")
           .trim();
 
+        console.info(`[yandex-stt-async] [EXTRACT-DONE] Text extracted: ${text.length} chars, took ${Date.now() - extractStartTime}ms`);
+
         cached.status = "completed";
         cached.result = { text, lang: "ru-RU" };
-        if (!cached.chatId && operationId) {
-          cached.chatId = operationId;
-        }
-        if (!cached.executionId && operationId) {
-          cached.executionId = operationId;
-        }
+        // NOTE: Do NOT set chatId or executionId from operationId - operationId is Yandex's ID, not a UUID
 
         // Подготавливаем контекст для авто-действия (если оно включено у навыка)
         const { storage } = await import("./storage");
@@ -770,7 +804,8 @@ class YandexSttAsyncService {
         await this.updateTranscriptAndMessage(cached.objectKey, initialStatus, text);
         await this.cleanupOperationFile(cached, s3AccessKeyId, s3SecretAccessKey, s3BucketName);
 
-        console.info(`[yandex-stt-async] Operation completed: ${operationId}, chunks: ${chunks.length}, text length: ${text.length}`);
+        const age = Date.now() - (cached.createdAt ? cached.createdAt.getTime() : 0);
+        console.info(`[yandex-stt-async] [COMPLETED] Operation completed: ${operationId}, chunks: ${chunks.length}, text: ${text.length} chars, totalAge: ${Math.round(age / 1000)}s, autoAction: ${autoActionEnabled}`);
 
         // Логируем в журнал ASR
         if (cached.executionId) {
@@ -943,6 +978,7 @@ class YandexSttAsyncService {
           operationId,
           status: "completed",
           result: { text, lang: "ru-RU" },
+          text, // shorthand
           chatId: cached.chatId,
           transcriptId: transcriptForContext?.id ?? cached.transcriptId,
           executionId: cached.executionId,

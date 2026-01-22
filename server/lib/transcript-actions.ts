@@ -43,6 +43,7 @@ export type AutoActionRunResult = {
 // ============================================================================
 
 export async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise<AutoActionRunResult> {
+  const actionStartTime = Date.now();
   const LLM_DEBUG_PROMPTS = isLlmPromptDebugEnabled();
   const truncate = (value: string, limit = 2000) =>
     typeof value === 'string' && value.length > limit ? `${value.slice(0, limit)}…` : value;
@@ -60,6 +61,12 @@ export async function runTranscriptActionCommon(payload: AutoActionRunPayload): 
     trigger: typeof context?.trigger === 'string' ? context.trigger : undefined,
   };
   
+  logger.info({
+    ...logContext,
+    actionLabel: action.label,
+    textLength: transcriptText.length,
+  }, '[ACTION-START] Starting transcript action');
+
   const executionMetadata = {
     trigger: logContext.trigger ?? 'manual_action',
     actionId: logContext.actionId,
@@ -106,8 +113,25 @@ export async function runTranscriptActionCommon(payload: AutoActionRunPayload): 
   const accessToken = await fetchAccessToken(llmProvider);
   let completion: Awaited<ReturnType<typeof executeLlmCompletion>>;
   
+  logger.info({
+    ...logContext,
+    model: llmProvider.model,
+    provider: llmProvider.name,
+    elapsed: Date.now() - actionStartTime,
+  }, '[ACTION-LLM-START] Calling LLM for action');
+
+  const llmStartTime = Date.now();
   try {
     completion = await executeLlmCompletion(llmProvider, accessToken, requestBody);
+    
+    logger.info({
+      ...logContext,
+      model: llmProvider.model,
+      usageTokens: completion.usageTokens,
+      llmTime: Date.now() - llmStartTime,
+      elapsed: Date.now() - actionStartTime,
+    }, '[ACTION-LLM-DONE] LLM call completed');
+
     if (executionId) {
       await skillExecutionLogService.logStepSuccess({
         executionId,
@@ -200,7 +224,13 @@ export async function runTranscriptActionCommon(payload: AutoActionRunPayload): 
     await skillExecutionLogService.markExecutionSuccess(executionId);
   }
 
-  logger.info({ skillId: skill.id, actionId: action.id, transcriptId }, 'Transcript action applied');
+  logger.info({
+    ...logContext,
+    applied: true,
+    resultLength: llmText.length,
+    totalTime: Date.now() - actionStartTime,
+  }, '[ACTION-SUCCESS] Transcript action applied successfully');
+
   return {
     text: llmText,
     applied: true,

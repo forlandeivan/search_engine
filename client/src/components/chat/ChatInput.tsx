@@ -324,14 +324,21 @@ export default function ChatInput({
       return;
     }
 
-    if (attachedFile && pendingTranscribe) {
-      console.log("[ChatInput] handleSend - calling onTranscribe", {
-        hasAttachedFile: !!attachedFile,
-        pendingTranscribeStatus: pendingTranscribe.status,
-        pendingTranscribeMessageId: pendingTranscribe.audioMessage?.id,
-      });
-      if (onTranscribe) {
-        onTranscribe(pendingTranscribe);
+    // If we have an attached audio file, start transcription now (on Send)
+    if (attachedFile && !disableAudioTranscription) {
+      console.log("[ChatInput] handleSend - starting transcription for attached file");
+      try {
+        const transcribePayload = await handleUploadAudio(attachedFile);
+        if (transcribePayload && onTranscribe) {
+          console.log("[ChatInput] handleSend - calling onTranscribe", {
+            hasAttachedFile: !!attachedFile,
+            pendingTranscribeStatus: transcribePayload.status,
+            pendingTranscribeMessageId: transcribePayload.audioMessage?.id,
+          });
+          onTranscribe(transcribePayload);
+        }
+      } catch (error) {
+        console.error("[ChatInput] handleSend - transcription error:", error);
       }
       setAttachedFile(null);
       setPendingTranscribe(null);
@@ -351,7 +358,7 @@ export default function ChatInput({
     } finally {
       setIsSending(false);
     }
-  }, [attachedFile, disabled, onSend, onTranscribe, pendingTranscribe, readOnlyHint, toast, value]);
+  }, [attachedFile, disabled, disableAudioTranscription, handleUploadAudio, onSend, onSendFile, onTranscribe, readOnlyHint, toast, value]);
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -388,10 +395,11 @@ export default function ChatInput({
         if (!disableAudioTranscription) {
           setAttachedFile(file);
         }
-        handleUploadAudio(file);
+        // Don't start transcription here - wait for user to press Send
+        // handleUploadAudio(file);
       }
     },
-    [handleUploadAudio],
+    [validateAudioFile, disableAudioTranscription],
   );
 
   useEffect(() => {
@@ -402,8 +410,7 @@ export default function ChatInput({
     disabled ||
     isUploading ||
     isSending ||
-    (value.trim().length === 0 && !attachedFile) ||
-    (attachedFile && !disableAudioTranscription && !pendingTranscribe);
+    (value.trim().length === 0 && !attachedFile);
   const isAttachDisabled =
     disabled || isUploading || isUploadingFile || fileUploadState?.status === "uploading" || !!attachedFile;
 
@@ -498,7 +505,8 @@ export default function ChatInput({
                     if (!disableAudioTranscription) {
                       setAttachedFile(file);
                     }
-                    void handleUploadAudio(file);
+                    // Don't start transcription here - wait for user to press Send
+                    // void handleUploadAudio(file);
                   }
                   return;
                 }
