@@ -119,6 +119,14 @@ export async function runTranscriptActionCommon(payload: AutoActionRunPayload): 
     requestBody.max_tokens = requestConfig.maxTokens;
   }
 
+  logger.info({
+    ...logContext,
+    maxTokens: requestConfig.maxTokens,
+    temperature: requestConfig.temperature,
+    providerName: llmProvider.name,
+    providerType: llmProvider.providerType,
+  }, '[ACTION-LLM-CONFIG] LLM request configuration');
+
   const accessToken = await fetchAccessToken(llmProvider);
   let completion: Awaited<ReturnType<typeof executeLlmCompletion>>;
   
