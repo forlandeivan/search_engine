@@ -493,9 +493,9 @@ export function TranscriptCanvas({
   }
 
   return (
-    <div className="flex h-full flex-col border-l border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/80">
+    <div className="flex h-full flex-col border-l border-border bg-background">
       {/* Header with title and close button */}
-      <div className="flex items-center justify-between border-b border-slate-200 px-6 py-3 dark:border-slate-800">
+      <div className="flex items-center justify-between border-b border-border px-6 py-3">
         <h2 className="text-lg font-semibold">Транскрипция аудиофайла</h2>
         <Button
           variant="ghost"
@@ -510,7 +510,7 @@ export function TranscriptCanvas({
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-slate-200 px-6 dark:border-slate-800">
+      <div className="flex items-center gap-1 border-b border-border px-6">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -522,8 +522,8 @@ export function TranscriptCanvas({
             className={cn(
               "relative flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors",
               activeTabId === tab.id
-                ? "text-slate-900 dark:text-slate-100"
-                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300"
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground"
             )}
             data-testid={`tab-${tab.id}`}
           >
@@ -669,7 +669,7 @@ export function TranscriptCanvas({
       {activeTab && (
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
           {/* Tab toolbar */}
-          <div className="flex items-center justify-end gap-2 border-b border-slate-200 px-6 py-2 dark:border-slate-800">
+          <div className="flex items-center justify-end gap-2 border-b border-border px-6 py-2">
             {/* Actions dropdown for replace actions */}
             {skillId && replaceActions.length > 0 && activeTab.id === "original" && (
               <DropdownMenu>
@@ -803,7 +803,7 @@ export function TranscriptCanvas({
                 Загрузка стенограммы...
               </div>
             ) : activeTab.isLoading ? (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm z-10">
+              <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-10">
                 <div className="flex flex-col items-center gap-3">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
                   <p className="text-sm text-muted-foreground">Выполняется действие...</p>
@@ -814,7 +814,7 @@ export function TranscriptCanvas({
               value={activeTab.content}
               onChange={(e) => updateTabContent(activeTab.id, e.target.value)}
               placeholder="Текст стенограммы..."
-              className="flex-1 resize-none border-0 focus-visible:ring-0 p-4 bg-slate-50 dark:bg-slate-800/50"
+              className="flex-1 resize-none border-0 focus-visible:ring-0 p-4 bg-muted"
               disabled={activeTab.isLoading}
               data-testid="textarea-content"
             />
