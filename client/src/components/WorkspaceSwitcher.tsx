@@ -1,5 +1,4 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronsUpDown } from "lucide-react";
 import { useLocation } from "wouter";
 import {
   DropdownMenu,
@@ -111,7 +110,6 @@ export default function WorkspaceSwitcher({ workspace }: WorkspaceSwitcherProps)
                 <span className="truncate font-medium">{workspace.active.name}</span>
                 <span className="truncate text-xs">{workspace.active.plan}</span>
               </div>
-              <ChevronsUpDown className="ml-auto group-data-[collapsible=icon]:hidden" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent
