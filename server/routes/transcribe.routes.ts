@@ -21,6 +21,7 @@ import { skillActionsRepository } from '../skill-actions';
 import { getSkillById } from '../skills';
 import { runTranscriptActionCommon } from '../lib/transcript-actions';
 import { upsertBotActionForChat } from '../chat-service';
+import { scheduleChatTitleGenerationIfNeeded } from '../chat-title-jobs';
 import type { PublicUser, ChatMessageMetadata } from '@shared/schema';
 
 const logger = createLogger('transcribe');
@@ -178,6 +179,16 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
       // Non-critical error, log and continue
       logger.warn({ error: botActionError, operationId }, '[TRANSCRIBE-BOT-ACTION] Failed to create bot action');
     }
+
+    // Schedule chat title generation from audio file name
+    scheduleChatTitleGenerationIfNeeded({
+      chatId,
+      workspaceId,
+      userId: user.id,
+      messageText: file.originalname || 'audio',
+      messageMetadata: { type: 'audio', fileName: file.originalname || 'audio' },
+      chatTitle: chat.title,
+    });
 
     res.json({
       status: 'started',
@@ -374,6 +385,16 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
     } catch (botActionError) {
       logger.warn({ error: botActionError, operationId: result.operationId }, '[START-TRANSCRIBE] Failed to create bot action');
     }
+
+    // Schedule chat title generation from audio file name
+    scheduleChatTitleGenerationIfNeeded({
+      chatId,
+      workspaceId,
+      userId: user.id,
+      messageText: fileName || 'audio',
+      messageMetadata: { type: 'audio', fileName: fileName || 'audio' },
+      chatTitle: chat.title,
+    });
 
     res.json({
       status: 'started',
