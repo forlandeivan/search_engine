@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -27,8 +29,11 @@ import {
 } from "@/components/ui/select";
 import { convertFileToHtml, getSanitizedContent, buildHtmlFromPlainText } from "@/lib/document-import";
 import { cn } from "@/lib/utils";
+import { apiRequest } from "@/lib/queryClient";
 import type { KnowledgeBaseTreeNode } from "@shared/knowledge-base";
 import type { KnowledgeNodeSourceType } from "@shared/schema";
+import type { StructureAnalysis, PreviewError } from "@/lib/json-import-types";
+import type { MappingConfigV2, HierarchyConfig, CreateJsonImportRequest } from "@shared/json-import";
 import {
   AlertCircle,
   FileText,
@@ -38,13 +43,20 @@ import {
   Trash2,
   Upload,
   FileJson,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  AlertTriangle,
   type ComponentType,
 } from "lucide-react";
-import { JsonImportPanel } from "./import/JsonImportPanel";
 import { FileImportPanel, type FileImportMode } from "./import/FileImportPanel";
 import { CrawlImportPanel, type CrawlMode, type CrawlConfig } from "./import/CrawlImportPanel";
 import { ImportModeSelector } from "./import/ImportModeSelector";
+import { useJsonImportUpload } from "@/hooks/useJsonImportUpload";
 import { useBulkDocumentImport } from "@/hooks/useBulkDocumentImport";
+import { StructurePreview } from "./json-import/StructurePreview";
+import { DocumentFieldMappingEditor } from "./json-import/DocumentFieldMappingEditor";
+import { HierarchyConfigEditor } from "./json-import/HierarchyConfig";
 
 const ROOT_PARENT_VALUE = "__root__";
 const MAX_CONTENT_LENGTH = 20_000_000;
@@ -62,6 +74,8 @@ type DocumentCreationOption = {
   description: string;
   icon: ComponentType<{ className?: string }>;
 };
+
+type JsonImportStep = "upload" | "preview" | "mapping" | "hierarchy";
 
 const DOCUMENT_CREATION_OPTIONS: DocumentCreationOption[] = [
   {
@@ -173,14 +187,49 @@ export function CreateKnowledgeDocumentDialog({
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [bulkImportProgress, setBulkImportProgress] = useState<{ current: number; total: number } | undefined>();
   const [bulkImportResult, setBulkImportResult] = useState<{ created: number; failed: number; errors: Array<{ title: string; error: string }> } | null>(null);
+  const [jsonStep, setJsonStep] = useState<JsonImportStep>("upload");
+  const [jsonFile, setJsonFile] = useState<File | null>(null);
+  const [jsonUploadedFileKey, setJsonUploadedFileKey] = useState<string | null>(null);
+  const [jsonStructureAnalysis, setJsonStructureAnalysis] = useState<StructureAnalysis | null>(null);
+  const [jsonPreviewError, setJsonPreviewError] = useState<PreviewError | null>(null);
+  const [jsonMappingConfig, setJsonMappingConfig] = useState<MappingConfigV2 | null>(null);
+  const [jsonIsMappingValid, setJsonIsMappingValid] = useState(false);
+  const [jsonShowMappingValidationErrors, setJsonShowMappingValidationErrors] = useState(false);
+  const [jsonHierarchyConfig, setJsonHierarchyConfig] = useState<HierarchyConfig | null>(null);
+  const [jsonIsAnalyzing, setJsonIsAnalyzing] = useState(false);
+  const [jsonIsSubmitting, setJsonIsSubmitting] = useState(false);
+  const [jsonError, setJsonError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const jsonFileInputRef = useRef<HTMLInputElement | null>(null);
   
   // Bulk import hook
   const resolvedWorkspaceId = workspaceId ?? "";
   const bulkImportMutation = useBulkDocumentImport(resolvedWorkspaceId, baseId ?? "");
+  const { uploadFile, uploadProgress, isUploading, error: uploadError, abort } = useJsonImportUpload(
+    resolvedWorkspaceId,
+  );
 
   const folderOptions = useMemo(() => buildFolderOptions(structure), [structure]);
+
+  const resetJsonImportState = () => {
+    abort();
+    setJsonStep("upload");
+    setJsonFile(null);
+    setJsonUploadedFileKey(null);
+    setJsonStructureAnalysis(null);
+    setJsonPreviewError(null);
+    setJsonMappingConfig(null);
+    setJsonIsMappingValid(false);
+    setJsonShowMappingValidationErrors(false);
+    setJsonHierarchyConfig(null);
+    setJsonIsAnalyzing(false);
+    setJsonIsSubmitting(false);
+    setJsonError(null);
+    if (jsonFileInputRef.current) {
+      jsonFileInputRef.current.value = "";
+    }
+  };
 
   useEffect(() => {
     if (open) {
@@ -205,6 +254,7 @@ export function CreateKnowledgeDocumentDialog({
       setIsBulkImporting(false);
       setBulkImportProgress(undefined);
       setBulkImportResult(null);
+      resetJsonImportState();
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -219,6 +269,8 @@ export function CreateKnowledgeDocumentDialog({
   const handleModeChange = (newMode: KnowledgeNodeSourceType) => {
     setMode(newMode);
     setFormError(null);
+    setJsonError(null);
+    resetJsonImportState();
 
     if (newMode === "manual") {
       setImportFile(null);
@@ -377,11 +429,209 @@ export function CreateKnowledgeDocumentDialog({
     }
   };
 
+  const handleJsonFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = event.target.files?.[0] ?? null;
+    setJsonFile(selectedFile);
+    setJsonError(null);
+    setJsonUploadedFileKey(null);
+    setJsonStructureAnalysis(null);
+    setJsonPreviewError(null);
+    setJsonMappingConfig(null);
+    setJsonIsMappingValid(false);
+    setJsonShowMappingValidationErrors(false);
+    setJsonHierarchyConfig(null);
+  };
+
+  const analyzeJsonStructure = async (fileKey: string) => {
+    if (!workspaceId) {
+      setJsonError("Не указан workspaceId для импорта JSON");
+      return false;
+    }
+
+    setJsonIsAnalyzing(true);
+    setJsonPreviewError(null);
+    setJsonError(null);
+
+    try {
+      const response = await apiRequest(
+        "POST",
+        "/api/knowledge/json-import/preview",
+        { fileKey, sampleSize: 100 },
+        undefined,
+        { workspaceId },
+      );
+
+      if (!response.ok) {
+        const errorData = (await response.json()) as PreviewError;
+        setJsonPreviewError(errorData);
+        setJsonError(errorData.error);
+        return false;
+      }
+
+      const analysis = (await response.json()) as StructureAnalysis;
+      setJsonStructureAnalysis(analysis);
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Не удалось проанализировать файл";
+      setJsonPreviewError({
+        error: message,
+        code: "PARSE_ERROR",
+      });
+      setJsonError(message);
+      return false;
+    } finally {
+      setJsonIsAnalyzing(false);
+    }
+  };
+
+  const handleJsonNext = async () => {
+    if (jsonStep === "upload") {
+      if (!workspaceId || !baseId) {
+        setJsonError("Не указаны workspaceId или baseId для импорта JSON");
+        return;
+      }
+      if (!jsonFile) {
+        setJsonError("Выберите файл для импорта");
+        return;
+      }
+
+      const fileName = jsonFile.name.toLowerCase();
+      if (!fileName.endsWith(".json") && !fileName.endsWith(".jsonl")) {
+        setJsonError("Поддерживаются только файлы .json и .jsonl");
+        return;
+      }
+
+      const maxSize = 2 * 1024 * 1024 * 1024; // 2GB
+      if (jsonFile.size > maxSize) {
+        setJsonError("Размер файла превышает максимально допустимый (2GB)");
+        return;
+      }
+
+      setJsonError(null);
+
+      if (jsonUploadedFileKey && jsonStructureAnalysis) {
+        setJsonStep("preview");
+        return;
+      }
+
+      try {
+        if (jsonUploadedFileKey) {
+          const analysisOk = await analyzeJsonStructure(jsonUploadedFileKey);
+          if (analysisOk) {
+            setJsonStep("preview");
+          }
+          return;
+        }
+
+        const result = await uploadFile(jsonFile);
+        setJsonUploadedFileKey(result.fileKey);
+        const analysisOk = await analyzeJsonStructure(result.fileKey);
+        if (analysisOk) {
+          setJsonStep("preview");
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Не удалось загрузить файл";
+        setJsonError(message);
+      }
+      return;
+    }
+
+    if (jsonStep === "preview") {
+      setJsonError(null);
+      setJsonShowMappingValidationErrors(false);
+      setJsonStep("mapping");
+      return;
+    }
+
+    if (jsonStep === "mapping") {
+      setJsonShowMappingValidationErrors(true);
+      if (jsonIsMappingValid) {
+        setJsonError(null);
+        setJsonStep("hierarchy");
+      }
+      return;
+    }
+
+    if (jsonStep === "hierarchy") {
+      await handleJsonImport();
+    }
+  };
+
+  const handleJsonBack = () => {
+    setJsonError(null);
+    if (jsonStep === "preview") {
+      setJsonStep("upload");
+    } else if (jsonStep === "mapping") {
+      setJsonStep("preview");
+    } else if (jsonStep === "hierarchy") {
+      setJsonStep("mapping");
+    }
+  };
+
+  const handleJsonImport = async () => {
+    if (!workspaceId || !baseId) {
+      setJsonError("Не указаны workspaceId или baseId для импорта JSON");
+      return;
+    }
+    if (jsonIsSubmitting || isSubmitting) {
+      return;
+    }
+    if (!jsonUploadedFileKey || !jsonFile) {
+      setJsonError("Сначала загрузите файл");
+      return;
+    }
+    if (!jsonMappingConfig || !jsonIsMappingValid) {
+      setJsonError("Настройте маппинг полей");
+      return;
+    }
+
+    setJsonIsSubmitting(true);
+    setJsonError(null);
+
+    try {
+      const finalHierarchyConfig: HierarchyConfig = {
+        ...(jsonHierarchyConfig ?? { mode: "flat" }),
+        baseParentId: parentValue === ROOT_PARENT_VALUE ? null : parentValue,
+      };
+
+      const importRequest: CreateJsonImportRequest = {
+        fileKey: jsonUploadedFileKey,
+        fileName: jsonFile.name,
+        fileSize: jsonFile.size,
+        mappingConfig: jsonMappingConfig,
+        hierarchyConfig: finalHierarchyConfig,
+      };
+
+      const response = await apiRequest(
+        "POST",
+        `/api/knowledge/bases/${baseId}/json-import`,
+        importRequest,
+        undefined,
+        { workspaceId },
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Не удалось запустить импорт");
+      }
+
+      const data = (await response.json()) as { jobId: string; status: "pending" };
+
+      onJsonImportStarted?.(data.jobId);
+      onOpenChange(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Не удалось запустить импорт";
+      setJsonError(message);
+    } finally {
+      setJsonIsSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setFormError(null);
 
-    // JSON import обрабатывается через JsonImportPanel, не через handleSubmit
+    // JSON import обрабатывается отдельным пошаговым сценарием
     if (mode === "json_import") {
       return;
     }
@@ -596,121 +846,243 @@ export function CreateKnowledgeDocumentDialog({
         ? "Импорт..."
         : "Создание...";
   const SubmitIcon = mode === "crawl" ? Globe : mode === "import" ? Upload : FileText;
+  const isJsonImport = mode === "json_import";
+  const isJsonWizard = isJsonImport && jsonStep !== "upload";
+  const jsonStepMeta = {
+    preview: { index: 2, title: "Предпросмотр" },
+    mapping: { index: 3, title: "Маппинг" },
+    hierarchy: { index: 4, title: "Иерархия" },
+  } as const;
+  const dialogTitle = isJsonWizard
+    ? `Создание через импорт. Шаг ${jsonStepMeta[jsonStep as Exclude<JsonImportStep, "upload">].index} из 4. ${
+        jsonStepMeta[jsonStep as Exclude<JsonImportStep, "upload">].title
+      }`
+    : "Добавить знания";
+  const isJsonBusy = isSubmitting || jsonIsSubmitting || isUploading || jsonIsAnalyzing;
+  const jsonPrimaryLabel =
+    jsonStep === "hierarchy"
+      ? jsonIsSubmitting
+        ? "Импортируем..."
+        : "Импортировать"
+      : "Далее";
+  const jsonAlertMessage = jsonPreviewError ? uploadError : jsonError || uploadError;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent 
+      <DialogContent
         className={cn(
           "flex max-w-3xl flex-col gap-0 overflow-hidden p-0",
-          mode === "json_import" && "w-[1200px] h-[900px] max-w-[1200px] max-h-[900px]"
+          isJsonWizard && "h-[95vh] w-[95vw] max-h-[95vh] max-w-[95vw]",
         )}
-        style={mode === "json_import" ? { width: "1200px", height: "900px", maxWidth: "1200px", maxHeight: "900px" } : undefined}
       >
         <DialogHeader className="shrink-0 px-6 pt-6 pb-4">
-          <DialogTitle>
-            {mode === "json_import" ? "Импорт JSON/JSONL" : "Добавить знания"}
-          </DialogTitle>
+          <DialogTitle>{dialogTitle}</DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-6 pb-6 pt-4 min-h-0">
           <div className="space-y-4">
-            {mode !== "json_import" && !(mode === "crawl" && crawlMode === "multiple") && (
+            {(!isJsonImport || jsonStep === "upload") && (
               <>
-                <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
-                  <Label htmlFor="knowledge-document-title" className="pt-2">
-                    Название
-                  </Label>
-                  <div className="space-y-1">
-                    <Input
-                      id="knowledge-document-title"
-                      value={title}
-                      onChange={handleTitleChange}
-                      placeholder={
-                        mode === "crawl"
-                          ? "Будет заполнено автоматически после импорта"
-                          : "Например, Руководство по продукту"
-                      }
-                      maxLength={500}
-                      autoFocus
-                      disabled={mode === "crawl" || isSubmitting}
-                    />
-                    {mode === "crawl" && crawlMode === "single" && (
-                      <p className="text-xs text-muted-foreground">
-                        После импорта название будет установлено по заголовку страницы.
-                      </p>
-                    )}
+                {!(mode === "crawl" && crawlMode === "multiple") && (
+                  <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
+                    <Label htmlFor="knowledge-document-title" className="pt-2">
+                      Название
+                    </Label>
+                    <div className="space-y-1">
+                      <Input
+                        id="knowledge-document-title"
+                        value={title}
+                        onChange={handleTitleChange}
+                        placeholder={
+                          mode === "crawl"
+                            ? "Будет заполнено автоматически после импорта"
+                            : "Например, Руководство по продукту"
+                        }
+                        maxLength={500}
+                        autoFocus
+                        disabled={mode === "crawl" || isSubmitting}
+                      />
+                      {mode === "crawl" && crawlMode === "single" && (
+                        <p className="text-xs text-muted-foreground">
+                          После импорта название будет установлено по заголовку страницы.
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
-                  <Label className="pt-2">Размещение</Label>
-                  <div className="space-y-1">
-                    <Select value={parentValue} onValueChange={setParentValue}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Выберите раздел" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={ROOT_PARENT_VALUE}>В корне базы</SelectItem>
-                        {folderOptions.map((option) => (
-                          <SelectItem key={option.id} value={option.id}>
-                            <span className="flex items-center gap-2">
-                              {"\u00A0".repeat(option.level * 2)}
-                              {option.type === "folder" ? (
-                                <Folder className="h-3.5 w-3.5 text-muted-foreground" />
-                              ) : (
-                                <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                              )}
-                              {option.title}
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                {mode !== "json_import" && !(mode === "crawl" && crawlMode === "multiple") && (
+                  <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
+                    <Label className="pt-2">Размещение</Label>
+                    <div className="space-y-1">
+                      <Select value={parentValue} onValueChange={setParentValue}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Выберите раздел" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={ROOT_PARENT_VALUE}>В корне базы</SelectItem>
+                          {folderOptions.map((option) => (
+                            <SelectItem key={option.id} value={option.id}>
+                              <span className="flex items-center gap-2">
+                                {"\u00A0".repeat(option.level * 2)}
+                                {option.type === "folder" ? (
+                                  <Folder className="h-3.5 w-3.5 text-muted-foreground" />
+                                ) : (
+                                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                                )}
+                                {option.title}
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {mode === "json_import" && (
+                  <div className="grid grid-cols-[minmax(0,12rem)_1fr] items-start gap-3">
+                    <Label className="pt-2">Размещение</Label>
+                    <div className="space-y-1">
+                      <Select value={parentValue} onValueChange={setParentValue}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Выберите раздел" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={ROOT_PARENT_VALUE}>В корне базы</SelectItem>
+                          {folderOptions.map((option) => (
+                            <SelectItem key={option.id} value={option.id}>
+                              <span className="flex items-center gap-2">
+                                {"\u00A0".repeat(option.level * 2)}
+                                {option.type === "folder" ? (
+                                  <Folder className="h-3.5 w-3.5 text-muted-foreground" />
+                                ) : (
+                                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                                )}
+                                {option.title}
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+
+                <ImportModeSelector
+                  mode={mode as any}
+                  onModeChange={(value) => handleModeChange(value as KnowledgeNodeSourceType)}
+                  options={DOCUMENT_CREATION_OPTIONS.map((opt) => ({
+                    value: opt.value as any,
+                    title: opt.title,
+                    description: opt.description,
+                    icon: opt.icon,
+                  }))}
+                  disabled={isSubmitting || isJsonBusy}
+                />
               </>
             )}
 
-            {mode === "json_import" && (
+            {isJsonImport && jsonStep === "upload" && (
               <div className="grid grid-cols-[minmax(0,12rem)_1fr] items-start gap-3">
-                <Label className="pt-2">Размещение</Label>
-                <div className="space-y-1">
-                  <Select value={parentValue} onValueChange={setParentValue}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Выберите раздел" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ROOT_PARENT_VALUE}>В корне базы</SelectItem>
-                      {folderOptions.map((option) => (
-                        <SelectItem key={option.id} value={option.id}>
-                          <span className="flex items-center gap-2">
-                            {"\u00A0".repeat(option.level * 2)}
-                            {option.type === "folder" ? (
-                              <Folder className="h-3.5 w-3.5 text-muted-foreground" />
-                            ) : (
-                              <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                            )}
-                            {option.title}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                    </Select>
+                <Label htmlFor="json-import-file" className="pt-2">
+                  Файл JSON/JSONL
+                </Label>
+                <div className="space-y-2">
+                  <Input
+                    ref={jsonFileInputRef}
+                    id="json-import-file"
+                    type="file"
+                    accept=".json,.jsonl"
+                    onChange={handleJsonFileChange}
+                    disabled={isJsonBusy}
+                    className="cursor-pointer"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Поддерживаются .json и .jsonl до 2GB.
+                  </p>
+                  {jsonFile && (
+                    <div className="flex items-center justify-between rounded-md border border-muted-foreground/20 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                      <span className="flex-1 min-w-0 truncate">
+                        {jsonFile.name} · {(jsonFile.size / 1024 / 1024).toFixed(2)} МБ
+                      </span>
+                      {!isJsonBusy && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setJsonFile(null);
+                            setJsonUploadedFileKey(null);
+                            setJsonStructureAnalysis(null);
+                            setJsonPreviewError(null);
+                            setJsonMappingConfig(null);
+                            setJsonIsMappingValid(false);
+                            setJsonShowMappingValidationErrors(false);
+                            setJsonHierarchyConfig(null);
+                            if (jsonFileInputRef.current) {
+                              jsonFileInputRef.current.value = "";
+                            }
+                          }}
+                          className="h-7 px-2"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {isUploading && uploadProgress && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>
+                          Загрузка части {uploadProgress.currentPart} из {uploadProgress.totalParts}
+                        </span>
+                        <span className="font-medium">{uploadProgress.percent}%</span>
+                      </div>
+                      <Progress value={uploadProgress.percent} />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={abort}
+                        disabled={isJsonBusy}
+                        className="w-full"
+                      >
+                        <X className="mr-2 h-4 w-4" />
+                        Отменить загрузку
+                      </Button>
+                    </div>
+                  )}
+
+                  {jsonIsAnalyzing && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Анализ структуры файла...
+                    </div>
+                  )}
+
+                  {jsonUploadedFileKey && jsonStructureAnalysis && (
+                    <Alert className="border-emerald-200 bg-emerald-50">
+                      <AlertDescription className="text-xs">
+                        Файл загружен и проанализирован. Нажмите «Далее» для предпросмотра.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {jsonPreviewError && (
+                    <Alert variant="destructive">
+                      <AlertDescription>
+                        <p className="text-xs font-medium">{jsonPreviewError.error}</p>
+                        {jsonPreviewError.details && (
+                          <p className="mt-1 text-xs">{jsonPreviewError.details}</p>
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </div>
               </div>
             )}
-
-            <ImportModeSelector
-              mode={mode as any}
-              onModeChange={(value) => handleModeChange(value as KnowledgeNodeSourceType)}
-              options={DOCUMENT_CREATION_OPTIONS.map(opt => ({
-                value: opt.value as any,
-                title: opt.title,
-                description: opt.description,
-                icon: opt.icon,
-              }))}
-              disabled={isSubmitting}
-            />
 
             {mode === "manual" ? (
               <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
@@ -923,75 +1295,115 @@ export function CreateKnowledgeDocumentDialog({
                 error={formError}
                 disabled={isSubmitting}
               />
-            ) : mode === "json_import" ? (
-              workspaceId && baseId ? (
-                <JsonImportPanel
-                  workspaceId={workspaceId}
-                  targetBaseId={baseId}
-                  targetParentId={parentValue === ROOT_PARENT_VALUE ? null : parentValue}
-                  onComplete={(result) => {
-                    onJsonImportStarted?.(result.jobId);
-                    onOpenChange(false);
-                  }}
-                  onCancel={() => setMode("manual")}
-                  disabled={isSubmitting}
-                />
-              ) : (
-                <div className="text-sm text-destructive">
-                  Не указаны workspaceId или baseId для JSON импорта
-                </div>
-              )
             ) : null}
+
+            {isJsonImport && jsonStep === "preview" && jsonStructureAnalysis && (
+              <div className="min-h-0">
+                <StructurePreview analysis={jsonStructureAnalysis} />
+              </div>
+            )}
+
+            {isJsonImport && jsonStep === "mapping" && jsonStructureAnalysis && (
+              <div className="min-h-0">
+                <DocumentFieldMappingEditor
+                  analysis={jsonStructureAnalysis}
+                  initialConfig={jsonMappingConfig ?? undefined}
+                  onConfigChange={(config) => {
+                    setJsonMappingConfig(config);
+                  }}
+                  onValidationChange={(isValid) => {
+                    setJsonIsMappingValid(isValid);
+                  }}
+                  showValidationErrors={jsonShowMappingValidationErrors}
+                  workspaceId={resolvedWorkspaceId}
+                />
+              </div>
+            )}
+
+            {isJsonImport && jsonStep === "hierarchy" && jsonStructureAnalysis && (
+              <div className="min-h-0">
+                <HierarchyConfigEditor
+                  analysis={jsonStructureAnalysis}
+                  initialConfig={jsonHierarchyConfig ?? undefined}
+                  onConfigChange={(config) => {
+                    setJsonHierarchyConfig(config);
+                  }}
+                />
+              </div>
+            )}
+
+            {isJsonImport && jsonStep === "upload" && (!workspaceId || !baseId) && (
+              <Alert variant="destructive">
+                <AlertDescription>Не указаны workspaceId или baseId для JSON импорта.</AlertDescription>
+              </Alert>
+            )}
+
+            {isJsonImport && jsonAlertMessage && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>{jsonAlertMessage}</AlertDescription>
+              </Alert>
+            )}
           </div>
 
-          {formError && mode !== "json_import" && (
+          {formError && !isJsonImport && (
             <p className="text-sm text-destructive">{formError}</p>
           )}
         </form>
 
         <DialogFooter className="sticky bottom-0 z-10 shrink-0 border-t bg-muted/50 px-6 py-4">
-            {mode === "json_import" ? (
-              // JSON импорт обрабатывается внутри JsonImportPanel
+          {isJsonImport ? (
+            <div className="flex w-full items-center justify-between">
+              <div>
+                {jsonStep !== "upload" && (
+                  <Button type="button" variant="outline" onClick={handleJsonBack} disabled={isJsonBusy}>
+                    <ChevronLeft className="mr-2 h-4 w-4" />
+                    Назад
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isJsonBusy}>
+                  Отмена
+                </Button>
+                <Button type="button" onClick={handleJsonNext} disabled={isJsonBusy}>
+                  {jsonPrimaryLabel}
+                  {jsonStep !== "hierarchy" && <ChevronRight className="ml-2 h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => onOpenChange(false)}
-                disabled={isSubmitting}
+                disabled={isSubmitting || isReadingFile || isBulkImporting}
               >
                 Отмена
               </Button>
-            ) : (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => onOpenChange(false)}
-                  disabled={isSubmitting || isReadingFile || isBulkImporting}
-                >
-                  Отмена
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={
-                    isSubmitting || 
-                    isReadingFile || 
-                    isBulkImporting ||
-                    (mode === "import" && (fileImportMode === "multiple" || fileImportMode === "archive") && importFiles.length === 0)
-                  }
-                  className="min-w-[10rem]"
-                >
-                  {(isSubmitting || isBulkImporting) ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {submitPendingLabel}
-                    </>
-                  ) : (
-                    <>
-                      <SubmitIcon className="mr-2 h-4 w-4" /> {submitLabel}
-                    </>
-                  )}
-                </Button>
-              </>
-            )}
+              <Button
+                type="submit"
+                disabled={
+                  isSubmitting ||
+                  isReadingFile ||
+                  isBulkImporting ||
+                  (mode === "import" && (fileImportMode === "multiple" || fileImportMode === "archive") && importFiles.length === 0)
+                }
+                className="min-w-[10rem]"
+              >
+                {isSubmitting || isBulkImporting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {submitPendingLabel}
+                  </>
+                ) : (
+                  <>
+                    <SubmitIcon className="mr-2 h-4 w-4" /> {submitLabel}
+                  </>
+                )}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
