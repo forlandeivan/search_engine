@@ -16,8 +16,13 @@ export type TranscribePayload =
       fileName: string;
       chatId: string;
       audioMessage?: ChatMessage;
-      status?: "uploaded";
+      status?: "uploaded" | "started";
       fileId?: string | null;
+      /** For pre-uploaded files */
+      s3Uri?: string;
+      objectKey?: string;
+      bucketName?: string;
+      durationSeconds?: number | null;
     };
 
 type ChatInputProps = {
@@ -70,6 +75,15 @@ export default function ChatInput({
   const [isDragOver, setIsDragOver] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [pendingTranscribe, setPendingTranscribe] = useState<TranscribePayload | null>(null);
+  // Pre-uploaded file info (uploaded to S3, waiting for user to press Send)
+  const [preUploadedFile, setPreUploadedFile] = useState<{
+    fileName: string;
+    s3Uri: string;
+    objectKey: string;
+    bucketName: string;
+    durationSeconds: number | null;
+    chatId: string;
+  } | null>(null);
   const attachInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -274,6 +288,174 @@ export default function ChatInput({
     [ensureChatId, toast, disableAudioTranscription, onSendFile],
   );
 
+  /**
+   * Pre-upload audio file to S3 without starting transcription.
+   * Called when user attaches a file.
+   */
+  const handlePreUploadAudio = useCallback(
+    async (file: File): Promise<boolean> => {
+      const targetChatId = await ensureChatId();
+      if (!targetChatId) {
+        toast({
+          title: "Нужен чат",
+          description: "Сначала выберите или создайте чат, чтобы прикрепить файл.",
+          variant: "destructive",
+        });
+        return false;
+      }
+
+      // Show file immediately with loading indicator
+      setAttachedFile(file);
+      setIsUploading(true);
+      
+      try {
+        const formData = new FormData();
+        formData.append("audio", file);
+        formData.append("chatId", targetChatId);
+
+        const response = await fetch("/api/chat/transcribe/upload", {
+          method: "POST",
+          credentials: "include",
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          
+          // Check for no-code mode - fall back to old behavior (keep file attached)
+          if (errorData.status === "no_code_required") {
+            console.log("[ChatInput] No-code mode detected, will use handleUploadAudio on send");
+            return true;
+          }
+          
+          // On error, remove the attached file
+          setAttachedFile(null);
+          toast({
+            title: "Не удалось загрузить файл",
+            description: errorData.message || "Ошибка загрузки",
+            variant: "destructive",
+          });
+          return false;
+        }
+
+        const result = await response.json();
+
+        // Check for no-code mode
+        if (result.status === "no_code_required") {
+          console.log("[ChatInput] No-code mode detected, will use handleUploadAudio on send");
+          return true;
+        }
+
+        if (result.status === "uploaded" && result.s3Uri) {
+          console.log("[ChatInput] File pre-uploaded to S3", {
+            s3Uri: result.s3Uri,
+            objectKey: result.objectKey,
+            durationSeconds: result.durationSeconds,
+          });
+          
+          setPreUploadedFile({
+            fileName: file.name,
+            s3Uri: result.s3Uri,
+            objectKey: result.objectKey,
+            bucketName: result.bucketName,
+            durationSeconds: result.durationSeconds ?? null,
+            chatId: targetChatId,
+          });
+          return true;
+        }
+
+        // Fallback - keep the file attached for old behavior
+        return true;
+      } catch (error) {
+        console.error("[ChatInput] Pre-upload error:", error);
+        // On error, remove the attached file
+        setAttachedFile(null);
+        toast({
+          title: "Не удалось загрузить файл",
+          description: formatApiErrorMessage(error),
+          variant: "destructive",
+        });
+        return false;
+      } finally {
+        setIsUploading(false);
+      }
+    },
+    [ensureChatId, toast],
+  );
+
+  /**
+   * Start transcription for a pre-uploaded file.
+   * Called when user presses Send.
+   */
+  const handleStartTranscription = useCallback(
+    async (): Promise<TranscribePayload | null> => {
+      if (!preUploadedFile) return null;
+
+      try {
+        const operationId =
+          (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" && crypto.randomUUID()) ||
+          `asr-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+        const response = await fetch("/api/chat/transcribe/start", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": operationId,
+          },
+          body: JSON.stringify({
+            chatId: preUploadedFile.chatId,
+            s3Uri: preUploadedFile.s3Uri,
+            objectKey: preUploadedFile.objectKey,
+            durationSeconds: preUploadedFile.durationSeconds,
+            operationId,
+            fileName: preUploadedFile.fileName,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          toast({
+            title: "Не удалось начать транскрибацию",
+            description: errorData.message || "Ошибка",
+            variant: "destructive",
+          });
+          return null;
+        }
+
+        const result = await response.json();
+
+        if (result.status === "started" && result.operationId) {
+          console.log("[ChatInput] Transcription started for pre-uploaded file", {
+            operationId: result.operationId,
+          });
+
+          const payload: TranscribePayload = {
+            operationId: result.operationId,
+            fileName: preUploadedFile.fileName,
+            chatId: preUploadedFile.chatId,
+            status: "started",
+            s3Uri: preUploadedFile.s3Uri,
+            objectKey: preUploadedFile.objectKey,
+          };
+          
+          return payload;
+        }
+
+        return null;
+      } catch (error) {
+        console.error("[ChatInput] Start transcription error:", error);
+        toast({
+          title: "Не удалось начать транскрибацию",
+          description: formatApiErrorMessage(error),
+          variant: "destructive",
+        });
+        return null;
+      }
+    },
+    [preUploadedFile, toast],
+  );
+
   const handleSendFile = useCallback(
     async (file: File) => {
       if (!onSendFile) return;
@@ -326,14 +508,25 @@ export default function ChatInput({
 
     // If we have an attached audio file, start transcription now (on Send)
     if (attachedFile && !disableAudioTranscription) {
-      console.log("[ChatInput] handleSend - starting transcription for attached file");
+      console.log("[ChatInput] handleSend - starting transcription for attached file", {
+        hasPreUploadedFile: !!preUploadedFile,
+      });
       try {
-        const transcribePayload = await handleUploadAudio(attachedFile);
+        let transcribePayload: TranscribePayload | null = null;
+        
+        // If file was pre-uploaded to S3, use the start endpoint
+        if (preUploadedFile) {
+          transcribePayload = await handleStartTranscription();
+        } else {
+          // Fallback to old behavior (upload + start in one call)
+          transcribePayload = await handleUploadAudio(attachedFile);
+        }
+        
         if (transcribePayload && onTranscribe) {
           console.log("[ChatInput] handleSend - calling onTranscribe", {
             hasAttachedFile: !!attachedFile,
-            pendingTranscribeStatus: transcribePayload.status,
-            pendingTranscribeMessageId: transcribePayload.audioMessage?.id,
+            pendingTranscribeStatus: typeof transcribePayload === 'object' ? transcribePayload.status : undefined,
+            pendingTranscribeMessageId: typeof transcribePayload === 'object' ? transcribePayload.audioMessage?.id : undefined,
           });
           onTranscribe(transcribePayload);
         }
@@ -342,6 +535,7 @@ export default function ChatInput({
       }
       setAttachedFile(null);
       setPendingTranscribe(null);
+      setPreUploadedFile(null);
       setIsSending(false);
       return;
     }
@@ -358,7 +552,7 @@ export default function ChatInput({
     } finally {
       setIsSending(false);
     }
-  }, [attachedFile, disabled, disableAudioTranscription, handleUploadAudio, onSend, onSendFile, onTranscribe, readOnlyHint, toast, value]);
+  }, [attachedFile, disabled, disableAudioTranscription, handleUploadAudio, handleStartTranscription, onSend, onSendFile, onTranscribe, preUploadedFile, readOnlyHint, toast, value]);
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -393,13 +587,12 @@ export default function ChatInput({
       const file = files[0];
       if (validateAudioFile(file)) {
         if (!disableAudioTranscription) {
-          setAttachedFile(file);
+          // Pre-upload file to S3 immediately when attached
+          void handlePreUploadAudio(file);
         }
-        // Don't start transcription here - wait for user to press Send
-        // handleUploadAudio(file);
       }
     },
-    [validateAudioFile, disableAudioTranscription],
+    [validateAudioFile, disableAudioTranscription, handlePreUploadAudio],
   );
 
   useEffect(() => {
@@ -438,6 +631,7 @@ export default function ChatInput({
             onClick={() => {
               setAttachedFile(null);
               setPendingTranscribe(null);
+              setPreUploadedFile(null);
             }}
             disabled={isUploading}
             data-testid="button-remove-audio"
@@ -503,10 +697,9 @@ export default function ChatInput({
                 if (showAudioAttach && file.type?.startsWith("audio/")) {
                   if (validateAudioFile(file)) {
                     if (!disableAudioTranscription) {
-                      setAttachedFile(file);
+                      // Pre-upload file to S3 immediately when attached
+                      void handlePreUploadAudio(file);
                     }
-                    // Don't start transcription here - wait for user to press Send
-                    // void handleUploadAudio(file);
                   }
                   return;
                 }

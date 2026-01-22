@@ -204,6 +204,201 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
 }));
 
 /**
+ * POST /upload
+ * Upload audio file for later transcription (upload-only mode)
+ * 
+ * This uploads the file to S3 immediately when user attaches it,
+ * but does not start transcription until they press "Send".
+ */
+transcribeRouter.post('/upload', upload.single('audio'), asyncHandler(async (req, res) => {
+  const startTime = Date.now();
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const file = req.file;
+  if (!file) {
+    return res.status(400).json({ message: 'Аудио файл не предоставлен' });
+  }
+
+  const chatId = typeof req.body.chatId === 'string' ? req.body.chatId.trim() : null;
+
+  logger.info({
+    chatId,
+    fileName: file.originalname,
+    fileSize: file.size,
+    mimeType: file.mimetype,
+    userId: user.id,
+  }, '[UPLOAD-ONLY-START] Starting upload-only pipeline');
+
+  if (!chatId) {
+    return res.status(400).json({ message: 'Chat ID обязателен' });
+  }
+
+  const chat = await storage.getChatSessionById(chatId);
+  if (!chat || chat.userId !== user.id) {
+    return res.status(404).json({ message: 'Чат не найден или недоступен' });
+  }
+
+  const workspaceId = chat.workspaceId;
+
+  // Check if skill is in no-code mode - if so, redirect to file upload flow
+  if (chat.skillId) {
+    const skill = await getSkillById(workspaceId, chat.skillId);
+    if (skill) {
+      const isNoCodeExecution = skill.executionMode === 'no_code';
+      const isNoCodeTranscription = skill.transcriptionFlowMode === 'no_code';
+      
+      if (isNoCodeExecution || isNoCodeTranscription) {
+        logger.info({
+          chatId,
+          skillId: skill.id,
+        }, 'Skill is in no-code mode, returning no-code flow indicator');
+        
+        return res.status(200).json({
+          status: 'no_code_required',
+          mode: 'no_code',
+          message: 'Навык использует no-code режим транскрибации',
+        });
+      }
+    }
+  }
+
+  try {
+    const result = await yandexSttAsyncService.uploadAudioOnly({
+      audioBuffer: file.buffer,
+      mimeType: file.mimetype || 'audio/wav',
+      userId: user.id,
+      workspaceId,
+      originalFileName: file.originalname || 'audio.wav',
+      chatId,
+    });
+
+    logger.info({
+      chatId,
+      s3Uri: result.s3Uri,
+      objectKey: result.objectKey,
+      durationSeconds: result.durationSeconds,
+      elapsed: Date.now() - startTime,
+    }, '[UPLOAD-ONLY-DONE] File uploaded successfully');
+
+    res.json({
+      status: 'uploaded',
+      s3Uri: result.s3Uri,
+      objectKey: result.objectKey,
+      bucketName: result.bucketName,
+      durationSeconds: result.durationSeconds,
+      fileName: file.originalname,
+      message: 'Файл загружен. Нажмите "Отправить" для начала транскрибации.',
+    });
+  } catch (error) {
+    logger.error({
+      error,
+      chatId,
+      elapsed: Date.now() - startTime,
+    }, '[UPLOAD-ONLY-ERROR] Upload failed');
+    
+    if (error instanceof YandexSttAsyncError) {
+      return res.status(error.status).json({
+        message: error.message,
+        code: error.code,
+      });
+    }
+
+    logger.error({ userId: user.id, chatId, error }, 'Error uploading audio');
+    throw error;
+  }
+}));
+
+/**
+ * POST /start
+ * Start transcription for a pre-uploaded file
+ * 
+ * This is called when user presses "Send" after file was already uploaded.
+ */
+transcribeRouter.post('/start', asyncHandler(async (req, res) => {
+  const startTime = Date.now();
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { chatId, s3Uri, objectKey, durationSeconds, operationId: clientOperationId, fileName } = req.body;
+
+  if (!chatId || !s3Uri) {
+    return res.status(400).json({ message: 'chatId и s3Uri обязательны' });
+  }
+
+  const operationId = clientOperationId || `asr-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  logger.info({
+    operationId,
+    chatId,
+    s3Uri,
+    durationSeconds,
+    userId: user.id,
+  }, '[START-TRANSCRIBE] Starting transcription for pre-uploaded file');
+
+  const chat = await storage.getChatSessionById(chatId);
+  if (!chat || chat.userId !== user.id) {
+    return res.status(404).json({ message: 'Чат не найден или недоступен' });
+  }
+
+  const workspaceId = chat.workspaceId;
+
+  try {
+    const result = await yandexSttAsyncService.startAsyncTranscription({
+      mimeType: 'audio/ogg', // Pre-uploaded files are already converted
+      userId: user.id,
+      workspaceId,
+      originalFileName: fileName || 'audio',
+      chatId,
+      s3Uri,
+      s3ObjectKey: objectKey,
+      durationSeconds: durationSeconds ?? null,
+    });
+
+    logger.info({
+      operationId: result.operationId,
+      elapsed: Date.now() - startTime,
+    }, '[START-TRANSCRIBE-DONE] Transcription started successfully');
+
+    // Create BotAction to show processing indicator
+    try {
+      await upsertBotActionForChat({
+        workspaceId,
+        chatId,
+        actionId: `transcribe-${result.operationId}`,
+        actionType: 'transcribe_audio',
+        status: 'processing',
+        displayText: `Распознаём речь: ${fileName || 'audio'}`,
+        userId: user.id,
+      });
+    } catch (botActionError) {
+      logger.warn({ error: botActionError, operationId: result.operationId }, '[START-TRANSCRIBE] Failed to create bot action');
+    }
+
+    res.json({
+      status: 'started',
+      operationId: result.operationId,
+      message: 'Транскрибация началась',
+    });
+  } catch (error) {
+    logger.error({
+      error,
+      chatId,
+      s3Uri,
+      elapsed: Date.now() - startTime,
+    }, '[START-TRANSCRIBE-ERROR] Failed to start transcription');
+
+    if (error instanceof YandexSttAsyncError) {
+      return res.status(error.status).json({
+        message: error.message,
+        code: error.code,
+      });
+    }
+    throw error;
+  }
+}));
+
+/**
  * GET /operations/:operationId
  * Get transcription operation status
  */
