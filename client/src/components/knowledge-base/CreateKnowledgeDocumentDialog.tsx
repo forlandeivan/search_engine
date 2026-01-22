@@ -10,7 +10,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -26,10 +25,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  RadioGroup,
-  RadioGroupItem,
-} from "@/components/ui/radio-group";
 import { convertFileToHtml, getSanitizedContent, buildHtmlFromPlainText } from "@/lib/document-import";
 import { cn } from "@/lib/utils";
 import type { KnowledgeBaseTreeNode } from "@shared/knowledge-base";
@@ -43,10 +38,12 @@ import {
   Trash2,
   Upload,
   FileJson,
+  type ComponentType,
 } from "lucide-react";
 import { JsonImportPanel } from "./import/JsonImportPanel";
 import { FileImportPanel, type FileImportMode } from "./import/FileImportPanel";
 import { CrawlImportPanel, type CrawlMode, type CrawlConfig } from "./import/CrawlImportPanel";
+import { ImportModeSelector } from "./import/ImportModeSelector";
 import { useBulkDocumentImport } from "@/hooks/useBulkDocumentImport";
 
 const ROOT_PARENT_VALUE = "__root__";
@@ -58,6 +55,40 @@ const ACCEPTED_FILE_TYPES =
   ",application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" +
   ",text/plain,text/markdown,text/csv,text/html,message/rfc822";
 const SUPPORTED_FORMAT_LABEL = "PDF, DOC, DOCX, TXT, Markdown, HTML, CSV, EML, PPTX, XLSX";
+
+type DocumentCreationOption = {
+  value: KnowledgeNodeSourceType;
+  title: string;
+  description: string;
+  icon: ComponentType<{ className?: string }>;
+};
+
+const DOCUMENT_CREATION_OPTIONS: DocumentCreationOption[] = [
+  {
+    value: "manual",
+    title: "Пустой документ",
+    description: "Создайте чистый документ и заполните его позже или добавьте текст прямо сейчас.",
+    icon: FileText,
+  },
+  {
+    value: "import",
+    title: "Импорт из файла",
+    description: `Загрузите текстовый документ до 20 МБ. Поддерживаются ${SUPPORTED_FORMAT_LABEL}.`,
+    icon: Upload,
+  },
+  {
+    value: "crawl",
+    title: "Импорт со страницы",
+    description: "Укажите ссылку, и мы извлечём контент так же, как при краулинге базы знаний.",
+    icon: Globe,
+  },
+  {
+    value: "json_import",
+    title: "Импорт JSON/JSONL",
+    description: "Импортируйте структурированные данные из JSON или JSONL файлов.",
+    icon: FileJson,
+  },
+];
 
 export type CreateKnowledgeDocumentFormValues = {
   title: string;
@@ -570,50 +601,80 @@ export function CreateKnowledgeDocumentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent 
         className={cn(
-          "max-w-2xl",
-          mode === "json_import" && "w-[1200px] h-[900px] max-w-[1200px] max-h-[900px] overflow-x-hidden"
+          "flex max-w-3xl flex-col gap-0 overflow-hidden p-0",
+          mode === "json_import" && "w-[1200px] h-[900px] max-w-[1200px] max-h-[900px]"
         )}
-        style={mode === "json_import" ? { width: "1200px", height: "900px", maxWidth: "1200px", maxHeight: "900px", overflowX: "hidden" } : undefined}
+        style={mode === "json_import" ? { width: "1200px", height: "900px", maxWidth: "1200px", maxHeight: "900px" } : undefined}
       >
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <DialogHeader>
-            <DialogTitle>
-              {mode === "json_import" ? "Импорт JSON/JSONL" : "Добавить знания"}
-            </DialogTitle>
-            <DialogDescription>
-              {mode === "json_import"
-                ? `Импортируйте структурированные данные из JSON или JSONL файлов в базу «${baseName}».`
-                : `Добавьте один или несколько документов в базу «${baseName}». Выберите расположение и способ создания.`}
-            </DialogDescription>
-          </DialogHeader>
+        <DialogHeader className="shrink-0 px-6 pt-6 pb-4">
+          <DialogTitle>
+            {mode === "json_import" ? "Импорт JSON/JSONL" : "Добавить знания"}
+          </DialogTitle>
+        </DialogHeader>
 
+        <form onSubmit={handleSubmit} className="flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-6 pb-6 pt-4 min-h-0">
           <div className="space-y-4">
             {mode !== "json_import" && !(mode === "crawl" && crawlMode === "multiple") && (
               <>
-                <div className="space-y-2">
-                  <Label htmlFor="knowledge-document-title">Название документа</Label>
-                  <Input
-                    id="knowledge-document-title"
-                    value={title}
-                    onChange={handleTitleChange}
-                    placeholder={
-                      mode === "crawl"
-                        ? "Будет заполнено автоматически после импорта"
-                        : "Например, Руководство по продукту"
-                    }
-                    maxLength={500}
-                    autoFocus
-                    disabled={mode === "crawl" || isSubmitting}
-                  />
-                  {mode === "crawl" && crawlMode === "single" && (
-                    <p className="text-xs text-muted-foreground">
-                      После импорта название будет установлено по заголовку страницы.
-                    </p>
-                  )}
+                <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
+                  <Label htmlFor="knowledge-document-title" className="pt-2">
+                    Название
+                  </Label>
+                  <div className="space-y-1">
+                    <Input
+                      id="knowledge-document-title"
+                      value={title}
+                      onChange={handleTitleChange}
+                      placeholder={
+                        mode === "crawl"
+                          ? "Будет заполнено автоматически после импорта"
+                          : "Например, Руководство по продукту"
+                      }
+                      maxLength={500}
+                      autoFocus
+                      disabled={mode === "crawl" || isSubmitting}
+                    />
+                    {mode === "crawl" && crawlMode === "single" && (
+                      <p className="text-xs text-muted-foreground">
+                        После импорта название будет установлено по заголовку страницы.
+                      </p>
+                    )}
+                  </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label>Размещение</Label>
+                <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
+                  <Label className="pt-2">Размещение</Label>
+                  <div className="space-y-1">
+                    <Select value={parentValue} onValueChange={setParentValue}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите раздел" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ROOT_PARENT_VALUE}>В корне базы</SelectItem>
+                        {folderOptions.map((option) => (
+                          <SelectItem key={option.id} value={option.id}>
+                            <span className="flex items-center gap-2">
+                              {"\u00A0".repeat(option.level * 2)}
+                              {option.type === "folder" ? (
+                                <Folder className="h-3.5 w-3.5 text-muted-foreground" />
+                              ) : (
+                                <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                              )}
+                              {option.title}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {mode === "json_import" && (
+              <div className="grid grid-cols-[minmax(0,12rem)_1fr] items-start gap-3">
+                <Label className="pt-2">Размещение</Label>
+                <div className="space-y-1">
                   <Select value={parentValue} onValueChange={setParentValue}>
                     <SelectTrigger>
                       <SelectValue placeholder="Выберите раздел" />
@@ -634,151 +695,47 @@ export function CreateKnowledgeDocumentDialog({
                         </SelectItem>
                       ))}
                     </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">Текущий выбор: {parentDescription}</p>
+                    </Select>
                 </div>
-              </>
-            )}
-
-            {mode === "json_import" && (
-              <div className="space-y-2">
-                <Label>Размещение</Label>
-                <Select value={parentValue} onValueChange={setParentValue}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Выберите раздел" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ROOT_PARENT_VALUE}>В корне базы</SelectItem>
-                    {folderOptions.map((option) => (
-                      <SelectItem key={option.id} value={option.id}>
-                        <span className="flex items-center gap-2">
-                          {"\u00A0".repeat(option.level * 2)}
-                          {option.type === "folder" ? (
-                            <Folder className="h-3.5 w-3.5 text-muted-foreground" />
-                          ) : (
-                            <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                          )}
-                          {option.title}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Документы будут импортированы в: {parentDescription}
-                </p>
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label>Способ создания</Label>
-              <RadioGroup
-                value={mode}
-                onValueChange={(value) => handleModeChange(value as KnowledgeNodeSourceType)}
-                className="grid gap-2 sm:grid-cols-2 md:grid-cols-4"
-              >
-                <label
-                  htmlFor="knowledge-document-mode-manual"
-                  className={cn(
-                    "flex cursor-pointer flex-col gap-1 rounded-md border p-3 text-sm transition",
-                    mode === "manual" ? "border-primary bg-primary/5" : "hover:border-primary/40",
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem
-                      value="manual"
-                      id="knowledge-document-mode-manual"
-                      disabled={isSubmitting}
-                    />
-                    <span className="font-medium">Пустой документ</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Создайте чистый документ и заполните его позже или добавьте текст прямо сейчас.
-                  </p>
-                </label>
-
-                <label
-                  htmlFor="knowledge-document-mode-import"
-                  className={cn(
-                    "flex cursor-pointer flex-col gap-1 rounded-md border p-3 text-sm transition",
-                    mode === "import" ? "border-primary bg-primary/5" : "hover:border-primary/40",
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem
-                      value="import"
-                      id="knowledge-document-mode-import"
-                      disabled={isSubmitting}
-                    />
-                    <span className="font-medium">Импорт из файла</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                  Загрузите текстовый документ до 20 МБ. Поддерживаются {SUPPORTED_FORMAT_LABEL}.
-                  </p>
-                </label>
-
-                <label
-                  htmlFor="knowledge-document-mode-crawl"
-                  className={cn(
-                    "flex cursor-pointer flex-col gap-1 rounded-md border p-3 text-sm transition",
-                    mode === "crawl" ? "border-primary bg-primary/5" : "hover:border-primary/40",
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem
-                      value="crawl"
-                      id="knowledge-document-mode-crawl"
-                      disabled={isSubmitting}
-                    />
-                    <span className="font-medium">Импорт со страницы</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Укажите ссылку, и мы извлечём контент так же, как при краулинге базы знаний.
-                  </p>
-                </label>
-
-                <label
-                  htmlFor="knowledge-document-mode-json"
-                  className={cn(
-                    "flex cursor-pointer flex-col gap-1 rounded-md border p-3 text-sm transition",
-                    mode === "json_import" ? "border-primary bg-primary/5" : "hover:border-primary/40",
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem
-                      value="json_import"
-                      id="knowledge-document-mode-json"
-                      disabled={isSubmitting}
-                    />
-                    <span className="font-medium">Импорт JSON/JSONL</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Импортируйте структурированные данные из JSON или JSONL файлов.
-                  </p>
-                </label>
-              </RadioGroup>
-            </div>
+            <ImportModeSelector
+              mode={mode as any}
+              onModeChange={(value) => handleModeChange(value as KnowledgeNodeSourceType)}
+              options={DOCUMENT_CREATION_OPTIONS.map(opt => ({
+                value: opt.value as any,
+                title: opt.title,
+                description: opt.description,
+                icon: opt.icon,
+              }))}
+              disabled={isSubmitting}
+            />
 
             {mode === "manual" ? (
-              <div className="space-y-2">
-                <Label htmlFor="knowledge-document-content">Стартовое содержимое (необязательно)</Label>
-                <Textarea
-                  id="knowledge-document-content"
-                  value={manualContent}
-                  onChange={(event) => setManualContent(event.target.value)}
-                  placeholder="Добавьте текст документа или оставьте поле пустым"
-                  className="min-h-[8rem]"
-                  maxLength={MAX_CONTENT_LENGTH}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Длина: {manualContent.length.toLocaleString("ru-RU")} символов из {MAX_CONTENT_LENGTH.toLocaleString("ru-RU")}.
-                </p>
+              <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
+                <Label htmlFor="knowledge-document-content" className="pt-2">
+                  Стартовое содержимое (необязательно)
+                </Label>
+                <div className="space-y-1">
+                  <Textarea
+                    id="knowledge-document-content"
+                    value={manualContent}
+                    onChange={(event) => setManualContent(event.target.value)}
+                    placeholder="Добавьте текст документа или оставьте поле пустым"
+                    className="min-h-[8rem]"
+                    maxLength={MAX_CONTENT_LENGTH}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Длина: {manualContent.length.toLocaleString("ru-RU")} символов из {MAX_CONTENT_LENGTH.toLocaleString("ru-RU")}.
+                  </p>
+                </div>
               </div>
             ) : mode === "import" ? (
               <div className="space-y-3">
                 {/* Toggle режима импорта */}
-                <div className="flex items-center gap-4">
-                  <Label>Режим импорта:</Label>
+                <div className="grid grid-cols-[12rem_1fr] items-center gap-3">
+                  <Label className="pt-2">Режим импорта</Label>
                   <div className="flex gap-2">
                     <Button
                       type="button"
@@ -829,8 +786,10 @@ export function CreateKnowledgeDocumentDialog({
                 {fileImportMode === "single" ? (
                   // Одиночный импорт (старая логика)
                   <>
-                    <div className="space-y-2">
-                      <Label htmlFor="knowledge-document-file">Файл документа</Label>
+                    <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
+                      <Label htmlFor="knowledge-document-file" className="pt-2">
+                        Файл документа
+                      </Label>
                       <div
                         className={cn(
                           "flex flex-col gap-3 rounded-md border border-dashed p-4 text-sm transition",
@@ -986,12 +945,11 @@ export function CreateKnowledgeDocumentDialog({
           </div>
 
           {formError && mode !== "json_import" && (
-            <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-              <AlertCircle className="h-4 w-4" /> {formError}
-            </div>
+            <p className="text-sm text-destructive">{formError}</p>
           )}
+        </form>
 
-          <DialogFooter>
+        <DialogFooter className="sticky bottom-0 z-10 shrink-0 border-t bg-muted/50 px-6 py-4">
             {mode === "json_import" ? (
               // JSON импорт обрабатывается внутри JsonImportPanel
               <Button
@@ -1034,8 +992,7 @@ export function CreateKnowledgeDocumentDialog({
                 </Button>
               </>
             )}
-          </DialogFooter>
-        </form>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

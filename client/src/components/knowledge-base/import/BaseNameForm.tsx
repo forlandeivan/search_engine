@@ -19,7 +19,7 @@ export function BaseNameForm({
 }: BaseNameFormProps) {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-[minmax(0,12rem)_1fr] items-start gap-3">
+      <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
         <Label htmlFor="create-base-name" className="pt-2">
           Название
         </Label>
@@ -32,7 +32,7 @@ export function BaseNameForm({
         />
       </div>
 
-      <div className="grid grid-cols-[minmax(0,12rem)_1fr] items-start gap-3">
+      <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
         <Label htmlFor="create-base-description" className="pt-2">
           Описание
         </Label>

@@ -19,7 +19,7 @@ export function ImportModeSelector({
   const labelId = "knowledge-base-import-mode-label";
 
   return (
-    <div className="grid grid-cols-[minmax(0,12rem)_1fr] items-start gap-3">
+    <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
       <Label id={labelId} className="pt-2">
         Метод создания
       </Label>

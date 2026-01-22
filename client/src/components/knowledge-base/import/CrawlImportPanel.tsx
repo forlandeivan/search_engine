@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -100,20 +101,24 @@ function SinglePageCrawlForm({
   disabled?: boolean;
 }) {
   return (
-    <div className="space-y-2">
-      <Label htmlFor="crawl-single-url">Ссылка на страницу</Label>
-      <Input
-        id="crawl-single-url"
-        type="url"
-        value={url}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="https://example.com/article"
-        disabled={disabled}
-        autoComplete="off"
-      />
-      <p className="text-xs text-muted-foreground">
-        Заголовок документа будет определён автоматически по содержимому страницы.
-      </p>
+    <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
+      <Label htmlFor="crawl-single-url" className="pt-2">
+        Ссылка на страницу
+      </Label>
+      <div className="space-y-1">
+        <Input
+          id="crawl-single-url"
+          type="url"
+          value={url}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="https://example.com/article"
+          disabled={disabled}
+          autoComplete="off"
+        />
+        <p className="text-xs text-muted-foreground">
+          Заголовок документа будет определён автоматически по содержимому страницы.
+        </p>
+      </div>
     </div>
   );
 }
@@ -151,24 +156,28 @@ function MultiplePagesCrawlForm({
   return (
     <div className="space-y-4">
       {/* Стартовые URL */}
-      <div className="space-y-2">
-        <Label htmlFor="crawl-start-urls">Стартовые URL</Label>
-        <Textarea
-          id="crawl-start-urls"
-          placeholder="https://example.com/docs\nhttps://docs.example.com/guide"
-          value={startUrlsInput}
-          onChange={(e) =>
-            onChange({
-              ...config,
-              startUrls: parseListInput(e.target.value),
-            })
-          }
-          rows={3}
-          disabled={disabled}
-        />
-        <p className="text-xs text-muted-foreground">
-          Перечислите адреса, с которых начнём обход. Каждый URL — с новой строки или через запятую.
-        </p>
+      <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
+        <Label htmlFor="crawl-start-urls" className="pt-2">
+          Стартовые URL
+        </Label>
+        <div className="space-y-1">
+          <Textarea
+            id="crawl-start-urls"
+            placeholder="https://example.com/docs\nhttps://docs.example.com/guide"
+            value={startUrlsInput}
+            onChange={(e) =>
+              onChange({
+                ...config,
+                startUrls: parseListInput(e.target.value),
+              })
+            }
+            rows={3}
+            disabled={disabled}
+          />
+          <p className="text-xs text-muted-foreground">
+            Перечислите адреса, с которых начнём обход. Каждый URL - с новой строки или через запятую.
+          </p>
+        </div>
       </div>
 
       {/* Collapsible: Дополнительные настройки */}
@@ -490,40 +499,47 @@ export function CrawlImportPanel({
   error,
   disabled,
 }: CrawlImportPanelProps) {
+  const tabsLabelId = "crawl-mode-label";
+
   return (
     <div className="space-y-4">
       {/* Toggle */}
-      <div className="flex items-center gap-2 p-1 bg-muted rounded-lg w-fit">
-        <Button
-          type="button"
-          variant={mode === "single" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => onModeChange("single")}
-          disabled={disabled || isSubmitting}
-        >
-          <FileText className="w-4 h-4 mr-2" />
-          Одна страница
-        </Button>
-        <Button
-          type="button"
-          variant={mode === "multiple" ? "default" : "ghost"}
-          size="sm"
-          onClick={() => onModeChange("multiple")}
-          disabled={disabled || isSubmitting}
-        >
-          <Globe className="w-4 h-4 mr-2" />
-          Несколько страниц
-        </Button>
-      </div>
+      <Tabs
+        value={mode}
+        onValueChange={(value) => onModeChange(value as CrawlMode)}
+        className="w-full gap-4"
+      >
+        <div className="grid grid-cols-[12rem_1fr] items-start gap-3">
+          <Label id={tabsLabelId} className="pt-2">
+            Страницы
+          </Label>
+          <TabsList aria-labelledby={tabsLabelId} className="grid w-full max-w-xs grid-cols-2">
+            <TabsTrigger value="single" disabled={disabled || isSubmitting}>
+              <FileText className="h-4 w-4" />
+              Одна
+            </TabsTrigger>
+            <TabsTrigger value="multiple" disabled={disabled || isSubmitting}>
+              <Globe className="h-4 w-4" />
+              Несколько
+            </TabsTrigger>
+          </TabsList>
+        </div>
+        <TabsContent value="single" className="w-full">
+          <SinglePageCrawlForm
+            url={singleUrl}
+            onChange={onSingleUrlChange}
+            disabled={disabled || isSubmitting}
+          />
+        </TabsContent>
+        <TabsContent value="multiple" className="w-full">
+          <MultiplePagesCrawlForm
+            config={config}
+            onChange={onConfigChange}
+            disabled={disabled || isSubmitting}
+          />
+        </TabsContent>
+      </Tabs>
 
-      {/* Контент */}
-      {mode === "single" ? (
-        <SinglePageCrawlForm url={singleUrl} onChange={onSingleUrlChange} disabled={disabled || isSubmitting} />
-      ) : (
-        <MultiplePagesCrawlForm config={config} onChange={onConfigChange} disabled={disabled || isSubmitting} />
-      )}
-
-      {/* Ошибки */}
       {error && (
         <div className="flex items-center gap-2 text-sm text-destructive">
           <HelpCircle className="h-4 w-4" />
