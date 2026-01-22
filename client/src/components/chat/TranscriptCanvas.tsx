@@ -272,24 +272,48 @@ export function TranscriptCanvas({
   };
 
   const handleRunReplaceAction = (actionId: string, label: string) => {
-    if (!skillId || !activeTab) return;
+    if (!skillId) return;
 
-    const sourceText = tabs.find((t) => t.id === "original")?.content || activeTab.content;
+    console.log("[TranscriptCanvas] handleRunReplaceAction - START", {
+      actionId,
+      label,
+      skillId,
+      transcriptId,
+      activeTabId,
+    });
+
+    // Always use original transcript text as source
+    const sourceText = tabs.find((t) => t.id === "original")?.content || "";
     
     if (!sourceText.trim()) {
       toast({
         title: "Ошибка",
-        description: "Текст стенограммы пуст",
+        description: "Исходный текст пуст",
         variant: "destructive",
       });
       return;
     }
 
-    setTabs((prev) =>
-      prev.map((tab) =>
-        tab.id === activeTab.id ? { ...tab, isLoading: true } : tab
-      )
-    );
+    // Always create a new tab for manual actions (never modify original)
+    const newTabId = `action-${actionId}-${Date.now()}`;
+    const newTab: CanvasTab = {
+      id: newTabId,
+      title: label,
+      content: "",
+      originalContent: "",
+      isLoading: true,
+      type: "action_result",
+      actionId,
+      hasChanges: false,
+    };
+
+    console.log("[TranscriptCanvas] handleRunReplaceAction - Creating temp tab", {
+      newTabId,
+      sourceTextLength: sourceText.length,
+    });
+
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(newTabId);
 
     runAction(
       {
@@ -302,30 +326,77 @@ export function TranscriptCanvas({
       },
       {
         onSuccess: (result) => {
-          const outputText = result.result?.text || result.output;
+          const outputText = result.text || "";
+          console.log("[TranscriptCanvas] handleRunReplaceAction - Action SUCCESS", {
+            actionId,
+            outputTextLength: outputText.length,
+            hasOutput: !!outputText,
+          });
+
           if (outputText) {
-            setTabs((prev) =>
-              prev.map((tab) =>
-                tab.id === activeTab.id
-                  ? {
-                      ...tab,
-                      content: outputText,
-                      hasChanges: outputText !== tab.originalContent,
-                      isLoading: false,
+            // Save as canvas document in DB (same as handleRunDocumentAction)
+            createCanvasDocument(
+              {
+                chatId,
+                transcriptId,
+                skillId,
+                actionId,
+                type: "derived",
+                title: label,
+                content: outputText,
+              },
+              {
+                onSuccess: ({ document }) => {
+                  console.log("[TranscriptCanvas] handleRunReplaceAction - Document saved", {
+                    documentId: document.id,
+                    newTabId,
+                  });
+
+                  setTabs((prev) => {
+                    // Check if the tab still exists (user might have closed it during loading)
+                    const tabExists = prev.some((tab) => tab.id === newTabId);
+                    if (!tabExists) {
+                      console.log("[TranscriptCanvas] handleRunReplaceAction - Tab was closed during execution, skipping update");
+                      return prev;
                     }
-                  : tab
-              )
+                    
+                    return prev.map((tab) =>
+                      tab.id === newTabId
+                        ? {
+                            ...tab,
+                            id: document.id,
+                            content: outputText,
+                            originalContent: outputText,
+                            hasChanges: false,
+                            isLoading: false,
+                          }
+                        : tab
+                    );
+                  });
+                  
+                  setActiveTabId(document.id);
+                  
+                  toast({
+                    title: "Готово",
+                    description: `Действие "${label}" выполнено`,
+                  });
+                },
+                onError: (error) => {
+                  console.error("[TranscriptCanvas] handleRunReplaceAction - Failed to save document", error);
+                  setTabs((prev) => prev.filter((tab) => tab.id !== newTabId));
+                  setActiveTabId("original");
+                  toast({
+                    title: "Ошибка",
+                    description: error instanceof Error ? error.message : "Не удалось сохранить документ",
+                    variant: "destructive",
+                  });
+                },
+              }
             );
-            toast({
-              title: "Текст обновлён",
-              description: `Действие "${label}" применено`,
-            });
           } else {
-            setTabs((prev) =>
-              prev.map((tab) =>
-                tab.id === activeTab.id ? { ...tab, isLoading: false } : tab
-              )
-            );
+            console.log("[TranscriptCanvas] handleRunReplaceAction - No output text, removing tab");
+            setTabs((prev) => prev.filter((tab) => tab.id !== newTabId));
+            setActiveTabId("original");
             toast({
               title: "Выполнено",
               description: result.ui?.effectiveLabel || label,
@@ -333,11 +404,9 @@ export function TranscriptCanvas({
           }
         },
         onError: (error) => {
-          setTabs((prev) =>
-            prev.map((tab) =>
-              tab.id === activeTab.id ? { ...tab, isLoading: false } : tab
-            )
-          );
+          console.error("[TranscriptCanvas] handleRunReplaceAction - Action FAILED", error);
+          setTabs((prev) => prev.filter((tab) => tab.id !== newTabId));
+          setActiveTabId("original");
           toast({
             title: "Ошибка",
             description: error instanceof Error ? error.message : "Не удалось выполнить действие",
@@ -350,6 +419,14 @@ export function TranscriptCanvas({
 
   const handleRunDocumentAction = (actionId: string, label: string) => {
     if (!skillId) return;
+
+    console.log("[TranscriptCanvas] handleRunDocumentAction - START", {
+      actionId,
+      label,
+      skillId,
+      transcriptId,
+      activeTabId,
+    });
 
     const sourceText = tabs.find((t) => t.id === "original")?.content || "";
     
@@ -374,6 +451,11 @@ export function TranscriptCanvas({
       hasChanges: false,
     };
 
+    console.log("[TranscriptCanvas] handleRunDocumentAction - Creating temp tab", {
+      newTabId,
+      sourceTextLength: sourceText.length,
+    });
+
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newTabId);
 
@@ -388,7 +470,21 @@ export function TranscriptCanvas({
       },
       {
         onSuccess: (result) => {
-        const outputText = result.result?.text || result.output || "";
+        console.log("[TranscriptCanvas] handleRunDocumentAction - Action SUCCESS", {
+          actionId,
+          hasResult: !!result,
+          resultKeys: result ? Object.keys(result) : [],
+        });
+
+        const outputText = result.text || "";
+        console.log("[TranscriptCanvas] handleRunDocumentAction - Creating canvas document", {
+          outputTextLength: outputText.length,
+          chatId,
+          transcriptId,
+          skillId,
+          actionId,
+        });
+
         createCanvasDocument(
           {
             chatId,
@@ -401,8 +497,20 @@ export function TranscriptCanvas({
           },
           {
             onSuccess: ({ document }) => {
-              setTabs((prev) =>
-                prev.map((tab) =>
+              console.log("[TranscriptCanvas] handleRunDocumentAction - Document saved", {
+                documentId: document.id,
+                newTabId,
+              });
+
+              setTabs((prev) => {
+                // Check if the tab still exists (user might have closed it during loading)
+                const tabExists = prev.some((tab) => tab.id === newTabId);
+                if (!tabExists) {
+                  console.log("[TranscriptCanvas] handleRunDocumentAction - Tab was closed during execution, skipping update");
+                  return prev;
+                }
+                
+                return prev.map((tab) =>
                   tab.id === newTabId
                     ? {
                         ...tab,
@@ -412,15 +520,22 @@ export function TranscriptCanvas({
                         isLoading: false,
                       }
                     : tab
-                )
-              );
-              setActiveTabId(document.id);
+                );
+              });
+              
+              // Only set active tab if it wasn't closed
+              setActiveTabId((currentActiveId) => {
+                const tabStillExists = tabs.some((t) => t.id === newTabId);
+                return tabStillExists ? document.id : currentActiveId;
+              });
+              
               toast({
                 title: "Готово",
                 description: `Результат "${label}" сохранён`,
               });
             },
             onError: (error) => {
+              console.error("[TranscriptCanvas] handleRunDocumentAction - Failed to save document", error);
               setTabs((prev) => prev.filter((tab) => tab.id !== newTabId));
               setActiveTabId("original");
               toast({
@@ -433,6 +548,7 @@ export function TranscriptCanvas({
         );
       },
       onError: (error) => {
+        console.error("[TranscriptCanvas] handleRunDocumentAction - Action FAILED", error);
         setTabs((prev) => prev.filter((tab) => tab.id !== newTabId));
         setActiveTabId("original");
         toast({
@@ -446,16 +562,35 @@ export function TranscriptCanvas({
   };
 
   const handleCloseTab = (tabId: string) => {
+    console.log("[TranscriptCanvas] handleCloseTab - START", {
+      tabId,
+      activeTabId,
+      tabsCount: tabs.length,
+      isOriginal: tabId === "original",
+    });
+
     if (tabId === "original") return;
 
     const tabToClose = tabs.find((t) => t.id === tabId);
+    
+    console.log("[TranscriptCanvas] handleCloseTab - Tab to close", {
+      tabId,
+      found: !!tabToClose,
+      hasChanges: tabToClose?.hasChanges,
+      idStartsWithAction: tabToClose?.id.startsWith("action-"),
+    });
+
     if (tabToClose?.hasChanges) {
       const confirmed = window.confirm("В этом табе есть несохранённые изменения. Закрыть?");
-      if (!confirmed) return;
+      if (!confirmed) {
+        console.log("[TranscriptCanvas] handleCloseTab - User cancelled");
+        return;
+      }
     }
 
     if (!tabToClose?.id || tabToClose.id.startsWith("action-")) {
       // локальная вкладка без сохранённого документа (fallback)
+      console.log("[TranscriptCanvas] handleCloseTab - Removing local tab (not saved in DB)", { tabId });
       setTabs((prev) => prev.filter((tab) => tab.id !== tabId));
       if (activeTabId === tabId) {
         setActiveTabId("original");
@@ -463,8 +598,10 @@ export function TranscriptCanvas({
       return;
     }
 
+    console.log("[TranscriptCanvas] handleCloseTab - Deleting canvas document from DB", { tabId });
     deleteCanvasDocument(tabToClose.id, {
       onSuccess: () => {
+        console.log("[TranscriptCanvas] handleCloseTab - Document deleted successfully", { tabId });
         setTabs((prev) => prev.filter((tab) => tab.id !== tabId));
         if (activeTabId === tabId) {
           setActiveTabId("original");
@@ -472,6 +609,7 @@ export function TranscriptCanvas({
         toast({ description: "Документ удалён" });
       },
       onError: (error) => {
+        console.error("[TranscriptCanvas] handleCloseTab - Failed to delete document", { tabId, error });
         toast({
           title: "Ошибка",
           description: error instanceof Error ? error.message : "Не удалось удалить документ",
