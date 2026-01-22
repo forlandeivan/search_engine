@@ -16,6 +16,7 @@ import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import type { PublicUser } from '@shared/schema';
+import { canvasDocumentTypes } from '@shared/schema';
 
 const logger = createLogger('canvas');
 
@@ -47,7 +48,7 @@ const createCanvasDocumentSchema = z.object({
   transcriptId: z.string().trim().min(1).optional(),
   skillId: z.string().trim().min(1).optional(),
   actionId: z.string().trim().min(1).optional(),
-  type: z.enum(['text', 'code', 'markdown']).optional().default('text'),
+  type: z.enum(canvasDocumentTypes).optional().default('derived'),
   title: z.string().trim().min(1).max(255),
   content: z.string().optional().default(''),
   isDefault: z.boolean().optional(),
