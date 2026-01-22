@@ -7,6 +7,8 @@
  * - PUT /api/skills/:skillId - Update skill
  * - DELETE /api/skills/:skillId - Archive skill
  * - GET /api/skills/:skillId/actions - List skill actions
+ * - PUT /api/skills/:skillId/actions/:actionId - Update skill action config
+ * - POST /api/skills/:skillId/actions/:actionId/run - Run action on transcript/selection
  */
 
 import { Router, type Request, Response, NextFunction } from 'express';
@@ -24,9 +26,10 @@ import {
 } from '../skills';
 import { actionsRepository } from '../actions';
 import { skillActionsRepository } from '../skill-actions';
-import type { PublicUser } from '@shared/schema';
+import { storage } from '../storage';
+import { runTranscriptActionCommon } from '../lib/transcript-actions';
+import type { PublicUser, ActionPlacement } from '@shared/schema';
 import { createSkillSchema, updateSkillSchema, actionPlacements } from '@shared/skills';
-import type { ActionPlacement } from '@shared/skills';
 
 const logger = createLogger('skill');
 
@@ -293,6 +296,95 @@ skillRouter.put('/:skillId/actions/:actionId', asyncHandler(async (req, res) => 
       editable: true,
     },
   });
+}));
+
+/**
+ * POST /:skillId/actions/:actionId/run
+ * Run action on transcript or selection
+ */
+skillRouter.post('/:skillId/actions/:actionId/run', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { skillId, actionId } = req.params;
+  const body = req.body ?? {};
+  
+  const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+  const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+
+  const skill = await getSkillById(workspaceId, skillId);
+  if (!skill) {
+    return res.status(404).json({ message: 'Навык не найден' });
+  }
+
+  const action = await actionsRepository.getByIdForWorkspace(skill.workspaceId, actionId);
+  if (!action) {
+    return res.status(404).json({ message: 'Действие не найдено' });
+  }
+
+  // Validate placement
+  const placement = body.placement as ActionPlacement;
+  if (!placement || !actionPlacements.includes(placement)) {
+    return res.status(400).json({ message: 'Некорректный placement' });
+  }
+
+  // Check skill action is enabled for this placement
+  const skillAction = await skillActionsRepository.getForSkillAndAction(skillId, actionId);
+  if (!skillAction || !skillAction.enabled) {
+    return res.status(403).json({ message: 'Действие отключено для этого навыка' });
+  }
+  if (!skillAction.enabledPlacements.includes(placement)) {
+    return res.status(403).json({ message: 'Действие недоступно для этого placement' });
+  }
+
+  const context = body.context ?? {};
+  const transcriptId = context.transcriptId as string | undefined;
+  const selectionText = context.selectionText as string | undefined;
+
+  // Get transcript text
+  let transcriptText = '';
+  if (transcriptId) {
+    const transcript = await storage.getTranscriptById?.(transcriptId);
+    if (!transcript || transcript.workspaceId !== workspaceId) {
+      return res.status(404).json({ message: 'Стенограмма не найдена' });
+    }
+    transcriptText = action.inputType === 'selection' && selectionText
+      ? selectionText
+      : transcript.fullText ?? '';
+  } else if (selectionText) {
+    transcriptText = selectionText;
+  }
+
+  if (!transcriptText) {
+    return res.status(400).json({ message: 'Текст для обработки не предоставлен' });
+  }
+
+  try {
+    const result = await runTranscriptActionCommon({
+      userId: user.id,
+      skill,
+      action,
+      placement,
+      transcriptId: transcriptId ?? null,
+      transcriptText,
+      context: {
+        ...context,
+        trigger: 'manual_action',
+      },
+    });
+
+    res.json({
+      success: true,
+      text: result.text,
+      applied: result.applied,
+      appliedChanges: result.appliedChanges,
+    });
+  } catch (error) {
+    logger.error({ error, skillId, actionId }, 'Failed to run action');
+    return res.status(500).json({ 
+      message: error instanceof Error ? error.message : 'Не удалось выполнить действие' 
+    });
+  }
 }));
 
 /**
