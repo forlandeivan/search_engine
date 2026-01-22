@@ -887,4 +887,68 @@ workspaceRouter.get('/:workspaceId/credits', asyncHandler(async (req, res) => {
   });
 }));
 
+// ============================================================================
+// Transcript Routes
+// ============================================================================
+
+/**
+ * GET /:workspaceId/transcripts/:transcriptId
+ * Get transcript by ID
+ */
+workspaceRouter.get('/:workspaceId/transcripts/:transcriptId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId, transcriptId } = req.params;
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+  if (!membership) {
+    return res.status(403).json({ message: 'Доступ запрещён' });
+  }
+
+  const transcript = await storage.getTranscriptById?.(transcriptId);
+  if (!transcript || transcript.workspaceId !== workspaceId) {
+    return res.status(404).json({ message: 'Транскрипт не найден' });
+  }
+
+  res.json(transcript);
+}));
+
+/**
+ * PATCH /:workspaceId/transcripts/:transcriptId
+ * Update transcript
+ */
+workspaceRouter.patch('/:workspaceId/transcripts/:transcriptId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId, transcriptId } = req.params;
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+  if (!membership) {
+    return res.status(403).json({ message: 'Доступ запрещён' });
+  }
+
+  const transcript = await storage.getTranscriptById?.(transcriptId);
+  if (!transcript || transcript.workspaceId !== workspaceId) {
+    return res.status(404).json({ message: 'Транскрипт не найден' });
+  }
+
+  const updateSchema = z.object({
+    fullText: z.string().optional(),
+    title: z.string().optional(),
+  });
+
+  const payload = updateSchema.parse(req.body ?? {});
+  
+  const updated = await storage.updateTranscript(transcriptId, {
+    ...payload,
+    lastEditedByUserId: user.id,
+  });
+
+  if (!updated) {
+    return res.status(500).json({ message: 'Не удалось обновить транскрипт' });
+  }
+
+  res.json(updated);
+}));
+
 export default workspaceRouter;

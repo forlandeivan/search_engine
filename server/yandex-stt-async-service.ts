@@ -272,7 +272,7 @@ export async function convertAudioToOgg(audioBuffer: Buffer, mimeType: string = 
 }
 
 export interface AsyncTranscribeOptions {
-  audioBuffer: Buffer;
+  audioBuffer?: Buffer;
   mimeType: string;
   lang?: string;
   userId: string;
@@ -281,6 +281,28 @@ export interface AsyncTranscribeOptions {
   chatId?: string;
   transcriptId?: string;
   executionId?: string;
+  /** If provided, skip upload and use this S3 URI directly */
+  s3Uri?: string;
+  /** If provided, use this object key for cleanup */
+  s3ObjectKey?: string;
+  /** Pre-calculated audio duration in seconds (required when using s3Uri) */
+  durationSeconds?: number | null;
+}
+
+export interface UploadAudioOnlyOptions {
+  audioBuffer: Buffer;
+  mimeType: string;
+  userId: string;
+  workspaceId: string;
+  originalFileName?: string;
+  chatId?: string;
+}
+
+export interface UploadAudioOnlyResponse {
+  s3Uri: string;
+  objectKey: string;
+  bucketName: string;
+  durationSeconds: number | null;
 }
 
 type AsyncUploadResult = {
@@ -325,15 +347,21 @@ interface SecretValues {
 class YandexSttAsyncService {
   async startAsyncTranscription(options: AsyncTranscribeOptions): Promise<AsyncTranscribeResponse> {
     const startTime = Date.now();
-    let { audioBuffer, mimeType, userId, workspaceId, originalFileName, chatId, transcriptId, executionId } = options;
+    const { audioBuffer, mimeType, userId, workspaceId, originalFileName, chatId, transcriptId, executionId, s3Uri, s3ObjectKey, durationSeconds: providedDuration } = options;
+
+    // Either audioBuffer or s3Uri must be provided
+    if (!audioBuffer && !s3Uri) {
+      throw new YandexSttAsyncError("Необходимо предоставить либо audioBuffer, либо s3Uri", 400, "MISSING_AUDIO");
+    }
 
     console.info(`[yandex-stt-async] [START] Starting transcription pipeline`, {
-      fileSize: audioBuffer.length,
+      fileSize: audioBuffer?.length ?? 0,
       mimeType,
       userId,
       workspaceId,
       chatId,
       transcriptId,
+      usingPreuploadedFile: !!s3Uri,
     });
 
     const providerDetail = await speechProviderService.getActiveSttProviderOrThrow();
@@ -389,7 +417,11 @@ class YandexSttAsyncService {
       }
     }
 
-    const audioDurationSeconds = await probeAudioDurationSeconds(audioBuffer);
+    // Get audio duration: from provided value (for pre-uploaded files) or probe from buffer
+    let audioDurationSeconds: number | null = providedDuration ?? null;
+    if (!audioDurationSeconds && audioBuffer) {
+      audioDurationSeconds = await probeAudioDurationSeconds(audioBuffer);
+    }
     if (!audioDurationSeconds || audioDurationSeconds <= 0) {
       console.warn("[yandex-stt-async] audio duration probe returned empty result; will rely on fallback timing");
     } else {
@@ -445,26 +477,7 @@ class YandexSttAsyncService {
       );
     }
 
-    if (needsConversion(mimeType)) {
-      const conversionStartTime = Date.now();
-      try {
-        console.info(`[yandex-stt-async] [CONVERT-START] Converting ${mimeType} to OGG, elapsed: ${Date.now() - startTime}ms`);
-        audioBuffer = await convertAudioToOgg(audioBuffer, mimeType);
-        mimeType = "audio/ogg";
-        console.info(`[yandex-stt-async] [CONVERT-DONE] Conversion took ${Date.now() - conversionStartTime}ms, total elapsed: ${Date.now() - startTime}ms`);
-      } catch (conversionError) {
-        console.error("[yandex-stt-async] Conversion failed:", conversionError);
-        throw new YandexSttAsyncError(
-          "Не удалось конвертировать аудио формат. Попробуйте использовать другой браузер.",
-          400,
-          "CONVERSION_ERROR"
-        );
-      }
-    }
-
     const lang = options.lang ?? (config.languageCode as string) ?? "ru-RU";
-
-    console.info(`[yandex-stt-async] [UPLOAD-START] Uploading to S3: ${audioBuffer.length} bytes, lang=${lang}, elapsed: ${Date.now() - startTime}ms`);
 
     const s3Credentials: ObjectStorageCredentials = {
       accessKeyId: s3AccessKeyId,
@@ -472,25 +485,62 @@ class YandexSttAsyncService {
       bucketName: s3BucketName,
     };
 
-    let uploadResult;
-    const uploadStartTime = Date.now();
-    try {
-      uploadResult = await yandexObjectStorageService.uploadAudioFile(
-        audioBuffer,
-        mimeType,
-        s3Credentials,
-        originalFileName
-      );
-      console.info(`[yandex-stt-async] [UPLOAD-DONE] File uploaded to S3: ${uploadResult.uri}, took ${Date.now() - uploadStartTime}ms, total elapsed: ${Date.now() - startTime}ms`);
-    } catch (error) {
-      if (error instanceof ObjectStorageError) {
-        throw new YandexSttAsyncError(error.message, 500, error.code);
+    // Either use pre-uploaded file or upload now
+    let fileUri: string;
+    let fileObjectKey: string | undefined;
+
+    if (s3Uri) {
+      // Use pre-uploaded file
+      console.info(`[yandex-stt-async] [USING-PREUPLOADED] Using pre-uploaded file: ${s3Uri}, elapsed: ${Date.now() - startTime}ms`);
+      fileUri = s3Uri;
+      fileObjectKey = s3ObjectKey;
+    } else if (audioBuffer) {
+      // Need to convert and upload
+      let bufferToUpload = audioBuffer;
+      let mimeToUpload = mimeType;
+
+      if (needsConversion(mimeType)) {
+        const conversionStartTime = Date.now();
+        try {
+          console.info(`[yandex-stt-async] [CONVERT-START] Converting ${mimeType} to OGG, elapsed: ${Date.now() - startTime}ms`);
+          bufferToUpload = await convertAudioToOgg(audioBuffer, mimeType);
+          mimeToUpload = "audio/ogg";
+          console.info(`[yandex-stt-async] [CONVERT-DONE] Conversion took ${Date.now() - conversionStartTime}ms, total elapsed: ${Date.now() - startTime}ms`);
+        } catch (conversionError) {
+          console.error("[yandex-stt-async] Conversion failed:", conversionError);
+          throw new YandexSttAsyncError(
+            "Не удалось конвертировать аудио формат. Попробуйте использовать другой браузер.",
+            400,
+            "CONVERSION_ERROR"
+          );
+        }
       }
-      throw new YandexSttAsyncError(
-        `Ошибка загрузки файла в Object Storage: ${error instanceof Error ? error.message : String(error)}`,
-        500,
-        "UPLOAD_ERROR"
-      );
+
+      console.info(`[yandex-stt-async] [UPLOAD-START] Uploading to S3: ${bufferToUpload.length} bytes, lang=${lang}, elapsed: ${Date.now() - startTime}ms`);
+
+      const uploadStartTime = Date.now();
+      try {
+        const uploadResult = await yandexObjectStorageService.uploadAudioFile(
+          bufferToUpload,
+          mimeToUpload,
+          s3Credentials,
+          originalFileName
+        );
+        fileUri = uploadResult.uri;
+        fileObjectKey = uploadResult.objectKey;
+        console.info(`[yandex-stt-async] [UPLOAD-DONE] File uploaded to S3: ${uploadResult.uri}, took ${Date.now() - uploadStartTime}ms, total elapsed: ${Date.now() - startTime}ms`);
+      } catch (error) {
+        if (error instanceof ObjectStorageError) {
+          throw new YandexSttAsyncError(error.message, 500, error.code);
+        }
+        throw new YandexSttAsyncError(
+          `Ошибка загрузки файла в Object Storage: ${error instanceof Error ? error.message : String(error)}`,
+          500,
+          "UPLOAD_ERROR"
+        );
+      }
+    } else {
+      throw new YandexSttAsyncError("Нет аудио данных для транскрибации", 400, "NO_AUDIO_DATA");
     }
 
     try {
@@ -508,11 +558,11 @@ class YandexSttAsyncService {
           },
         },
         audio: {
-          uri: uploadResult.uri,
+          uri: fileUri,
         },
       };
 
-      console.info(`[yandex-stt-async] [API-START] Sending async STT request with URI: ${uploadResult.uri}, elapsed: ${Date.now() - startTime}ms`);
+      console.info(`[yandex-stt-async] [API-START] Sending async STT request with URI: ${fileUri}, elapsed: ${Date.now() - startTime}ms`);
 
       const apiStartTime = Date.now();
       const response = await fetch(YANDEX_ASYNC_STT_ENDPOINT, {
@@ -530,9 +580,11 @@ class YandexSttAsyncService {
         const errorText = await response.text();
         console.error(`[yandex-stt-async] API error: ${response.status} - ${errorText}`);
 
-        try {
-          await yandexObjectStorageService.deleteFile(uploadResult.objectKey, s3Credentials);
-        } catch {}
+        if (fileObjectKey) {
+          try {
+            await yandexObjectStorageService.deleteFile(fileObjectKey, s3Credentials);
+          } catch {}
+        }
 
         if (response.status === 401 || response.status === 403) {
           throw new YandexSttAsyncError(
@@ -560,9 +612,11 @@ class YandexSttAsyncService {
       console.info(`[yandex-stt-async] [API-DONE] Received operation ID, API call took ${Date.now() - apiStartTime}ms, total elapsed: ${Date.now() - startTime}ms`);
 
       if (!operationResponse.id) {
-        try {
-          await yandexObjectStorageService.deleteFile(uploadResult.objectKey, s3Credentials);
-        } catch {}
+        if (fileObjectKey) {
+          try {
+            await yandexObjectStorageService.deleteFile(fileObjectKey, s3Credentials);
+          } catch {}
+        }
         throw new YandexSttAsyncError("Не получен ID операции от Yandex", 500, "NO_OPERATION_ID");
       }
 
@@ -573,8 +627,8 @@ class YandexSttAsyncService {
         id: cacheId,
         userId,
         operationId,
-        objectKey: uploadResult.objectKey,
-        bucketName: uploadResult.bucketName,
+        objectKey: fileObjectKey,
+        bucketName: s3BucketName,
         createdAt: new Date(),
         status: "pending",
         workspaceId,
@@ -599,7 +653,7 @@ class YandexSttAsyncService {
       return {
         operationId,
         message: "Транскрибация началась. Пожалуйста, дождитесь завершения.",
-        uploadResult,
+        uploadResult: fileObjectKey ? { objectKey: fileObjectKey } : undefined,
         durationSeconds: audioDurationSeconds ?? null,
       };
     } catch (error) {
@@ -608,9 +662,11 @@ class YandexSttAsyncService {
       }
       console.error("[yandex-stt-async] Network error:", error);
 
-      try {
-        await yandexObjectStorageService.deleteFile(uploadResult.objectKey, s3Credentials);
-      } catch {}
+      if (fileObjectKey) {
+        try {
+          await yandexObjectStorageService.deleteFile(fileObjectKey, s3Credentials);
+        } catch {}
+      }
 
       throw new YandexSttAsyncError(
         `Ошибка сети при обращении к Yandex SpeechKit: ${error instanceof Error ? error.message : String(error)}`,
@@ -618,6 +674,102 @@ class YandexSttAsyncService {
         "NETWORK_ERROR"
       );
     }
+  }
+
+  /**
+   * Upload audio file to Yandex Object Storage without starting transcription.
+   * Call startAsyncTranscription with s3Uri to start transcription later.
+   */
+  async uploadAudioOnly(options: UploadAudioOnlyOptions): Promise<UploadAudioOnlyResponse> {
+    const startTime = Date.now();
+    let { audioBuffer, mimeType, userId, workspaceId, originalFileName, chatId } = options;
+
+    console.info(`[yandex-stt-async] [UPLOAD-ONLY-START] Starting upload-only pipeline`, {
+      fileSize: audioBuffer.length,
+      mimeType,
+      userId,
+      workspaceId,
+      chatId,
+    });
+
+    const providerDetail = await speechProviderService.getActiveSttProviderOrThrow();
+    const { provider, secrets } = providerDetail;
+
+    if (!secrets.s3AccessKeyId?.isSet || !secrets.s3SecretAccessKey?.isSet || !secrets.s3BucketName?.isSet) {
+      throw new YandexSttAsyncConfigError("S3 credentials не настроены для Yandex SpeechKit провайдера.");
+    }
+
+    const secretValues = await this.getSecretValues(provider.id);
+    const { s3AccessKeyId, s3SecretAccessKey, s3BucketName } = secretValues;
+
+    if (!s3AccessKeyId || !s3SecretAccessKey || !s3BucketName) {
+      throw new YandexSttAsyncConfigError("S3 credentials не найдены.");
+    }
+
+    // Get audio duration for later usage calculation
+    let durationSeconds: number | null = null;
+    try {
+      const metadata = await parseBuffer(audioBuffer, { mimeType });
+      if (metadata.format?.duration) {
+        durationSeconds = metadata.format.duration;
+      }
+    } catch (e) {
+      console.warn("[yandex-stt-async] Could not parse audio duration:", e);
+    }
+
+    // Convert to OGG if needed (required for Yandex STT async API)
+    let bufferToUpload = audioBuffer;
+    let mimeToUpload = mimeType;
+
+    if (needsConversion(mimeType)) {
+      const conversionStartTime = Date.now();
+      try {
+        console.info(`[yandex-stt-async] [UPLOAD-ONLY-CONVERT-START] Converting ${mimeType} to OGG`);
+        bufferToUpload = await convertAudioToOgg(audioBuffer, mimeType);
+        mimeToUpload = "audio/ogg";
+        console.info(`[yandex-stt-async] [UPLOAD-ONLY-CONVERT-DONE] Conversion took ${Date.now() - conversionStartTime}ms`);
+      } catch (conversionError) {
+        console.error("[yandex-stt-async] Conversion failed:", conversionError);
+        throw new YandexSttAsyncError(
+          "Не удалось конвертировать аудио формат. Попробуйте использовать другой браузер.",
+          400,
+          "CONVERSION_ERROR"
+        );
+      }
+    }
+
+    const s3Credentials: ObjectStorageCredentials = {
+      accessKeyId: s3AccessKeyId,
+      secretAccessKey: s3SecretAccessKey,
+      bucketName: s3BucketName,
+    };
+
+    let uploadResult;
+    try {
+      uploadResult = await yandexObjectStorageService.uploadAudioFile(
+        bufferToUpload,
+        mimeToUpload,
+        s3Credentials,
+        originalFileName
+      );
+      console.info(`[yandex-stt-async] [UPLOAD-ONLY-DONE] File uploaded to S3: ${uploadResult.uri}, took ${Date.now() - startTime}ms`);
+    } catch (error) {
+      if (error instanceof ObjectStorageError) {
+        throw new YandexSttAsyncError(error.message, 500, error.code);
+      }
+      throw new YandexSttAsyncError(
+        `Ошибка загрузки файла в Object Storage: ${error instanceof Error ? error.message : String(error)}`,
+        500,
+        "UPLOAD_ERROR"
+      );
+    }
+
+    return {
+      s3Uri: uploadResult.uri,
+      objectKey: uploadResult.objectKey,
+      bucketName: s3BucketName,
+      durationSeconds,
+    };
   }
 
   async getOperationStatus(userId: string, operationId: string): Promise<TranscribeOperationStatus> {

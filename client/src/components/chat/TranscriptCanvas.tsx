@@ -546,7 +546,7 @@ export function TranscriptCanvas({
               const { document } = await createCanvasDocument({
                 chatId,
                 transcriptId,
-                type: "custom",
+                type: "text",
                 title: "Новый документ",
                 content: "",
               });
