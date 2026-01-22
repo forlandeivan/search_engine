@@ -373,7 +373,7 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
                 <Textarea
                   value={createState.promptTemplate}
                   onChange={(e) => setCreateState((prev) => ({ ...prev, promptTemplate: e.target.value }))}
-                  rows={4}
+                  rows={40}
                   placeholder="Используйте {{text}} для подстановки входного текста"
                 />
               </div>
