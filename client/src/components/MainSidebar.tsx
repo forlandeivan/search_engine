@@ -107,7 +107,12 @@ export default function MainSidebar({ showAdminLink = false, user, workspace }: 
     };
   }, []);
 
-  const isItemActive = (item: SidebarItem) => location === item.url;
+  const isItemActive = (item: SidebarItem) => {
+    if (item.url === "/knowledge") {
+      return location.startsWith("/knowledge");
+    }
+    return location === item.url;
+  };
 
   const getTestId = (item: SidebarItem) =>
     `link-${item.title
