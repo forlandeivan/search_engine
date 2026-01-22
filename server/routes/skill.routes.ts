@@ -25,8 +25,8 @@ import {
 import { actionsRepository } from '../actions';
 import { skillActionsRepository } from '../skill-actions';
 import type { PublicUser } from '@shared/schema';
-import type { ActionPlacement } from '@shared/schema';
-import { createSkillSchema, updateSkillSchema } from '@shared/skills';
+import { createSkillSchema, updateSkillSchema, actionPlacements } from '@shared/skills';
+import type { ActionPlacement } from '@shared/skills';
 
 const logger = createLogger('skill');
 
@@ -86,8 +86,6 @@ function resolveWorkspaceIdForRequest(req: Request, explicitId: string | null | 
   }
   return getRequestWorkspace(req).id;
 }
-
-const actionPlacements: ActionPlacement[] = ['inline', 'context_menu', 'side_panel', 'transcript_menu', 'transcript_block'];
 
 // ============================================================================
 // Routes
