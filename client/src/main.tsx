@@ -1,5 +1,92 @@
 console.log("[main.tsx] Script started loading");
 
+// ===============================================
+// Глобальные обработчики ошибок загрузки чанков
+// (должны быть установлены до любых импортов)
+// ===============================================
+
+const CHUNK_RELOAD_KEY = "chunk-reload-attempt";
+const CHUNK_RELOAD_TIMEOUT = 10000; // 10 секунд между попытками
+
+/**
+ * Проверяет, является ли ошибка ошибкой загрузки чанка
+ */
+function isChunkLoadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("Failed to fetch dynamically imported module") ||
+    message.includes("Loading chunk") ||
+    message.includes("Loading CSS chunk") ||
+    message.includes("Importing a module script failed") ||
+    message.includes("error loading dynamically imported module") ||
+    message.includes("Unable to preload CSS")
+  );
+}
+
+/**
+ * Проверяет, можно ли выполнить автоматическую перезагрузку
+ */
+function canAutoReload(): boolean {
+  try {
+    const lastReload = sessionStorage.getItem(CHUNK_RELOAD_KEY);
+    if (!lastReload) return true;
+    return Date.now() - parseInt(lastReload, 10) > CHUNK_RELOAD_TIMEOUT;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Выполняет автоматическую перезагрузку страницы
+ */
+function performAutoReload(): void {
+  try {
+    sessionStorage.setItem(CHUNK_RELOAD_KEY, Date.now().toString());
+  } catch {
+    // sessionStorage может быть недоступен
+  }
+  window.location.reload();
+}
+
+// Обработчик ошибок скриптов (например, при загрузке через <script> или preload)
+window.onerror = function (message, source, lineno, colno, error) {
+  console.error("[main.tsx] Global error:", { message, source, lineno, colno, error });
+  
+  const messageStr = typeof message === "string" ? message : String(message);
+  
+  if (isChunkLoadError(error) || isChunkLoadError(messageStr)) {
+    console.warn("[main.tsx] Chunk load error detected via window.onerror");
+    if (canAutoReload()) {
+      console.info("[main.tsx] Performing auto-reload...");
+      performAutoReload();
+      return true; // Предотвращаем дальнейшую обработку
+    }
+  }
+  
+  return false;
+};
+
+// Обработчик необработанных promise rejection (включая ошибки dynamic import)
+window.onunhandledrejection = function (event) {
+  const error = event.reason;
+  console.error("[main.tsx] Unhandled rejection:", error);
+  
+  if (isChunkLoadError(error)) {
+    console.warn("[main.tsx] Chunk load error detected via unhandledrejection");
+    if (canAutoReload()) {
+      console.info("[main.tsx] Performing auto-reload...");
+      event.preventDefault(); // Предотвращаем вывод в консоль
+      performAutoReload();
+    }
+  }
+};
+
+console.log("[main.tsx] Global error handlers installed");
+
+// ===============================================
+// Основные импорты приложения
+// ===============================================
+
 import { createRoot } from "react-dom/client";
 console.log("[main.tsx] react-dom/client loaded, createRoot:", typeof createRoot);
 

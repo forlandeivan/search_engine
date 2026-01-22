@@ -101,9 +101,11 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 function needsConversion(mimeType: string): boolean {
-  const baseMimeType = mimeType.split(";")[0].trim().toLowerCase();
-  // Конвертируем всё, что не OGG/OPUS, в OGG для совместимости с async STT.
-  return baseMimeType !== "audio/ogg" && baseMimeType !== "audio/opus";
+  // Always convert all audio to OGG OPUS via ffmpeg to ensure compatibility.
+  // Even OGG files from different sources (e.g., Telegram) may have incompatible
+  // headers or codecs that Yandex STT doesn't accept.
+  // FFmpeg normalizes the format to a compatible OGG OPUS stream.
+  return true;
 }
 
 async function findAsrModelForProvider(providerId: string): Promise<{ id: string; key: string; creditsPerUnit: number } | null> {

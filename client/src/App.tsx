@@ -3,8 +3,11 @@ console.log("[App.tsx] Starting imports...");
 import { Switch, Route, useLocation } from "wouter";
 console.log("[App.tsx] wouter loaded");
 
-import { useEffect, Suspense, lazy, useState, Component, type ReactNode, type ErrorInfo } from "react";
+import { useEffect, Suspense, useState, Component, type ReactNode, type ErrorInfo } from "react";
 console.log("[App.tsx] react loaded");
+
+import { lazyWithRetry, isChunkLoadError, canAutoReload, performAutoReload } from "@/lib/lazy-with-retry";
+console.log("[App.tsx] lazy-with-retry loaded");
 
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 console.log("[App.tsx] react-query loaded");
@@ -65,6 +68,12 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     console.error("ErrorBoundary caught error:", error, errorInfo);
     this.props.onError?.(error, errorInfo);
+    
+    // Если это ошибка загрузки чанка и можно выполнить автоперезагрузку
+    if (isChunkLoadError(error) && canAutoReload()) {
+      console.info("[ErrorBoundary] Chunk load error detected, performing auto-reload...");
+      performAutoReload();
+    }
   }
 
   render() {
@@ -72,11 +81,16 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
       if (this.props.fallback) {
         return this.props.fallback;
       }
+      
+      const isChunkError = isChunkLoadError(this.state.error);
+      
       return (
         <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6">
           <h1 className="text-xl font-semibold text-destructive">Произошла ошибка</h1>
           <p className="text-muted-foreground text-center max-w-md">
-            {this.state.error?.message || "Неизвестная ошибка приложения"}
+            {isChunkError
+              ? "Не удалось загрузить модуль. Возможно, приложение было обновлено."
+              : (this.state.error?.message || "Неизвестная ошибка приложения")}
           </p>
           <Button
             onClick={() => {
@@ -101,39 +115,39 @@ import VerifyEmailPage from "@/pages/VerifyEmailPage";
 import NotFound from "@/pages/not-found";
 import ProfilePage from "@/pages/ProfilePage";
 
-// Lazy loaded pages - Admin routes
-const ApiDocsPage = lazy(() => import("@/pages/ApiDocsPage"));
-const VectorCollectionsPage = lazy(() => import("@/pages/VectorCollectionsPage"));
-const VectorCollectionDetailPage = lazy(() => import("@/pages/VectorCollectionDetailPage"));
-const VectorStorageSettingsPage = lazy(() => import("@/pages/VectorStorageSettingsPage"));
-const EmbeddingServicesPage = lazy(() => import("@/pages/EmbeddingServicesPage"));
-const LlmProvidersPage = lazy(() => import("@/pages/LlmProvidersPage"));
-const LlmExecutionsPage = lazy(() => import("@/pages/LlmExecutionsPage"));
-const AsrExecutionsPage = lazy(() => import("@/pages/AsrExecutionsPage"));
-const TtsSttProvidersPage = lazy(() => import("@/pages/TtsSttProvidersPage"));
-const SpeechProviderDetailsPage = lazy(() => import("@/pages/SpeechProviderDetailsPage"));
-const AuthSettingsPage = lazy(() => import("@/pages/AuthSettingsPage"));
-const AdminBillingPage = lazy(() => import("@/pages/AdminBillingPage"));
-const AdminUsersPage = lazy(() => import("@/pages/AdminUsersPage"));
-const AdminWorkspacesPage = lazy(() => import("@/pages/AdminWorkspacesPage"));
-const AdminModelsPage = lazy(() => import("@/pages/AdminModelsPage"));
-const AdminUsageChargesPage = lazy(() => import("@/pages/AdminUsageChargesPage"));
-const GuardBlockEventsPage = lazy(() => import("@/pages/GuardBlockEventsPage"));
-const FileStorageProvidersPage = lazy(() => import("@/pages/FileStorageProvidersPage"));
-const FileStorageProviderDetailsPage = lazy(() => import("@/pages/FileStorageProviderDetailsPage"));
-const SmtpSettingsPage = lazy(() => import("@/pages/SmtpSettingsPage"));
-const AdminIndexingRulesPage = lazy(() => import("@/pages/AdminIndexingRulesPage"));
+// Lazy loaded pages - Admin routes (с автоперезагрузкой при ошибке загрузки чанков)
+const ApiDocsPage = lazyWithRetry(() => import("@/pages/ApiDocsPage"));
+const VectorCollectionsPage = lazyWithRetry(() => import("@/pages/VectorCollectionsPage"));
+const VectorCollectionDetailPage = lazyWithRetry(() => import("@/pages/VectorCollectionDetailPage"));
+const VectorStorageSettingsPage = lazyWithRetry(() => import("@/pages/VectorStorageSettingsPage"));
+const EmbeddingServicesPage = lazyWithRetry(() => import("@/pages/EmbeddingServicesPage"));
+const LlmProvidersPage = lazyWithRetry(() => import("@/pages/LlmProvidersPage"));
+const LlmExecutionsPage = lazyWithRetry(() => import("@/pages/LlmExecutionsPage"));
+const AsrExecutionsPage = lazyWithRetry(() => import("@/pages/AsrExecutionsPage"));
+const TtsSttProvidersPage = lazyWithRetry(() => import("@/pages/TtsSttProvidersPage"));
+const SpeechProviderDetailsPage = lazyWithRetry(() => import("@/pages/SpeechProviderDetailsPage"));
+const AuthSettingsPage = lazyWithRetry(() => import("@/pages/AuthSettingsPage"));
+const AdminBillingPage = lazyWithRetry(() => import("@/pages/AdminBillingPage"));
+const AdminUsersPage = lazyWithRetry(() => import("@/pages/AdminUsersPage"));
+const AdminWorkspacesPage = lazyWithRetry(() => import("@/pages/AdminWorkspacesPage"));
+const AdminModelsPage = lazyWithRetry(() => import("@/pages/AdminModelsPage"));
+const AdminUsageChargesPage = lazyWithRetry(() => import("@/pages/AdminUsageChargesPage"));
+const GuardBlockEventsPage = lazyWithRetry(() => import("@/pages/GuardBlockEventsPage"));
+const FileStorageProvidersPage = lazyWithRetry(() => import("@/pages/FileStorageProvidersPage"));
+const FileStorageProviderDetailsPage = lazyWithRetry(() => import("@/pages/FileStorageProviderDetailsPage"));
+const SmtpSettingsPage = lazyWithRetry(() => import("@/pages/SmtpSettingsPage"));
+const AdminIndexingRulesPage = lazyWithRetry(() => import("@/pages/AdminIndexingRulesPage"));
 
-// Lazy loaded pages - Main routes
-const KnowledgeBasePage = lazy(() => import("@/pages/KnowledgeBasePage"));
-const SkillsPage = lazy(() => import("@/pages/SkillsPage"));
-const ChatPage = lazy(() => import("@/pages/ChatPage"));
-const WorkspaceActionsPage = lazy(() => import("@/pages/WorkspaceActionsPage"));
-const WorkspaceSettingsPage = lazy(() => import("@/pages/WorkspaceSettingsPage"));
-const WorkspaceCreditsHistoryPage = lazy(() => import("@/pages/WorkspaceCreditsHistoryPage"));
-const SkillSettingsPage = lazy(() => import("@/pages/SkillSettingsPage"));
-const ActionSettingsPage = lazy(() => import("@/pages/ActionSettingsPage"));
-const KnowledgeBaseIndexingHistoryPage = lazy(() => import("@/pages/KnowledgeBaseIndexingHistoryPage"));
+// Lazy loaded pages - Main routes (с автоперезагрузкой при ошибке загрузки чанков)
+const KnowledgeBasePage = lazyWithRetry(() => import("@/pages/KnowledgeBasePage"));
+const SkillsPage = lazyWithRetry(() => import("@/pages/SkillsPage"));
+const ChatPage = lazyWithRetry(() => import("@/pages/ChatPage"));
+const WorkspaceActionsPage = lazyWithRetry(() => import("@/pages/WorkspaceActionsPage"));
+const WorkspaceSettingsPage = lazyWithRetry(() => import("@/pages/WorkspaceSettingsPage"));
+const WorkspaceCreditsHistoryPage = lazyWithRetry(() => import("@/pages/WorkspaceCreditsHistoryPage"));
+const SkillSettingsPage = lazyWithRetry(() => import("@/pages/SkillSettingsPage"));
+const ActionSettingsPage = lazyWithRetry(() => import("@/pages/ActionSettingsPage"));
+const KnowledgeBaseIndexingHistoryPage = lazyWithRetry(() => import("@/pages/KnowledgeBaseIndexingHistoryPage"));
 
 function AdminRouter() {
   return (
