@@ -168,7 +168,16 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
         throw new Error(msg);
       }
       await actionsQuery.refetch();
-      queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
+      // Инвалидируем все запросы действий для всех навыков, так как действие может использоваться в разных навыках
+      queryClient.invalidateQueries({ 
+        predicate: (query) => {
+          const key = query.queryKey;
+          return Array.isArray(key) && 
+                 key.length >= 2 && 
+                 key[0] === "/api/skills" && 
+                 key[2] === "actions";
+        }
+      });
       toast({ title: createState.editingActionId ? "Действие обновлено" : "Действие создано" });
       resetCreateState();
     } catch (error) {

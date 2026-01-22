@@ -33,6 +33,9 @@ export function useSkillActions(workspaceId: string, skillId: string) {
       return data.items as SkillActionItem[];
     },
     enabled: Boolean(workspaceId && skillId),
+    // Не кешируем действия долго, чтобы изменения промптов применялись сразу
+    staleTime: 0, // Данные считаются устаревшими сразу
+    refetchOnMount: true, // Всегда обновляем при монтировании
   });
 }
 
