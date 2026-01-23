@@ -2,7 +2,9 @@ import { lazy, type ComponentType } from "react";
 
 // Ключ для предотвращения бесконечных перезагрузок
 const RELOAD_KEY = "chunk-reload-attempt";
-const RELOAD_TIMEOUT = 10000; // 10 секунд между попытками
+const RELOAD_COUNT_KEY = "chunk-reload-count";
+const RELOAD_TIMEOUT = 5000; // 5 секунд между попытками
+const MAX_RELOAD_ATTEMPTS = 2; // Максимум 2 автоматические попытки перезагрузки
 
 /**
  * Проверяет, является ли ошибка ошибкой загрузки чанка (dynamic import)

@@ -85,22 +85,47 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
       const isChunkError = isChunkLoadError(this.state.error);
       
       return (
-        <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6">
-          <h1 className="text-xl font-semibold text-destructive">Произошла ошибка</h1>
-          <p className="text-muted-foreground text-center max-w-md">
-            {isChunkError
-              ? "Не удалось загрузить модуль. Возможно, приложение было обновлено."
-              : (this.state.error?.message || "Неизвестная ошибка приложения")}
-          </p>
-          <Button
-            onClick={() => {
-              // Очищаем кэш React Query и перезагружаем
-              queryClient.clear();
-              window.location.reload();
-            }}
-          >
-            Перезагрузить
-          </Button>
+        <div className="min-h-screen flex flex-col items-center justify-center gap-6 p-6 bg-background">
+          <div className="flex flex-col items-center gap-4 max-w-md text-center">
+            <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center">
+              <svg
+                className="w-8 h-8 text-destructive"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                />
+              </svg>
+            </div>
+            
+            <h1 className="text-2xl font-semibold text-foreground">
+              {isChunkError ? "Требуется обновление" : "Произошла ошибка"}
+            </h1>
+            
+            <p className="text-muted-foreground">
+              {isChunkError
+                ? "Приложение было обновлено. Пожалуйста, перезагрузите страницу, чтобы применить изменения."
+                : (this.state.error?.message || "Неизвестная ошибка приложения. Пожалуйста, попробуйте перезагрузить страницу.")}
+            </p>
+            
+            <Button
+              size="lg"
+              onClick={() => {
+                // Очищаем кэш React Query и перезагружаем
+                queryClient.clear();
+                sessionStorage.removeItem("chunk-reload-attempt"); // Сбрасываем счетчик перезагрузок
+                window.location.reload();
+              }}
+              className="mt-2"
+            >
+              Перезагрузить страницу
+            </Button>
+          </div>
         </div>
       );
     }

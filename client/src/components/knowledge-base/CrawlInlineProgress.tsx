@@ -212,17 +212,18 @@ export function CrawlInlineProgress({
 
   // Инициализация начального состояния джобы при создании базы
   useEffect(() => {
-    if (initialJob && !job && !previousJobRef.current) {
+    if (initialJob && initialJob.baseId === baseId && !job && !previousJobRef.current) {
       // Если джоба уже завершена, сохраняем её как lastRun
       if (TERMINAL_STATUSES.includes(initialJob.status)) {
         setLastRun(initialJob);
         previousJobRef.current = initialJob;
         onStateChangeRef.current?.({ running: false, job: null, lastRun: initialJob });
       } else {
+        // Для активной джобы инициализируем состояние и начинаем отслеживание
         handleJobUpdate(initialJob);
       }
     }
-  }, [initialJob, job, handleJobUpdate]);
+  }, [initialJob, baseId, job, handleJobUpdate]);
 
   useEffect(() => {
     if (!baseId) {
@@ -242,8 +243,11 @@ export function CrawlInlineProgress({
       return;
     }
 
-    // Сбрасываем lastRun при смене baseId, чтобы не показывать старую джобу
-    setLastRun(null);
+    // Сбрасываем lastRun при смене baseId, только если нет initialJob для этого baseId
+    // Это нужно, чтобы не сбрасывать lastRun, если initialJob еще не обработан
+    if (!initialJob || initialJob.baseId !== baseId) {
+      setLastRun(null);
+    }
 
     let cancelled = false;
 

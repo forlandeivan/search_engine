@@ -145,6 +145,7 @@ import type { SessionResponse } from "@/types/session";
 import type { UseKnowledgeBaseAskAiOptions } from "@/hooks/useKnowledgeBaseAskAi";
 import {
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   Database,
   Ellipsis,
@@ -603,6 +604,23 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => bases.find((base) => base.id === knowledgeBaseId) ?? null,
     [bases, knowledgeBaseId],
   );
+
+  // Функции для навигации между базами знаний
+  const navigateToNextBase = useCallback(() => {
+    if (bases.length === 0 || !selectedBase) return;
+    const currentIndex = bases.findIndex((base) => base.id === selectedBase.id);
+    if (currentIndex === -1) return;
+    const nextIndex = (currentIndex + 1) % bases.length;
+    setLocation(`/knowledge/${bases[nextIndex].id}`);
+  }, [bases, selectedBase, setLocation]);
+
+  const navigateToPreviousBase = useCallback(() => {
+    if (bases.length === 0 || !selectedBase) return;
+    const currentIndex = bases.findIndex((base) => base.id === selectedBase.id);
+    if (currentIndex === -1) return;
+    const prevIndex = currentIndex === 0 ? bases.length - 1 : currentIndex - 1;
+    setLocation(`/knowledge/${bases[prevIndex].id}`);
+  }, [bases, selectedBase, setLocation]);
   const startIndexingMutation = useStartKnowledgeBaseIndexing();
   const resetIndexingMutation = useResetKnowledgeBaseIndexing();
   const indexingSummaryQuery = useKnowledgeBaseIndexingSummary(
