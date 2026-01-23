@@ -14,6 +14,7 @@ import {
   ResourcesSummaryCards, 
   RecentChatsSection,
   QuickActionsGrid,
+  CreditsWidget,
 } from "@/components/dashboard";
 import {
   CreateKnowledgeBaseDialog,
@@ -24,43 +25,6 @@ import type { KnowledgeBaseSourceType } from "@/lib/knowledge-base";
 // =============================================================================
 // Placeholder Components (будут вынесены в отдельные файлы в следующих стори)
 // =============================================================================
-
-function CreditsWidgetPlaceholder({ isLoading }: { isLoading?: boolean }) {
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader>
-          <Skeleton className="h-6 w-40" />
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Skeleton className="h-10 w-32" />
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-48" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div>
-          <CardTitle className="text-lg">Баланс кредитов</CardTitle>
-          <CardDescription>Месячное потребление</CardDescription>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-baseline gap-2">
-          <span className="text-3xl font-bold text-muted-foreground">—</span>
-          <span className="text-sm text-muted-foreground">кредитов</span>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Данные о кредитах будут доступны в следующем обновлении
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
 
 function SystemStatusPanelPlaceholder({ isLoading }: { isLoading?: boolean }) {
   if (isLoading) {
@@ -170,7 +134,7 @@ export default function DashboardPage() {
 
       {/* Виджет кредитов - только для admin/manager */}
       {isAdminOrManager && (
-        <CreditsWidgetPlaceholder isLoading={isSessionLoading} />
+        <CreditsWidget workspaceId={workspaceId} />
       )}
 
       {/* Секция недавних чатов */}
