@@ -47,7 +47,8 @@ export function SkillActionsPreview({
   skillId, 
   canEdit = true, 
   onChange,
-  pendingChanges = []
+  pendingChanges = [],
+  autoActionId = null
 }: SkillActionsPreviewProps) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -569,15 +570,37 @@ export function SkillActionsPreview({
                   <span className="text-sm text-muted-foreground">{targetLabels[action.target] ?? action.target}</span>
                 </TableCell>
                 <TableCell>
-                  <Checkbox
-                    checked={row.enabled}
-                    disabled={!ui.editable}
-                    aria-label="enabled"
-                    onCheckedChange={(checked) => {
-                      if (!ui.editable) return;
-                      handleChange(row, { enabled: Boolean(checked) });
-                    }}
-                  />
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="inline-block">
+                          <Checkbox
+                            checked={row.enabled}
+                            disabled={!ui.editable || (autoActionId === row.action.id && row.enabled)}
+                            aria-label="enabled"
+                            onCheckedChange={(checked) => {
+                              if (!ui.editable) return;
+                              // Не позволяем отключить действие, если оно выбрано как автодействие
+                              if (autoActionId === row.action.id && !checked) {
+                                toast({
+                                  title: "Невозможно отключить",
+                                  description: "Это действие используется как автодействие для транскрипции. Сначала выберите другое действие или отключите автодействие на вкладке «Транскрипция».",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
+                              handleChange(row, { enabled: Boolean(checked) });
+                            }}
+                          />
+                        </div>
+                      </TooltipTrigger>
+                      {autoActionId === row.action.id && row.enabled && (
+                        <TooltipContent side="bottom" className="max-w-xs text-xs">
+                          Это действие используется как автодействие для транскрипции. Чтобы отключить, сначала выберите другое действие на вкладке «Транскрипция».
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
                 </TableCell>
                 <TableCell className="text-center">
                   {renderPlacementCell(row, "canvas")}

@@ -688,6 +688,21 @@ export function SkillFormContent({
         // Сохраняем изменения действий если они есть
         if (skillActionsChanges.length > 0 && skill?.id) {
           try {
+            const autoActionId = form.getValues("onTranscriptionAutoActionId") || skill?.onTranscriptionAutoActionId || null;
+            
+            // Проверяем, не пытаются ли отключить автодействие
+            if (autoActionId) {
+              const autoActionChange = skillActionsChanges.find(c => c.actionId === autoActionId);
+              if (autoActionChange && !autoActionChange.enabled) {
+                toast({
+                  title: "Невозможно отключить автодействие",
+                  description: "Это действие используется как автодействие для транскрипции. Сначала выберите другое действие или отключите автодействие на вкладке «Транскрипция».",
+                  variant: "destructive",
+                });
+                throw new Error("Нельзя отключить действие, используемое как автодействие");
+              }
+            }
+            
             for (const change of skillActionsChanges) {
               const response = await apiRequest("PUT", `/api/skills/${skill.id}/actions/${change.actionId}`, {
                 enabled: change.enabled,
@@ -1917,6 +1932,7 @@ export function SkillFormContent({
                           skillId={skill.id} 
                           onChange={setSkillActionsChanges}
                           pendingChanges={skillActionsChanges}
+                          autoActionId={form.watch("onTranscriptionAutoActionId") || skill?.onTranscriptionAutoActionId || null}
                         />
                       ) : (
                         <ActionsPreviewForNewSkill />
