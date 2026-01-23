@@ -476,8 +476,9 @@ export function CreateKnowledgeBaseDialog({
           allowedDomains: crawlConfig.allowedDomains || undefined,
           include: crawlConfig.include || undefined,
           exclude: crawlConfig.exclude || undefined,
-          maxPages: crawlConfig.maxPages || undefined,
-          maxDepth: crawlConfig.maxDepth || undefined,
+          // Для режима "single" ограничиваем краулинг одной страницей
+          maxPages: crawlMode === "single" ? 1 : (crawlConfig.maxPages || undefined),
+          maxDepth: crawlMode === "single" ? 0 : (crawlConfig.maxDepth || undefined),
           rateLimitRps: crawlConfig.rateLimitRps || undefined,
           robotsTxt: crawlConfig.robotsTxt ?? true,
           selectors: crawlConfig.selectors
