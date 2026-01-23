@@ -746,7 +746,8 @@ export function CreateKnowledgeBaseDialog({
             </Alert>
           )}
 
-          {error && !isJsonImport && <p className="text-sm text-destructive">{error}</p>}
+          {/* Ошибка для краулинга выводится в CrawlImportPanel, чтобы избежать дублирования */}
+          {error && !isJsonImport && mode !== "crawler" && <p className="text-sm text-destructive">{error}</p>}
         </div>
 
         <DialogFooter className="sticky bottom-0 z-10 shrink-0 border-t bg-muted/50 px-6 py-4">
