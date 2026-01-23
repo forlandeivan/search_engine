@@ -29,7 +29,7 @@ import { ImportModeSelector, FileImportPanel, CrawlImportPanel, BaseNameForm } f
 import { StructurePreview } from "./json-import/StructurePreview";
 import { DocumentFieldMappingEditor } from "./json-import/DocumentFieldMappingEditor";
 import { HierarchyConfigEditor } from "./json-import/HierarchyConfig";
-import type { CrawlConfig } from "./import/types";
+import type { CrawlConfig, CrawlMode } from "./import/types";
 
 type CreationOption = {
   value: KnowledgeBaseSourceType;
@@ -107,6 +107,8 @@ export function CreateKnowledgeBaseDialog({
   const [jsonIsAnalyzing, setJsonIsAnalyzing] = useState(false);
   const [jsonIsSubmitting, setJsonIsSubmitting] = useState(false);
   const [jsonError, setJsonError] = useState<string | null>(null);
+  const [crawlMode, setCrawlMode] = useState<CrawlMode>("multiple");
+  const [crawlSingleUrl, setCrawlSingleUrl] = useState("");
   const [crawlConfig, setCrawlConfig] = useState<CrawlConfig>({
     startUrls: [],
     robotsTxt: true,
@@ -142,6 +144,8 @@ export function CreateKnowledgeBaseDialog({
       startUrls: [],
       robotsTxt: true,
     });
+    setCrawlMode("multiple");
+    setCrawlSingleUrl("");
     setArchiveFile(null);
     setArchiveFiles([]);
     setError(null);
@@ -182,6 +186,8 @@ export function CreateKnowledgeBaseDialog({
         startUrls: [],
         robotsTxt: true,
       });
+      setCrawlMode("multiple");
+      setCrawlSingleUrl("");
     }
   };
 
@@ -439,15 +445,33 @@ export function CreateKnowledgeBaseDialog({
     try {
       let crawlerConfig: CreateKnowledgeBaseInput["crawlerConfig"] | undefined;
       if (mode === "crawler") {
-        // CrawlImportPanel управляет конфигурацией через config prop
-        // Здесь просто используем то, что уже есть в state
-        if (!crawlConfig.startUrls || crawlConfig.startUrls.length === 0) {
+        const trimmedUrl = crawlSingleUrl.trim();
+        const startUrls =
+          crawlMode === "single" ? (trimmedUrl ? [trimmedUrl] : []) : crawlConfig.startUrls;
+
+        if (crawlMode === "single") {
+          if (!trimmedUrl) {
+            setError("Укажите ссылку на страницу для краулинга");
+            return;
+          }
+          try {
+            const parsed = new URL(trimmedUrl);
+            if (!parsed.protocol.startsWith("http")) {
+              throw new Error("Invalid protocol");
+            }
+          } catch {
+            setError("Укажите корректный URL страницы");
+            return;
+          }
+        }
+
+        if (!startUrls || startUrls.length === 0) {
           setError("Укажите хотя бы один стартовый URL для краулинга");
           return;
         }
 
         crawlerConfig = {
-          startUrls: crawlConfig.startUrls,
+          startUrls,
           sitemapUrl: crawlConfig.sitemapUrl || undefined,
           allowedDomains: crawlConfig.allowedDomains || undefined,
           include: crawlConfig.include || undefined,
@@ -561,9 +585,10 @@ export function CreateKnowledgeBaseDialog({
 
           {mode === "crawler" && (
             <CrawlImportPanel
-              mode="multiple"
-              singleUrl=""
-              onSingleUrlChange={() => {}}
+              mode={crawlMode}
+              onModeChange={setCrawlMode}
+              singleUrl={crawlSingleUrl}
+              onSingleUrlChange={setCrawlSingleUrl}
               config={crawlConfig}
               onConfigChange={setCrawlConfig}
               isSubmitting={isSubmittingImport}
