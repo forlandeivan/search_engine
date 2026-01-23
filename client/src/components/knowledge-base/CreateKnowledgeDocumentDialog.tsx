@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -1114,51 +1115,33 @@ export function CreateKnowledgeDocumentDialog({
                 {/* Toggle режима импорта */}
                 <div className="grid grid-cols-[12rem_1fr] items-center gap-3">
                   <Label className="pt-2">Режим импорта</Label>
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant={fileImportMode === "single" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => {
-                        setFileImportMode("single");
+                  <Tabs
+                    value={fileImportMode}
+                    onValueChange={(value) => {
+                      const nextMode = value as FileImportMode;
+                      setFileImportMode(nextMode);
+                      setBulkImportResult(null);
+                      if (nextMode === "single") {
                         setImportFiles([]);
-                        setBulkImportResult(null);
-                      }}
-                      disabled={isSubmitting || isBulkImporting}
-                    >
-                      Один файл
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={fileImportMode === "multiple" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => {
-                        setFileImportMode("multiple");
+                      } else {
                         setImportFile(null);
                         setImportHtml("");
                         setImportDetectedTitle(null);
-                        setBulkImportResult(null);
-                      }}
-                      disabled={isSubmitting || isBulkImporting}
-                    >
-                      Несколько файлов
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={fileImportMode === "archive" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => {
-                        setFileImportMode("archive");
-                        setImportFile(null);
-                        setImportHtml("");
-                        setImportDetectedTitle(null);
-                        setBulkImportResult(null);
-                      }}
-                      disabled={isSubmitting || isBulkImporting}
-                    >
-                      ZIP-архив
-                    </Button>
-                  </div>
+                      }
+                    }}
+                  >
+                    <TabsList className="grid w-full max-w-md grid-cols-3">
+                      <TabsTrigger value="single" disabled={isSubmitting || isBulkImporting}>
+                        Один файл
+                      </TabsTrigger>
+                      <TabsTrigger value="multiple" disabled={isSubmitting || isBulkImporting}>
+                        Несколько файлов
+                      </TabsTrigger>
+                      <TabsTrigger value="archive" disabled={isSubmitting || isBulkImporting}>
+                        ZIP-архив
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
                 </div>
                 
                 {fileImportMode === "single" ? (
