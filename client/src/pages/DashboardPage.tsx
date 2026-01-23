@@ -1,61 +1,22 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { 
-  AlertCircle, 
-  Loader2,
-} from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { 
   DashboardHeader, 
   ResourcesSummaryCards, 
   RecentChatsSection,
   QuickActionsGrid,
   CreditsWidget,
+  SystemStatusPanel,
 } from "@/components/dashboard";
 import {
   CreateKnowledgeBaseDialog,
 } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
 import type { SessionResponse } from "@/types/session";
 import type { KnowledgeBaseSourceType } from "@/lib/knowledge-base";
-
-// =============================================================================
-// Placeholder Components (будут вынесены в отдельные файлы в следующих стори)
-// =============================================================================
-
-function SystemStatusPanelPlaceholder({ isLoading }: { isLoading?: boolean }) {
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader>
-          <Skeleton className="h-6 w-32" />
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="h-5 w-64" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg flex items-center gap-2">
-          <Loader2 className="h-5 w-5" />
-          Статус систем
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground">
-          Мониторинг систем будет доступен в следующем обновлении
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
 
 // =============================================================================
 // Main Component
@@ -148,7 +109,7 @@ export default function DashboardPage() {
 
       {/* Панель статуса систем - только для admin/manager */}
       {isAdminOrManager && (
-        <SystemStatusPanelPlaceholder isLoading={isSessionLoading} />
+        <SystemStatusPanel workspaceId={workspaceId} />
       )}
 
       {/* Диалог создания базы знаний */}
