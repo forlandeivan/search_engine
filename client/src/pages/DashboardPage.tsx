@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,32 +7,19 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { 
   AlertCircle, 
-  MessageSquarePlus, 
-  Sparkles, 
-  Brain, 
-  Zap,
-  MessageSquare,
-  Users,
   Loader2,
 } from "lucide-react";
-import { DashboardHeader, ResourcesSummaryCards, RecentChatsSection } from "@/components/dashboard";
+import { 
+  DashboardHeader, 
+  ResourcesSummaryCards, 
+  RecentChatsSection,
+  QuickActionsGrid,
+} from "@/components/dashboard";
 import {
   CreateKnowledgeBaseDialog,
 } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
 import type { SessionResponse } from "@/types/session";
 import type { KnowledgeBaseSourceType } from "@/lib/knowledge-base";
-
-// =============================================================================
-// Types
-// =============================================================================
-
-type QuickAction = {
-  id: string;
-  title: string;
-  description: string;
-  icon: React.ElementType;
-  onClick: () => void;
-};
 
 // =============================================================================
 // Placeholder Components (будут вынесены в отдельные файлы в следующих стори)
@@ -72,77 +59,6 @@ function CreditsWidgetPlaceholder({ isLoading }: { isLoading?: boolean }) {
         </p>
       </CardContent>
     </Card>
-  );
-}
-
-function QuickActionsGridComponent({ 
-  workspaceId, 
-  onCreateKnowledgeBase 
-}: { 
-  workspaceId: string | null;
-  onCreateKnowledgeBase: () => void;
-}) {
-  const [, navigate] = useLocation();
-
-  const actions: QuickAction[] = useMemo(() => [
-    {
-      id: "new-chat",
-      title: "Новый чат",
-      description: "Начать диалог",
-      icon: MessageSquarePlus,
-      onClick: () => workspaceId && navigate(`/workspaces/${workspaceId}/chat`),
-    },
-    {
-      id: "create-skill",
-      title: "Создать навык",
-      description: "AI-агент",
-      icon: Sparkles,
-      onClick: () => workspaceId && navigate(`/workspaces/${workspaceId}/skills`),
-    },
-    {
-      id: "create-kb",
-      title: "База знаний",
-      description: "Добавить документы",
-      icon: Brain,
-      onClick: onCreateKnowledgeBase,
-    },
-    {
-      id: "create-action",
-      title: "Действие",
-      description: "Автоматизация",
-      icon: Zap,
-      onClick: () => workspaceId && navigate(`/workspaces/${workspaceId}/actions`),
-    },
-  ], [workspaceId, navigate, onCreateKnowledgeBase]);
-
-  return (
-    <section className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        Быстрые действия
-      </h2>
-      <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
-        {actions.map((action) => (
-          <Card
-            key={action.id}
-            className="cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all"
-            onClick={action.onClick}
-            tabIndex={0}
-            role="button"
-            onKeyDown={(e) => e.key === "Enter" && action.onClick()}
-          >
-            <CardContent className="flex flex-col items-center gap-2 p-4 text-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                <action.icon className="h-5 w-5 text-primary" />
-              </div>
-              <div>
-                <p className="font-medium text-sm">{action.title}</p>
-                <p className="text-xs text-muted-foreground">{action.description}</p>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    </section>
   );
 }
 
@@ -261,7 +177,7 @@ export default function DashboardPage() {
       <RecentChatsSection workspaceId={workspaceId} />
 
       {/* Grid быстрых действий */}
-      <QuickActionsGridComponent 
+      <QuickActionsGrid 
         workspaceId={workspaceId}
         onCreateKnowledgeBase={handleOpenKbDialog}
       />
