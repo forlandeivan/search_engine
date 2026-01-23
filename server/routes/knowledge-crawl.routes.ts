@@ -91,7 +91,7 @@ const crawlConfigSchema = z.object({
   include: z.array(z.string()).optional(),
   exclude: z.array(z.string()).optional(),
   max_pages: z.number().int().positive().optional().nullable(),
-  max_depth: z.number().int().positive().optional().nullable(),
+  max_depth: z.number().int().nonnegative().optional().nullable(), // Разрешаем 0 для режима "одна страница"
   rate_limit_rps: z.number().positive().optional().nullable(),
   rate_limit: z.number().positive().optional().nullable(),
   robots_txt: z.boolean().optional(),
