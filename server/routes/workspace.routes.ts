@@ -13,6 +13,7 @@
  * - PATCH /api/workspaces/:workspaceId - Update workspace name
  * - GET /api/workspaces/:workspaceId/plan - Get workspace plan
  * - GET /api/workspaces/:workspaceId/credits - Get workspace credits
+ * - GET /api/workspaces/:workspaceId/dashboard-summary - Get dashboard summary (optimized)
  * - PUT /api/workspaces/:workspaceId/plan - Update workspace plan
  */
 
@@ -1079,6 +1080,32 @@ workspaceRouter.get('/:workspaceId/credits', asyncHandler(async (req, res) => {
     },
     policy: summary.policy,
   });
+}));
+
+/**
+ * GET /:workspaceId/dashboard-summary
+ * Get complete dashboard summary (optimized single endpoint)
+ */
+workspaceRouter.get('/:workspaceId/dashboard-summary', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId } = req.params;
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+  if (!membership) {
+    return res.status(403).json({ message: 'Доступ запрещён' });
+  }
+
+  const workspace = await storage.getWorkspace(workspaceId);
+  if (!workspace) {
+    return res.status(404).json({ message: 'Рабочее пространство не найдено' });
+  }
+
+  const { getDashboardSummary } = await import('../dashboard-service');
+  const summary = await getDashboardSummary(workspaceId, user.id, membership.role);
+
+  res.set('Cache-Control', 'private, max-age=30');
+  res.json(summary);
 }));
 
 // ============================================================================
