@@ -434,10 +434,34 @@ export function SkillFormContent({
       const response = await apiRequest("GET", `/api/skills/${skill!.id}/actions`);
       const json = await response.json();
       const items = (json.items ?? []) as SkillActionConfigItem[];
-      return items.filter((item) => item.action.target === "transcript");
+      return items.filter((item) => {
+        // Фильтруем только действия с target="transcript" и включенные (enabled)
+        if (item.action.target !== "transcript") {
+          return false;
+        }
+        // Действие должно быть включено для навыка
+        if (!item.skillAction?.enabled) {
+          return false;
+        }
+        // Должен быть хотя бы один enabled placement, который есть в action.placements
+        const allowedPlacements = item.action.placements ?? [];
+        const enabledPlacements = item.skillAction.enabledPlacements ?? [];
+        const hasValidPlacement = enabledPlacements.some((p) => allowedPlacements.includes(p));
+        return hasValidPlacement;
+      });
     },
   });
   const transcriptActions = transcriptActionsQuery.data ?? [];
+  
+  // Очищаем выбранное автодействие, если оно больше не доступно (отключено)
+  useEffect(() => {
+    if (!transcriptActionsQuery.isLoading && transcriptActionsQuery.data && isAutoActionMode) {
+      const selectedActionId = form.getValues("onTranscriptionAutoActionId");
+      if (selectedActionId && !transcriptActions.some((item) => item.action.id === selectedActionId)) {
+        form.setValue("onTranscriptionAutoActionId", "", { shouldDirty: true });
+      }
+    }
+  }, [transcriptActions, transcriptActionsQuery.isLoading, transcriptActionsQuery.data, isAutoActionMode, form]);
   const systemSkillDescription =
     skill?.systemKey === "UNICA_CHAT"
       ? "Настройки Unica Chat управляются администратором инстанса. Изменить их из рабочего пространства нельзя."
@@ -1809,7 +1833,7 @@ export function SkillFormContent({
                                           transcriptActionsQuery.isLoading
                                             ? "Загружаем действия..."
                                             : transcriptActions.length === 0
-                                              ? "Нет действий с целью «Стенограмма»"
+                                              ? "Нет включенных действий с целью «Стенограмма»"
                                               : "Выберите действие"
                                         }
                                       />
