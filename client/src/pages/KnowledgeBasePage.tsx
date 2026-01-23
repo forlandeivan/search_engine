@@ -356,6 +356,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   };
   const handleBaseCreated = (base: LocalKnowledgeBase) => {
     setIsCreateBaseDialogOpen(false);
+    // Если база создана с краулингом, инициализируем состояние джобы
+    if (base.crawlJob) {
+      setLatestCrawlJob(base.crawlJob);
+    }
     setLocation(`/knowledge/${base.id}`);
     setCreateBaseMode("blank");
   };
@@ -2922,6 +2926,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         </div>
         <CrawlInlineProgress
           baseId={selectedBase?.id}
+          initialJob={
+            latestCrawlJob && selectedBase?.id === latestCrawlJob.baseId
+              ? latestCrawlJob
+              : selectedBase?.crawlJob
+          }
           onStateChange={handleCrawlStateChange}
           onDocumentsSaved={handleCrawlDocumentsSaved}
         />

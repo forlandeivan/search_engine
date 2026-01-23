@@ -38,6 +38,7 @@ type CrawlInlineProgressProps = {
   pollIntervalMs?: number;
   onStateChange?: (state: CrawlInlineState) => void;
   onDocumentsSaved?: (delta: number, job: KnowledgeBaseCrawlJobStatus) => void;
+  initialJob?: KnowledgeBaseCrawlJobStatus | null; // Начальное состояние джобы (например, при создании базы)
 };
 
 export function CrawlInlineProgress({
@@ -45,6 +46,7 @@ export function CrawlInlineProgress({
   pollIntervalMs = 4000,
   onStateChange,
   onDocumentsSaved,
+  initialJob = null,
 }: CrawlInlineProgressProps) {
   const [job, setJob] = useState<KnowledgeBaseCrawlJobStatus | null>(null);
   const [events, setEvents] = useState<CrawlActivityEvent[]>([]);
@@ -205,6 +207,13 @@ export function CrawlInlineProgress({
     },
     [baseId],
   );
+
+  // Инициализация начального состояния джобы при создании базы
+  useEffect(() => {
+    if (initialJob && !job && !previousJobRef.current) {
+      handleJobUpdate(initialJob);
+    }
+  }, [initialJob, job, handleJobUpdate]);
 
   useEffect(() => {
     if (!baseId) {
