@@ -2442,7 +2442,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 <MarkdownRenderer markdown={markdownContent} />
               ) : sanitizedContent ? (
                 <div
-                  className="prose prose-sm max-w-none dark:prose-invert"
+                  className="prose prose-sm max-w-none dark:prose-invert overflow-x-hidden"
                   dangerouslySetInnerHTML={{ __html: sanitizedContent }}
                 />
               ) : (
@@ -2927,9 +2927,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         <CrawlInlineProgress
           baseId={selectedBase?.id}
           initialJob={
-            latestCrawlJob && selectedBase?.id === latestCrawlJob.baseId
+            // Приоритет: latestCrawlJob (только что созданная) > selectedBase.crawlJob (из localStorage) > null
+            latestCrawlJob && knowledgeBaseId === latestCrawlJob.baseId
               ? latestCrawlJob
-              : selectedBase?.crawlJob
+              : selectedBase?.crawlJob ?? null
           }
           onStateChange={handleCrawlStateChange}
           onDocumentsSaved={handleCrawlDocumentsSaved}
