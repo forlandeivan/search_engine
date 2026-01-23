@@ -145,20 +145,73 @@ adminUsersRouter.delete('/:userId', asyncHandler(async (req, res) => {
     logger.info({
       userId,
       userEmail: user.email,
+      userFullName: user.fullName,
       ownedWorkspacesCount: ownedWorkspaces.length,
       ownedWorkspaceIds: ownedWorkspaces.map(w => w.id),
-    }, 'Deleting user with all owned workspaces');
+      ownedWorkspaceNames: ownedWorkspaces.map(w => w.name),
+    }, '[DELETE /users/:userId] Starting user deletion process');
 
     // Удаляем все workspace'ы, где пользователь - владелец
     // (каскадно удалятся все связанные сущности: skills, chats, files, etc)
+    const workspaceDeletionResults: Array<{ workspaceId: string; workspaceName: string; success: boolean }> = [];
+    
     for (const workspace of ownedWorkspaces) {
-      await storage.deleteWorkspace(workspace.id);
-      logger.info({ workspaceId: workspace.id, workspaceName: workspace.name }, 'Deleted workspace');
+      logger.info({ 
+        workspaceId: workspace.id, 
+        workspaceName: workspace.name,
+        userId,
+        userEmail: user.email,
+      }, '[DELETE /users/:userId] Deleting workspace');
+      
+      const success = await storage.deleteWorkspace(workspace.id);
+      workspaceDeletionResults.push({
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        success,
+      });
+      
+      if (success) {
+        logger.info({ 
+          workspaceId: workspace.id, 
+          workspaceName: workspace.name 
+        }, '[DELETE /users/:userId] Workspace deleted successfully');
+      } else {
+        logger.warn({ 
+          workspaceId: workspace.id, 
+          workspaceName: workspace.name 
+        }, '[DELETE /users/:userId] ⚠️ Workspace deletion returned false');
+      }
+    }
+
+    // Проверяем что все workspace'ы действительно удалились
+    const remainingWorkspaces = await storage.listUserOwnedWorkspaces(userId);
+    if (remainingWorkspaces.length > 0) {
+      logger.error({
+        userId,
+        userEmail: user.email,
+        expectedDeleted: ownedWorkspaces.length,
+        remainingCount: remainingWorkspaces.length,
+        remainingWorkspaceIds: remainingWorkspaces.map(w => w.id),
+      }, '[DELETE /users/:userId] ⚠️ ERROR: Some workspaces were not deleted!');
     }
 
     // Удаляем самого пользователя
-    await storage.deleteUser(userId);
-    logger.info({ userId, userEmail: user.email }, 'User deleted successfully');
+    logger.info({ userId, userEmail: user.email }, '[DELETE /users/:userId] Deleting user');
+    const userDeleted = await storage.deleteUser(userId);
+    
+    if (userDeleted) {
+      logger.info({ 
+        userId, 
+        userEmail: user.email,
+        deletedWorkspaces: workspaceDeletionResults.length,
+        allWorkspacesDeleted: remainingWorkspaces.length === 0,
+      }, '[DELETE /users/:userId] ✅ User deletion completed');
+    } else {
+      logger.error({ 
+        userId, 
+        userEmail: user.email 
+      }, '[DELETE /users/:userId] ⚠️ ERROR: User deletion returned false');
+    }
 
     res.json({ 
       success: true,
