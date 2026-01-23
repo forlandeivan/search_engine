@@ -121,8 +121,10 @@ export async function apiRequest(
     delete resolvedHeaders["Content-Type"];
   }
 
+  // Set workspace header if we have a valid workspace ID (not empty string)
   if (
     resolvedWorkspaceId &&
+    resolvedWorkspaceId.trim() !== "" &&
     !("X-Workspace-Id" in resolvedHeaders) &&
     !("x-workspace-id" in resolvedHeaders)
   ) {

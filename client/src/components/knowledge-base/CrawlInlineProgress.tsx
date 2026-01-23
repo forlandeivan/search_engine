@@ -212,16 +212,24 @@ export function CrawlInlineProgress({
 
   // Инициализация начального состояния джобы при создании базы
   useEffect(() => {
-    if (initialJob && initialJob.baseId === baseId && !job && !previousJobRef.current) {
-      // Если джоба уже завершена, сохраняем её как lastRun
-      if (TERMINAL_STATUSES.includes(initialJob.status)) {
-        setLastRun(initialJob);
-        previousJobRef.current = initialJob;
-        onStateChangeRef.current?.({ running: false, job: null, lastRun: initialJob });
-      } else {
-        // Для активной джобы инициализируем состояние и начинаем отслеживание
-        handleJobUpdate(initialJob);
-      }
+    if (!baseId || !initialJob) return;
+    
+    // Проверяем, что initialJob относится к текущей базе
+    if (initialJob.baseId !== baseId) return;
+    
+    // Если уже есть job или previousJobRef для этой джобы, не инициализируем повторно
+    const isSameJob = previousJobRef.current?.jobId === initialJob.jobId;
+    if (job && isSameJob) return;
+    if (previousJobRef.current && isSameJob) return;
+    
+    // Если джоба уже завершена, сохраняем её как lastRun
+    if (TERMINAL_STATUSES.includes(initialJob.status)) {
+      setLastRun(initialJob);
+      previousJobRef.current = initialJob;
+      onStateChangeRef.current?.({ running: false, job: null, lastRun: initialJob });
+    } else {
+      // Для активной джобы инициализируем состояние и начинаем отслеживание
+      handleJobUpdate(initialJob);
     }
   }, [initialJob, baseId, job, handleJobUpdate]);
 
@@ -396,7 +404,8 @@ export function CrawlInlineProgress({
   }, [job, lastRun, handleJobUpdate]);
 
   // Отображаем активную джобу или последнюю завершённую джобу
-  const jobToDisplay = job || lastRun;
+  // Если есть initialJob, используем его как fallback, чтобы показать прогресс сразу
+  const jobToDisplay = job || lastRun || (initialJob && initialJob.baseId === baseId ? initialJob : null);
   
   if (!jobToDisplay) {
     return null;

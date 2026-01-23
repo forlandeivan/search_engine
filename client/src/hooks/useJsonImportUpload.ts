@@ -29,6 +29,12 @@ export function useJsonImportUpload(workspaceId: string) {
 
   const uploadFile = useCallback(
     async (file: File): Promise<{ fileKey: string; fileSize: number }> => {
+      if (!workspaceId) {
+        const errorMessage = "Workspace ID не определен";
+        setError(errorMessage);
+        throw new Error(errorMessage);
+      }
+
       setIsUploading(true);
       setError(null);
       setUploadProgress(null);

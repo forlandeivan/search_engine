@@ -252,7 +252,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     useState<DocumentVectorizationProgressState | null>(null);
   const [shouldPollVectorizationJob, setShouldPollVectorizationJob] = useState(false);
   const [chunkDialogSignal, setChunkDialogSignal] = useState(0);
-  const [, setLocalKnowledgeBases] = useState<LocalKnowledgeBase[]>(() => {
+  const [localKnowledgeBases, setLocalKnowledgeBases] = useState<LocalKnowledgeBase[]>(() => {
     if (typeof window === "undefined") {
       return [];
     }
@@ -599,10 +599,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       enabled: Boolean(workspaceId),
     });
   const vectorCollections = vectorCollectionsResponse?.collections ?? [];
-  const selectedBase = useMemo(
-    () => bases.find((base) => base.id === knowledgeBaseId) ?? null,
-    [bases, knowledgeBaseId],
-  );
+  const selectedBase = useMemo(() => {
+    // Сначала ищем в bases (API), потом в localKnowledgeBases (localStorage)
+    // Это нужно, потому что после создания базы API может не обновиться сразу
+    const fromApi = bases.find((base) => base.id === knowledgeBaseId);
+    if (fromApi) return fromApi;
+    const fromLocal = localKnowledgeBases.find((base) => base.id === knowledgeBaseId);
+    return fromLocal ?? null;
+  }, [bases, localKnowledgeBases, knowledgeBaseId]);
   const startIndexingMutation = useStartKnowledgeBaseIndexing();
   const resetIndexingMutation = useResetKnowledgeBaseIndexing();
   const indexingSummaryQuery = useKnowledgeBaseIndexingSummary(
@@ -2924,17 +2928,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             </PopoverContent>
           </Popover>
         </div>
-        <CrawlInlineProgress
-          baseId={selectedBase?.id}
-          initialJob={
-            // Приоритет: latestCrawlJob (только что созданная) > selectedBase.crawlJob (из localStorage) > null
-            latestCrawlJob && knowledgeBaseId === latestCrawlJob.baseId
-              ? latestCrawlJob
-              : selectedBase?.crawlJob ?? null
-          }
-          onStateChange={handleCrawlStateChange}
-          onDocumentsSaved={handleCrawlDocumentsSaved}
-        />
         {detailContent}
       </div>
     );
@@ -3245,7 +3238,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </div>
 
       {/* Основной контент */}
-      {bases.length === 0 ? (
+      {/* Используем localKnowledgeBases вместо bases, так как bases обновляется с задержкой после создания */}
+      {bases.length === 0 && localKnowledgeBases.length === 0 && !knowledgeBaseId ? (
         <div className="flex-1 flex items-center justify-center p-6">
           <Card className="border border-dashed max-w-md w-full">
             <CardHeader className="space-y-2 text-center">
@@ -3306,6 +3300,17 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           {/* Правая колонка: содержимое */}
           <main className="flex-1 overflow-y-auto p-6">
             <div className="mx-auto max-w-4xl">
+              <CrawlInlineProgress
+                baseId={knowledgeBaseId}
+                initialJob={
+                  // Приоритет: latestCrawlJob (только что созданная) > selectedBase.crawlJob (из localStorage) > null
+                  latestCrawlJob && knowledgeBaseId === latestCrawlJob.baseId
+                    ? latestCrawlJob
+                    : selectedBase?.crawlJob ?? null
+                }
+                onStateChange={handleCrawlStateChange}
+                onDocumentsSaved={handleCrawlDocumentsSaved}
+              />
               {renderContent()}
             </div>
           </main>
