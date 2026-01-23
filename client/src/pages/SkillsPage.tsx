@@ -99,6 +99,7 @@ import {
   SkillActionsPreview,
   ActionsPreviewForNewSkill,
   IconPicker,
+  type SkillActionChange,
 } from './SkillsPage/components';
 
 // Re-export for backward compatibility
@@ -218,6 +219,7 @@ export function SkillFormContent({
   const lastSavedRef = useRef<SkillFormValues>(defaultFormValues);
   const currentTab = activeTab ?? internalTab;
   const { toast } = useToast();
+  const [skillActionsChanges, setSkillActionsChanges] = useState<SkillActionChange[]>([]);
   const [callbackTokenStatus, setCallbackTokenStatus] = useState<{
     isSet: boolean;
     lastRotatedAt: string | null;
@@ -682,6 +684,31 @@ export function SkillFormContent({
       }
       const didSave = await onSubmit(nextValues);
       if (didSave) {
+        // Сохраняем изменения действий если они есть
+        if (skillActionsChanges.length > 0 && skill?.id) {
+          try {
+            for (const change of skillActionsChanges) {
+              const response = await apiRequest("PUT", `/api/skills/${skill.id}/actions/${change.actionId}`, {
+                enabled: change.enabled,
+                enabledPlacements: change.enabledPlacements,
+                labelOverride: change.labelOverride,
+              });
+              if (!response.ok) {
+                throw new Error(`Не удалось сохранить действие ${change.actionId}`);
+              }
+            }
+            setSkillActionsChanges([]); // Очищаем изменения после успешного сохранения
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Не удалось сохранить изменения действий";
+            toast({
+              title: "Ошибка сохранения действий",
+              description: message,
+              variant: "destructive",
+            });
+            // Не блокируем дальнейшие действия, даже если не удалось сохранить действия
+          }
+        }
+        
         const normalized: SkillFormValues = {
           ...nextValues,
           name: nextValues.name.trim(),
@@ -709,10 +736,11 @@ export function SkillFormContent({
     return Icon ? <Icon className={className} /> : null;
   };
 
-  const isDirty = form.formState.isDirty;
+  const isDirty = form.formState.isDirty || skillActionsChanges.length > 0;
 
   const handleReset = () => {
     form.reset(lastSavedRef.current);
+    setSkillActionsChanges([]); // Сбрасываем изменения действий
   };
 
   return (
@@ -1880,7 +1908,11 @@ export function SkillFormContent({
                           Настройка действий недоступна для системных навыков.
                         </div>
                       ) : skill?.id ? (
-                        <SkillActionsPreview skillId={skill.id} />
+                        <SkillActionsPreview 
+                          skillId={skill.id} 
+                          onChange={setSkillActionsChanges}
+                          pendingChanges={skillActionsChanges}
+                        />
                       ) : (
                         <ActionsPreviewForNewSkill />
                       )}

@@ -10,3 +10,4 @@ export { SkillActionsPreview } from "./SkillActionsPreview";
 export { ActionsPreviewForNewSkill } from "./ActionsPreviewForNewSkill";
 export { IconPicker } from "./IconPicker";
 export type { IconPickerProps } from "./IconPicker";
+export type { SkillActionChange } from '../types';

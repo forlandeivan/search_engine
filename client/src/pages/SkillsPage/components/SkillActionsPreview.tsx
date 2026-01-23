@@ -41,9 +41,14 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Loader2, X, ExternalLink, Pencil, PlusCircle, Ellipsis } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { SkillActionsPreviewProps, SkillActionRowState, SkillActionConfigItem } from "../types";
+import type { SkillActionsPreviewProps, SkillActionRowState, SkillActionConfigItem, SkillActionChange } from "../types";
 
-export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPreviewProps) {
+export function SkillActionsPreview({ 
+  skillId, 
+  canEdit = true, 
+  onChange,
+  pendingChanges = []
+}: SkillActionsPreviewProps) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery<SkillActionConfigItem[]>({
@@ -57,6 +62,7 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
 
   const [rows, setRows] = useState<SkillActionRowState[]>([]);
 
+  // Применяем pendingChanges к данным из API
   useEffect(() => {
     if (!data) {
       return;
@@ -65,19 +71,25 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
       setRows([]);
       return;
     }
+    
+    const changesMap = new Map(pendingChanges.map(c => [c.actionId, c]));
+    
     setRows(
-      data.map((item) => ({
-        ...item,
-        enabled: item.skillAction?.enabled ?? false,
-        enabledPlacements: item.skillAction?.enabledPlacements ?? [],
-        labelOverride: item.skillAction?.labelOverride ?? null,
-        saving: false,
-        editing: false,
-        draftLabel: item.skillAction?.labelOverride ?? "",
-        ui: { ...item.ui, editable: item.ui.editable && canEdit },
-      })),
+      data.map((item) => {
+        const change = changesMap.get(item.action.id);
+        return {
+          ...item,
+          enabled: change?.enabled ?? item.skillAction?.enabled ?? false,
+          enabledPlacements: change?.enabledPlacements ?? item.skillAction?.enabledPlacements ?? [],
+          labelOverride: change?.labelOverride ?? item.skillAction?.labelOverride ?? null,
+          saving: false,
+          editing: false,
+          draftLabel: change?.labelOverride ?? item.skillAction?.labelOverride ?? "",
+          ui: { ...item.ui, editable: item.ui.editable && canEdit },
+        };
+      }),
     );
-  }, [data, canEdit]);
+  }, [data, canEdit, pendingChanges]);
 
   const targetLabels: Record<string, string> = {
     transcript: "Стенограмма",
@@ -103,67 +115,37 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
   const [enabledFilters, setEnabledFilters] = useState<Set<string>>(new Set());
   const [targetFilters, setTargetFilters] = useState<Set<string>>(new Set());
 
-  const sendUpdate = async (row: SkillActionRowState, next: Partial<SkillActionRowState>) => {
+  const handleChange = (row: SkillActionRowState, next: Partial<SkillActionRowState>) => {
+    if (!onChange) return;
+    
+    // Обновляем локальное состояние для немедленного отображения
     setRows((prev) =>
-      prev.map((item) => (item.action.id === row.action.id ? { ...item, ...next, saving: true } : item)),
+      prev.map((item) => (item.action.id === row.action.id ? { ...item, ...next } : item)),
     );
 
     const nextEnabled = next.enabled ?? row.enabled;
-    const basePlacements = next.enabledPlacements ?? row.enabledPlacements;
-    const effectivePlacements =
-      basePlacements.length > 0 ? basePlacements : [...(row.action.placements ?? [])];
+    const nextPlacements = next.enabledPlacements ?? row.enabledPlacements;
+    const nextLabelOverride = next.labelOverride !== undefined ? next.labelOverride : row.labelOverride;
 
-    const payload = {
+    // Создаем или обновляем изменение
+    const change: SkillActionChange = {
+      actionId: row.action.id,
       enabled: nextEnabled,
-      enabledPlacements: effectivePlacements,
-      labelOverride:
-        next.labelOverride === undefined
-          ? row.labelOverride
-          : next.labelOverride && next.labelOverride.trim().length > 0
-            ? next.labelOverride
-            : null,
+      enabledPlacements: nextPlacements,
+      labelOverride: nextLabelOverride && nextLabelOverride.trim().length > 0 ? nextLabelOverride.trim() : null,
     };
 
-    try {
-      const response = await apiRequest("PUT", `/api/skills/${skillId}/actions/${row.action.id}`, payload);
-      if (!response.ok) {
-        throw new Error("Не удалось сохранить изменения");
-      }
-      setRows((prev) =>
-        prev.map((item) =>
-          item.action.id === row.action.id
-            ? {
-                ...item,
-                enabled: payload.enabled,
-                enabledPlacements: payload.enabledPlacements,
-                labelOverride: payload.labelOverride,
-                ui: { ...item.ui, effectiveLabel: payload.labelOverride ?? item.action.label },
-                saving: false,
-                editing: false,
-                draftLabel: payload.labelOverride ?? "",
-              }
-            : item,
-        ),
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Не удалось сохранить изменения";
-      toast({
-        title: "Ошибка",
-        description: message,
-        variant: "destructive",
-      });
-      // откат
-      setRows((prev) =>
-        prev.map((item) =>
-          item.action.id === row.action.id
-            ? {
-                ...item,
-                saving: false,
-              }
-            : item,
-        ),
-      );
+    // Обновляем список изменений
+    const existingIndex = pendingChanges.findIndex(c => c.actionId === row.action.id);
+    const newChanges = [...pendingChanges];
+    
+    if (existingIndex >= 0) {
+      newChanges[existingIndex] = change;
+    } else {
+      newChanges.push(change);
     }
+
+    onChange(newChanges);
   };
 
   const renderPlacementCell = (row: SkillActionRowState, placement: string) => {
@@ -180,14 +162,14 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
           <TooltipTrigger asChild>
             <Checkbox
               checked={active}
-              disabled={!row.ui.editable || row.saving}
+              disabled={!row.ui.editable}
               aria-label={placement}
               onCheckedChange={(checked) => {
-                if (!row.ui.editable || row.saving) return;
+                if (!row.ui.editable) return;
                 const nextPlacements = checked
-                  ? [...row.enabledPlacements, placement]
+                  ? [...row.enabledPlacements, placement].filter((p, i, arr) => arr.indexOf(p) === i) // Убираем дубликаты
                   : row.enabledPlacements.filter((p) => p !== placement);
-                sendUpdate(row, { enabledPlacements: nextPlacements });
+                handleChange(row, { enabledPlacements: nextPlacements });
               }}
             />
           </TooltipTrigger>
@@ -534,7 +516,6 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
                                 ),
                               )
                             }
-                            disabled={row.saving}
                             className="h-8"
                             autoFocus
                           />
@@ -542,11 +523,11 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
                             type="button"
                             size="sm"
                             onClick={() =>
-                              sendUpdate(row, {
+                              handleChange(row, {
                                 labelOverride: row.draftLabel.trim().length > 0 ? row.draftLabel.trim() : null,
+                                editing: false,
                               })
                             }
-                            disabled={row.saving}
                           >
                             Сохранить
                           </Button>
@@ -563,7 +544,6 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
                                 ),
                               )
                             }
-                            disabled={row.saving}
                           >
                             Отмена
                           </Button>
@@ -591,11 +571,11 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
                 <TableCell>
                   <Checkbox
                     checked={row.enabled}
-                    disabled={!ui.editable || row.saving}
+                    disabled={!ui.editable}
                     aria-label="enabled"
                     onCheckedChange={(checked) => {
-                      if (!ui.editable || row.saving) return;
-                      sendUpdate(row, { enabled: Boolean(checked) });
+                      if (!ui.editable) return;
+                      handleChange(row, { enabled: Boolean(checked) });
                     }}
                   />
                 </TableCell>
@@ -621,7 +601,6 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
                           variant="ghost"
                           size="sm"
                           className="h-8 w-8 p-0"
-                          disabled={row.saving}
                         >
                           <Ellipsis className="h-4 w-4" />
                           <span className="sr-only">Открыть меню</span>
@@ -638,7 +617,6 @@ export function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPre
                               ),
                             )
                           }
-                          disabled={row.saving}
                         >
                           <Pencil className="mr-2 h-4 w-4" />
                           Переименовать
