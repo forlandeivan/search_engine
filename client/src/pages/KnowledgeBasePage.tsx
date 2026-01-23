@@ -217,7 +217,7 @@ import type {
 } from "./KnowledgeBasePage/types";
 
 export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {}) {
-  const [, setLocation] = useLocation();
+  const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const knowledgeBaseId = params?.knowledgeBaseId ?? null;
@@ -360,7 +360,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     if (base.crawlJob) {
       setLatestCrawlJob(base.crawlJob);
     }
-    setLocation(`/knowledge/${base.id}`);
+    navigate(`/knowledge/${base.id}`);
     setCreateBaseMode("blank");
   };
   const handleQuickSwitcherOpenState = useCallback(
@@ -1104,7 +1104,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           action: (
             <ToastAction
               altText="Открыть библиотеку"
-              onClick={() => setLocation(`/knowledge/${job.baseId}`)}
+              onClick={() => navigate(`/knowledge/${job.baseId}`)}
             >
               Открыть библиотеку
             </ToastAction>
@@ -1125,7 +1125,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
 
     crawlJobPreviousRef.current = job;
-  }, [latestCrawlJob, selectedBase?.id, setLocation, toast]);
+  }, [latestCrawlJob, selectedBase?.id, navigate, toast]);
 
   useEffect(() => {
     setExpandedNodeIds(new Set());
@@ -1152,13 +1152,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     if (knowledgeBaseId) {
       const exists = bases.some((base) => base.id === knowledgeBaseId);
       if (!exists) {
-        setLocation(`/knowledge/${bases[0]?.id}`);
+        navigate(`/knowledge/${bases[0]?.id}`, { replace: false });
       }
       return;
     }
 
-    setLocation(`/knowledge/${bases[0]?.id}`);
-  }, [bases, knowledgeBaseId, setLocation]);
+    navigate(`/knowledge/${bases[0]?.id}`, { replace: false });
+  }, [bases, knowledgeBaseId, navigate]);
 
   useEffect(() => {
     if (!selectedBase || !selectedNodeId) {
@@ -1166,9 +1166,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
 
     if (!hasNode(selectedBase.rootNodes, selectedNodeId)) {
-      setLocation(`/knowledge/${selectedBase.id}`);
+      navigate(`/knowledge/${selectedBase.id}`);
     }
-  }, [selectedBase, selectedNodeId, setLocation]);
+  }, [selectedBase, selectedNodeId, navigate]);
 
   useEffect(() => {
     if (!vectorizeDialogState) {
@@ -1596,7 +1596,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         },
       });
       if (knowledgeBaseId === variables.baseId) {
-        setLocation("/knowledge");
+        navigate("/knowledge");
       }
     },
     onError: (error) => {
@@ -1624,7 +1624,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           return key === "knowledge-node" && baseId === variables.baseId;
         },
       });
-      setLocation(`/knowledge/${variables.baseId}`);
+      navigate(`/knowledge/${variables.baseId}`);
     },
     onError: (error) => {
       setDeleteTarget(null);
@@ -1670,7 +1670,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           return key === "knowledge-node" && baseId === variables.baseId;
         },
       });
-      setLocation(`/knowledge/${variables.baseId}/node/${document.id}`);
+      navigate(`/knowledge/${variables.baseId}/node/${document.id}`);
     },
     onError: (error) => {
       toast({
@@ -1723,7 +1723,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           return key === "knowledge-node" && baseId === variables.baseId;
         },
       });
-      setLocation(`/knowledge/${variables.baseId}/node/${document.id}`);
+      navigate(`/knowledge/${variables.baseId}/node/${document.id}`);
     },
     onError: (error) => {
       toast({
@@ -3080,7 +3080,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   return (
                     <DropdownMenuItem
                       key={base.id}
-                      onSelect={() => setLocation(`/knowledge/${base.id}`)}
+                      onSelect={() => navigate(`/knowledge/${base.id}`)}
                       className={cn(
                         "flex items-start gap-3 py-2",
                         selectedBase?.id === base.id && "bg-accent"
@@ -3189,7 +3189,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
                   <DropdownMenuItem
-                    onSelect={() => setLocation(`/knowledge/${selectedBase.id}/indexing/history`)}
+                    onSelect={() => navigate(`/knowledge/${selectedBase.id}/indexing/history`)}
                   >
                     <History className="mr-2 h-4 w-4" /> История индексаций
                   </DropdownMenuItem>
@@ -3202,7 +3202,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
-                        onSelect={() => setLocation(`/vector/collections/${encodeURIComponent(headerCollectionName)}`)}
+                        onSelect={() => navigate(`/vector/collections/${encodeURIComponent(headerCollectionName)}`)}
                       >
                         <Layers className="mr-2 h-4 w-4" /> Коллекция в Qdrant
                       </DropdownMenuItem>

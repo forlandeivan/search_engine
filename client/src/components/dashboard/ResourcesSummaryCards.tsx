@@ -205,7 +205,7 @@ export function ResourcesSummaryCards({ workspaceId, isSessionLoading }: Resourc
         value: skillsCount,
         subtitle: skillsNewThisWeek > 0 ? `+${skillsNewThisWeek} за неделю` : undefined,
         icon: Sparkles,
-        href: workspaceId ? `/workspaces/${workspaceId}/skills` : "/",
+        href: "/skills",
         isLoading,
       },
       {
@@ -241,7 +241,7 @@ export function ResourcesSummaryCards({ workspaceId, isSessionLoading }: Resourc
         value: membersCount,
         subtitle: undefined,
         icon: Users,
-        href: workspaceId ? `/workspaces/${workspaceId}/members` : "/",
+        href: workspaceId ? `/workspaces/${workspaceId}/settings?tab=members` : "/",
         isLoading,
       },
     ],

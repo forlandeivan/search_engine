@@ -87,11 +87,9 @@ export function QuickActionsGrid({
       }
     };
 
-    const handleCreateSkill = () => {
-      if (workspaceId) {
-        navigate(`/workspaces/${workspaceId}/skills`);
-      }
-    };
+        const handleCreateSkill = () => {
+          navigate("/skills");
+        };
 
     const handleCreateKnowledgeBase = () => {
       if (onCreateKnowledgeBase) {

@@ -225,13 +225,14 @@ export function CreditsWidget({ workspaceId }: CreditsWidgetProps) {
 
   // Обработчики
   const handleGoToHistory = () => {
-    // TODO: Реализовать переход на страницу истории кредитов
-    console.log("Go to credits history");
+    if (workspaceId) {
+      navigate(`/workspaces/${workspaceId}/credits/history`);
+    }
   };
 
   const handleGoToBilling = () => {
     if (workspaceId) {
-      navigate(`/workspaces/${workspaceId}/settings/billing`);
+      navigate(`/workspaces/${workspaceId}/settings?tab=billing`);
     }
   };
 
