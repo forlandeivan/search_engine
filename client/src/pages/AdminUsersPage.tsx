@@ -1,12 +1,22 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ShieldCheck, ShieldOff, CheckCircle2 } from "lucide-react";
+import { Loader2, ShieldCheck, ShieldOff, CheckCircle2, Trash2 } from "lucide-react";
 import type { PublicUser } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface UsersResponse {
   users: PublicUser[];
@@ -15,6 +25,25 @@ interface UsersResponse {
 interface UpdateRolePayload {
   userId: string;
   role: PublicUser["role"];
+}
+
+interface DeleteUserPayload {
+  userId: string;
+  confirmEmail: string;
+}
+
+interface DeleteUserResponse {
+  success: boolean;
+  message: string;
+  deletedUser: {
+    id: string;
+    email: string;
+    fullName: string;
+  };
+  deletedWorkspaces: Array<{
+    id: string;
+    name: string;
+  }>;
 }
 
 function formatLastActivity(value: string | Date | null | undefined): string {
@@ -36,6 +65,11 @@ function formatLastActivity(value: string | Date | null | undefined): string {
 export default function AdminUsersPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  
+  // Состояние для диалога удаления
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<PublicUser | null>(null);
+  const [confirmEmailInput, setConfirmEmailInput] = useState("");
 
   const { data, isLoading, error } = useQuery<UsersResponse>({
     queryKey: ["/api/admin/users"],
@@ -85,6 +119,30 @@ export default function AdminUsersPage() {
     },
   });
 
+  const deleteUserMutation = useMutation({
+    mutationFn: async ({ userId, confirmEmail }: DeleteUserPayload) => {
+      const response = await apiRequest("DELETE", `/api/admin/users/${userId}`, { confirmEmail });
+      return (await response.json()) as DeleteUserResponse;
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      const workspacesCount = result.deletedWorkspaces?.length ?? 0;
+      toast({
+        title: "Пользователь удалён",
+        description: `${result.deletedUser.email} и ${workspacesCount} рабочих пространств удалены`,
+      });
+      closeDeleteDialog();
+    },
+    onError: (mutationError: unknown) => {
+      const message = mutationError instanceof Error ? mutationError.message : "Неизвестная ошибка";
+      toast({
+        title: "Не удалось удалить пользователя",
+        description: message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const users = data?.users ?? [];
 
   const sortedUsers = useMemo(() => {
@@ -121,6 +179,28 @@ export default function AdminUsersPage() {
   const handleActivateUser = (user: PublicUser) => {
     activateUserMutation.mutate(user.id);
   };
+
+  const openDeleteDialog = (user: PublicUser) => {
+    setUserToDelete(user);
+    setConfirmEmailInput("");
+    setDeleteDialogOpen(true);
+  };
+
+  const closeDeleteDialog = () => {
+    setDeleteDialogOpen(false);
+    setUserToDelete(null);
+    setConfirmEmailInput("");
+  };
+
+  const handleDeleteUser = () => {
+    if (!userToDelete) return;
+    deleteUserMutation.mutate({
+      userId: userToDelete.id,
+      confirmEmail: confirmEmailInput,
+    });
+  };
+
+  const isEmailMatch = userToDelete && confirmEmailInput.toLowerCase() === userToDelete.email.toLowerCase();
 
   const isUserActive = (user: PublicUser) => {
     return user.status === "active" && user.isEmailConfirmed;
@@ -215,6 +295,15 @@ export default function AdminUsersPage() {
                           </>
                         )}
                       </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openDeleteDialog(user)}
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        title="Удалить пользователя"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -230,6 +319,72 @@ export default function AdminUsersPage() {
           </TableBody>
         </Table>
       </div>
+
+      {/* Диалог подтверждения удаления */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-destructive">Удаление пользователя</DialogTitle>
+            <DialogDescription>
+              Это действие необратимо. Будут удалены:
+              <ul className="list-disc list-inside mt-2 space-y-1">
+                <li>Учётная запись пользователя</li>
+                <li>Все рабочие пространства, где пользователь — владелец</li>
+                <li>Все навыки, базы знаний, чаты и файлы в этих пространствах</li>
+              </ul>
+            </DialogDescription>
+          </DialogHeader>
+          
+          {userToDelete && (
+            <div className="space-y-4 py-4">
+              <div className="rounded-lg bg-muted p-3 space-y-1">
+                <p className="text-sm font-medium">{userToDelete.fullName}</p>
+                <p className="text-sm text-muted-foreground">{userToDelete.email}</p>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="confirm-email">
+                  Для подтверждения введите email пользователя:
+                </Label>
+                <Input
+                  id="confirm-email"
+                  type="email"
+                  placeholder={userToDelete.email}
+                  value={confirmEmailInput}
+                  onChange={(e) => setConfirmEmailInput(e.target.value)}
+                  className={isEmailMatch ? "border-green-500" : ""}
+                />
+                {confirmEmailInput && !isEmailMatch && (
+                  <p className="text-xs text-destructive">Email не совпадает</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={closeDeleteDialog}>
+              Отмена
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteUser}
+              disabled={!isEmailMatch || deleteUserMutation.isPending}
+            >
+              {deleteUserMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Удаляем...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Удалить пользователя
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
