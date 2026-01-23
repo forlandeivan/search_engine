@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@/lib/zod-resolver";
 import { z } from "zod";
@@ -219,6 +219,7 @@ export function SkillFormContent({
   const lastSavedRef = useRef<SkillFormValues>(defaultFormValues);
   const currentTab = activeTab ?? internalTab;
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [skillActionsChanges, setSkillActionsChanges] = useState<SkillActionChange[]>([]);
   const [callbackTokenStatus, setCallbackTokenStatus] = useState<{
     isSet: boolean;
@@ -697,7 +698,11 @@ export function SkillFormContent({
                 throw new Error(`Не удалось сохранить действие ${change.actionId}`);
               }
             }
-            setSkillActionsChanges([]); // Очищаем изменения после успешного сохранения
+            // Инвалидируем и перезагружаем запрос действий, чтобы обновить данные на фронтенде
+            await queryClient.invalidateQueries({ queryKey: ["skill-actions", skill.id] });
+            await queryClient.refetchQueries({ queryKey: ["skill-actions", skill.id] });
+            // Очищаем изменения после успешного сохранения и обновления данных
+            setSkillActionsChanges([]);
           } catch (err) {
             const message = err instanceof Error ? err.message : "Не удалось сохранить изменения действий";
             toast({
