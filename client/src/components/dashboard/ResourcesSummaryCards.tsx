@@ -7,6 +7,7 @@ import { Sparkles, Zap, MessageSquare, Brain, Users } from "lucide-react";
 import { useSkills } from "@/hooks/useSkills";
 import { useChats } from "@/hooks/useChats";
 import { apiRequest } from "@/lib/queryClient";
+import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
 
 // =============================================================================
 // Types
@@ -151,6 +152,22 @@ export function ResourcesSummaryCards({ workspaceId, isSessionLoading }: Resourc
     enabled: Boolean(workspaceId),
   });
 
+  // Knowledge Bases
+  const { data: knowledgeBasesData, isLoading: knowledgeBasesLoading } = useQuery<KnowledgeBaseSummary[]>({
+    queryKey: ["knowledge-bases", workspaceId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/knowledge/bases", undefined, undefined, {
+        workspaceId: workspaceId ?? undefined,
+      });
+      const data = await res.json();
+      // Поддержка обоих форматов: массив или { bases: [...] }
+      if (Array.isArray(data)) return data;
+      if (data?.bases && Array.isArray(data.bases)) return data.bases;
+      return [];
+    },
+    enabled: Boolean(workspaceId),
+  });
+
   // Computed values
   const skillsCount = skills.length;
   const skillsNewThisWeek = useMemo(() => {
@@ -169,9 +186,15 @@ export function ResourcesSummaryCards({ workspaceId, isSessionLoading }: Resourc
 
   const membersCount = membersData?.members?.length ?? 0;
 
+  const knowledgeBasesCount = knowledgeBasesData?.length ?? 0;
+  const indexingBasesCount = useMemo(() => {
+    if (!knowledgeBasesData) return 0;
+    return knowledgeBasesData.filter((kb) => kb.indexStatus === "indexing").length;
+  }, [knowledgeBasesData]);
+
   // Loading state
   const isLoading =
-    isSessionLoading || skillsLoading || chatsLoading || actionsLoading || membersLoading;
+    isSessionLoading || skillsLoading || chatsLoading || actionsLoading || membersLoading || knowledgeBasesLoading;
 
   // Cards configuration
   const cards: ResourceCard[] = useMemo(
@@ -206,8 +229,8 @@ export function ResourcesSummaryCards({ workspaceId, isSessionLoading }: Resourc
       {
         id: "knowledge",
         title: "Базы знаний",
-        value: "—",
-        subtitle: undefined,
+        value: knowledgeBasesCount,
+        subtitle: indexingBasesCount > 0 ? `индексируется: ${indexingBasesCount}` : undefined,
         icon: Brain,
         href: "/knowledge",
         isLoading,
@@ -228,6 +251,8 @@ export function ResourcesSummaryCards({ workspaceId, isSessionLoading }: Resourc
       actionsCount,
       activeActionsCount,
       todayChatsCount,
+      knowledgeBasesCount,
+      indexingBasesCount,
       membersCount,
       workspaceId,
       isLoading,
