@@ -191,9 +191,9 @@ export default function DashboardPage() {
               return (
                 <Card key={base.id} className="flex h-full flex-col">
                   <CardHeader className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <CardTitle className="text-lg font-semibold">{base.name}</CardTitle>
-                      <Badge variant="outline" className="border-dashed text-xs uppercase tracking-wide">
+                    <div className="flex items-center justify-between gap-2 min-w-0">
+                      <CardTitle className="text-lg font-semibold truncate">{base.name}</CardTitle>
+                      <Badge variant="outline" className="border-dashed text-xs uppercase tracking-wide shrink-0">
                         {getKnowledgeBaseSourceLabel(base.sourceType)}
                       </Badge>
                     </div>

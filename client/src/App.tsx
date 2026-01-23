@@ -18,6 +18,9 @@ console.log("[App.tsx] queryClient loaded");
 import { Toaster } from "@/components/ui/toaster";
 console.log("[App.tsx] Toaster loaded");
 
+import { useToast } from "@/hooks/use-toast";
+console.log("[App.tsx] useToast loaded");
+
 import { TooltipProvider } from "@/components/ui/tooltip";
 console.log("[App.tsx] TooltipProvider loaded");
 
@@ -118,7 +121,9 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
               onClick={() => {
                 // Очищаем кэш React Query и перезагружаем
                 queryClient.clear();
-                sessionStorage.removeItem("chunk-reload-attempt"); // Сбрасываем счетчик перезагрузок
+                // Сбрасываем счетчики перезагрузок (используем оба ключа на случай рассинхронизации)
+                sessionStorage.removeItem("chunk-reload-attempt");
+                sessionStorage.removeItem("chunk-reload-count");
                 window.location.reload();
               }}
               className="mt-2"
@@ -404,6 +409,7 @@ function AppContent() {
   const [location, setLocation] = useLocation();
   // Флаг для отслеживания первого рендера - при первом рендере ВСЕГДА ждём fetch
   const [initialFetchDone, setInitialFetchDone] = useState(false);
+  const { toast } = useToast();
   
   const sessionQuery = useQuery({
     queryKey: ["/api/auth/session"],
@@ -413,6 +419,31 @@ function AppContent() {
     refetchOnMount: true, // Проверяем сессию при монтировании, если данные устарели
     retry: false, // Не ретраим неудачные запросы сессии - сразу показываем AuthPage
   });
+
+  // Проверяем, была ли выполнена автоматическая перезагрузка
+  useEffect(() => {
+    const reloadCount = parseInt(sessionStorage.getItem("chunk-reload-count") || "0", 10);
+    const wasAutoReloaded = sessionStorage.getItem("chunk-auto-reload-success");
+    
+    if (reloadCount > 0 && !wasAutoReloaded) {
+      // Помечаем что уведомление показано
+      sessionStorage.setItem("chunk-auto-reload-success", "true");
+      
+      // Показываем уведомление об успешной перезагрузке
+      toast({
+        title: "Приложение обновлено",
+        description: "Страница была автоматически перезагружена для применения обновлений.",
+        duration: 5000,
+      });
+      
+      // Очищаем счетчики перезагрузок после успешной загрузки
+      setTimeout(() => {
+        sessionStorage.removeItem("chunk-reload-attempt");
+        sessionStorage.removeItem("chunk-reload-count");
+        sessionStorage.removeItem("chunk-auto-reload-success");
+      }, 1000);
+    }
+  }, []); // Выполняется один раз при монтировании
 
   // Отмечаем что первый fetch завершён (успешно или с ошибкой)
   useEffect(() => {
