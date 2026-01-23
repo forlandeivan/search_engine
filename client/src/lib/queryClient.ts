@@ -121,25 +121,56 @@ export async function apiRequest(
     delete resolvedHeaders["Content-Type"];
   }
 
+  // Set workspace header if we have a valid workspace ID (not empty string)
   if (
     resolvedWorkspaceId &&
+    resolvedWorkspaceId.trim() !== "" &&
     !("X-Workspace-Id" in resolvedHeaders) &&
     !("x-workspace-id" in resolvedHeaders)
   ) {
     resolvedHeaders["X-Workspace-Id"] = resolvedWorkspaceId;
   }
 
-  const res = await fetch(url, {
-    method,
-    headers: resolvedHeaders,
-    body: data
-      ? isFormData
-        ? (data as BodyInit)
-        : JSON.stringify(data)
-      : undefined,
-    credentials: "include",
-    signal: options?.signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: resolvedHeaders,
+      body: data
+        ? isFormData
+          ? (data as BodyInit)
+          : JSON.stringify(data)
+        : undefined,
+      credentials: "include",
+      signal: options?.signal,
+    });
+  } catch (error) {
+    // Обрабатываем сетевые ошибки fetch (например, "fetch failed")
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isNetworkError = 
+      errorMessage.includes("fetch failed") ||
+      errorMessage.includes("Failed to fetch") ||
+      errorMessage.includes("NetworkError") ||
+      errorMessage.includes("Network request failed");
+    
+    if (isNetworkError) {
+      throw new ApiError("Не удалось выполнить запрос. Проверьте подключение к интернету и доступность сервера.", {
+        code: "NETWORK_ERROR",
+        status: 0,
+        details: { originalError: errorMessage },
+      });
+    }
+    
+    // Для других ошибок пробрасываем как есть, но оборачиваем в ApiError
+    throw new ApiError(
+      errorMessage || "Неизвестная ошибка при выполнении запроса",
+      {
+        code: "FETCH_ERROR",
+        status: 0,
+        details: { originalError: error },
+      }
+    );
+  }
 
   await throwIfResNotOk(res);
   return res;

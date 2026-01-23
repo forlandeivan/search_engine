@@ -1064,6 +1064,58 @@ export default function ChatPage({ params }: ChatPageProps) {
     };
   }, []);
 
+  // Автофокус после завершения стриминга
+  useEffect(() => {
+    if (!isStreaming && chatInputRef.current?.focus) {
+      chatInputRef.current.focus();
+    }
+  }, [isStreaming]);
+
+  // Автофокус при смене чата
+  useEffect(() => {
+    if (effectiveChatId !== undefined) {
+      // Небольшая задержка для завершения рендера
+      const timer = setTimeout(() => {
+        chatInputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [effectiveChatId]);
+
+  // Автофокус при первой загрузке
+  useEffect(() => {
+    if (!disableInput) {
+      const timer = setTimeout(() => {
+        chatInputRef.current?.focus();
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Только при монтировании
+
+  // Type-anywhere: глобальный перехват клавиатуры
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Пропускаем если уже в поле ввода
+      const activeEl = document.activeElement;
+      const isInputFocused = activeEl?.tagName === 'INPUT' 
+        || activeEl?.tagName === 'TEXTAREA'
+        || activeEl?.getAttribute('contenteditable') === 'true';
+      if (isInputFocused) return;
+
+      // Пропускаем системные комбинации и специальные клавиши
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key.length !== 1) return; // Только печатные символы
+      if (disableInput) return;
+
+      // Фокусируемся на input
+      chatInputRef.current?.focus();
+    };
+
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => document.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [disableInput]);
+
   // Вычисляем currentAction для текущего чата
   const currentBotAction = useMemo(() => {
     if (!effectiveChatId) return null;

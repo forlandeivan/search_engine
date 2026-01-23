@@ -42,6 +42,7 @@ type ChatInputProps = {
 
 export type ChatInputHandle = {
   handleFileDrop: (file: File) => void;
+  focus: () => void;
 };
 
 const ACCEPTED_AUDIO_TYPES = ".ogg,.webm,.wav,.mp3,.m4a,.aac,.flac";
@@ -625,9 +626,10 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     [disabled, validateAudioFile, disableAudioTranscription, handlePreUploadAudio, onSendFile, handleSendFile],
   );
 
-  // Expose handleFileDrop method via ref for parent components
+  // Expose handleFileDrop and focus methods via ref for parent components
   useImperativeHandle(ref, () => ({
     handleFileDrop: handleExternalFileDrop,
+    focus: () => textareaRef.current?.focus(),
   }), [handleExternalFileDrop]);
 
   useEffect(() => {

@@ -16,8 +16,10 @@ import type { Readable } from "stream";
 import { downloadMinioClient, minioClient } from "./minio-client";
 import { storage } from "./storage";
 import { adjustWorkspaceStorageUsageBytes } from "./usage/usage-service";
+import { createLogger } from "./lib/logger";
 
 const BUCKET_PREFIX = (process.env.WORKSPACE_BUCKET_PREFIX || "ws-").trim();
+const logger = createLogger('workspace-storage');
 
 /**
  * Формирует имя бакета для рабочего пространства.
@@ -65,7 +67,34 @@ export async function ensureWorkspaceBucketExists(workspaceId: string): Promise<
   }
 
   const bucketName = getWorkspaceBucketName(workspaceId);
-  await createBucketIfNeeded(bucketName);
+  
+  try {
+    await createBucketIfNeeded(bucketName);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorCode = (error as any)?.code || (error as any)?.name;
+    
+    // Проверяем на ошибки подключения к хранилищу
+    if (
+      errorCode === 'ECONNREFUSED' ||
+      errorCode === 'ETIMEDOUT' ||
+      errorCode === 'ENOTFOUND' ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('ETIMEDOUT') ||
+      errorMessage.includes('connect') ||
+      errorMessage.includes('connection')
+    ) {
+      logger.error('[workspace-storage] Storage connection error in ensureWorkspaceBucketExists', {
+        originalError: errorMessage,
+        errorCode,
+        workspaceId,
+        bucketName,
+      });
+      throw new Error('Не удалось подключиться к хранилищу файлов.');
+    }
+    
+    throw error;
+  }
 
   await storage.setWorkspaceStorageBucket(workspaceId, bucketName);
 
@@ -276,30 +305,78 @@ export async function initJsonImportMultipartUpload(
     throw new Error(`File size exceeds maximum allowed size of ${JSON_IMPORT_MAX_FILE_SIZE} bytes`);
   }
 
-  const bucket = await ensureWorkspaceBucketExists(workspaceId);
-  const timestamp = Date.now();
-  const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const fileKey = `json-imports/${timestamp}/${sanitizedFileName}`;
+  try {
+    const bucket = await ensureWorkspaceBucketExists(workspaceId);
+    
+    const timestamp = Date.now();
+    const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const fileKey = `json-imports/${timestamp}/${sanitizedFileName}`;
 
-  const command = new CreateMultipartUploadCommand({
-    Bucket: bucket,
-    Key: fileKey,
-    ContentType: contentType,
-  });
+    const command = new CreateMultipartUploadCommand({
+      Bucket: bucket,
+      Key: fileKey,
+      ContentType: contentType,
+    });
 
-  const response = await minioClient.send(command);
-  if (!response.UploadId) {
-    throw new Error("Failed to create multipart upload");
+    const response = await minioClient.send(command);
+    
+    if (!response.UploadId) {
+      throw new Error("Failed to create multipart upload");
+    }
+
+    const totalParts = Math.ceil(fileSize / JSON_IMPORT_PART_SIZE);
+
+    return {
+      uploadId: response.UploadId,
+      fileKey,
+      partSize: JSON_IMPORT_PART_SIZE,
+      totalParts,
+    };
+  } catch (error) {
+    logger.error('[JSON-IMPORT-UPLOAD] Error in initJsonImportMultipartUpload', {
+      error: error instanceof Error ? error.message : String(error),
+      workspaceId,
+      fileName,
+    });
+    
+    // Преобразуем ошибки подключения к MinIO в понятные сообщения
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorCode = (error as any)?.code || (error as any)?.name;
+    
+    // Проверяем на ошибки подключения к хранилищу
+    if (
+      errorCode === 'ECONNREFUSED' ||
+      errorCode === 'ETIMEDOUT' ||
+      errorCode === 'ENOTFOUND' ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('ETIMEDOUT') ||
+      errorMessage.includes('connect') ||
+      errorMessage.includes('connection') ||
+      errorMessage.includes('ECONNRESET')
+    ) {
+      const storageError = new Error('Не удалось подключиться к хранилищу файлов.');
+      logger.error('[JSON-IMPORT-UPLOAD] Storage connection error', { 
+        originalError: errorMessage, 
+        errorCode,
+        workspaceId 
+      });
+      throw storageError;
+    }
+    
+    // Проверяем на другие ошибки S3/MinIO
+    if (errorMessage.includes('NoSuchBucket') || errorMessage.includes('BucketNotFound')) {
+      const bucketError = new Error('Бакет хранилища не найден. Обратитесь к администратору.');
+      logger.error('[JSON-IMPORT-UPLOAD] Bucket not found', { originalError: errorMessage, workspaceId });
+      throw bucketError;
+    }
+    
+    // Для остальных ошибок возвращаем общее сообщение
+    if (!errorMessage || errorMessage.trim() === '') {
+      throw new Error('Не удалось инициализировать загрузку файла в хранилище.');
+    }
+    
+    throw error;
   }
-
-  const totalParts = Math.ceil(fileSize / JSON_IMPORT_PART_SIZE);
-
-  return {
-    uploadId: response.UploadId,
-    fileKey,
-    partSize: JSON_IMPORT_PART_SIZE,
-    totalParts,
-  };
 }
 
 export async function generatePresignedPartUrls(

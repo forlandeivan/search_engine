@@ -831,8 +831,25 @@ knowledgeBaseRouter.post('/json-import/upload/init', asyncHandler(async (req, re
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
-  const { id: workspaceId } = getRequestWorkspace(req);
-  const payload = initUploadSchema.parse(req.body);
+  let workspaceId: string;
+  try {
+    const workspace = getRequestWorkspace(req);
+    workspaceId = workspace.id;
+  } catch (error) {
+    logger.error('[JSON-IMPORT] Failed to get workspace from request', { 
+      error: error instanceof Error ? error.message : String(error),
+      hasXWorkspaceIdHeader: !!req.headers['x-workspace-id'],
+    });
+    return res.status(400).json({ error: 'Не указан workspace ID' });
+  }
+
+  let payload;
+  try {
+    payload = initUploadSchema.parse(req.body);
+  } catch (error) {
+    logger.error('[JSON-IMPORT] Failed to parse payload', { error: error instanceof Error ? error.message : String(error) });
+    return res.status(400).json({ error: 'Неверный формат данных' });
+  }
 
   try {
     const result = await initJsonImportMultipartUpload(
@@ -850,9 +867,21 @@ knowledgeBaseRouter.post('/json-import/upload/init', asyncHandler(async (req, re
       totalParts: result.totalParts,
     });
   } catch (error) {
-    logger.error('Failed to init multipart upload', { error, workspaceId, fileName: payload.fileName });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    
+    logger.error('[JSON-IMPORT] Failed to init multipart upload', { 
+      error: errorMessage,
+      workspaceId, 
+      fileName: payload.fileName 
+    });
+    
+    // Убеждаемся, что сообщение об ошибке не пустое
+    const finalErrorMessage = errorMessage && errorMessage.trim() !== '' 
+      ? errorMessage 
+      : 'Не удалось инициализировать загрузку файла';
+    
     res.status(500).json({ 
-      error: error instanceof Error ? error.message : 'Не удалось инициализировать загрузку файла' 
+      error: finalErrorMessage
     });
   }
 }));

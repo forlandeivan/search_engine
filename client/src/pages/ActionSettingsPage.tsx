@@ -120,8 +120,7 @@ export default function ActionSettingsPage({ skillId, actionId }: ActionSettings
     const nextState: SkillActionRowState = { ...row, ...next, saving: true };
     const payload = {
       enabled: nextState.enabled,
-      enabledPlacements:
-        nextState.enabledPlacements.length > 0 ? nextState.enabledPlacements : [...(row.action.placements ?? [])],
+      enabledPlacements: nextState.enabledPlacements, // Убрана логика автозаполнения - пустой массив валиден
       labelOverride: nextState.labelOverride && nextState.labelOverride.trim().length > 0 ? nextState.labelOverride : null,
     };
     setRow({ ...nextState });
@@ -250,7 +249,7 @@ export default function ActionSettingsPage({ skillId, actionId }: ActionSettings
                                 onCheckedChange={(checked) => {
                                   if (!supported) return;
                                   const nextPlacements = checked
-                                    ? [...row.enabledPlacements, placement]
+                                    ? [...row.enabledPlacements, placement].filter((p, i, arr) => arr.indexOf(p) === i) // Убираем дубликаты
                                     : row.enabledPlacements.filter((p) => p !== placement);
                                   saveChanges({ enabledPlacements: nextPlacements });
                                 }}

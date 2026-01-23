@@ -224,7 +224,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     for (const provider of llmProviders) {
       const models = byProvider[provider.id] ?? [];
       for (const model of models) {
-        const labelText = `${provider.name} ? ${model.displayName}`;
+        const labelText = model.displayName;
         options.push({
           key: buildLlmKey(provider.id, model.key),
           label: labelText,

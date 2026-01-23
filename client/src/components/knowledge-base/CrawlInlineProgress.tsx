@@ -38,6 +38,7 @@ type CrawlInlineProgressProps = {
   pollIntervalMs?: number;
   onStateChange?: (state: CrawlInlineState) => void;
   onDocumentsSaved?: (delta: number, job: KnowledgeBaseCrawlJobStatus) => void;
+  initialJob?: KnowledgeBaseCrawlJobStatus | null; // Начальное состояние джобы (например, при создании базы)
 };
 
 export function CrawlInlineProgress({
@@ -45,11 +46,14 @@ export function CrawlInlineProgress({
   pollIntervalMs = 4000,
   onStateChange,
   onDocumentsSaved,
+  initialJob = null,
 }: CrawlInlineProgressProps) {
   const [job, setJob] = useState<KnowledgeBaseCrawlJobStatus | null>(null);
+  const [lastRun, setLastRun] = useState<KnowledgeBaseCrawlJobStatus | null>(null); // Завершённая джоба для отображения
   const [events, setEvents] = useState<CrawlActivityEvent[]>([]);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isInitialLoad, setIsInitialLoad] = useState(true); // Флаг первой загрузки
   const [isPausing, setIsPausing] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [isCanceling, setIsCanceling] = useState(false);
@@ -91,6 +95,7 @@ export function CrawlInlineProgress({
       if (isTerminal) {
         previousJobRef.current = incoming;
         setJob(null);
+        setLastRun(incoming); // Сохраняем завершённую джобу для отображения
         setEvents([]);
         setConnectionError(null);
         setActionError(null);
@@ -206,6 +211,29 @@ export function CrawlInlineProgress({
     [baseId],
   );
 
+  // Инициализация начального состояния джобы при создании базы
+  useEffect(() => {
+    if (!baseId || !initialJob) return;
+    
+    // Проверяем, что initialJob относится к текущей базе
+    if (initialJob.baseId !== baseId) return;
+    
+    // Если уже есть job или previousJobRef для этой джобы, не инициализируем повторно
+    const isSameJob = previousJobRef.current?.jobId === initialJob.jobId;
+    if (job && isSameJob) return;
+    if (previousJobRef.current && isSameJob) return;
+    
+    // Если джоба уже завершена, сохраняем её как lastRun
+    if (TERMINAL_STATUSES.includes(initialJob.status)) {
+      setLastRun(initialJob);
+      previousJobRef.current = initialJob;
+      onStateChangeRef.current?.({ running: false, job: null, lastRun: initialJob });
+    } else {
+      // Для активной джобы инициализируем состояние и начинаем отслеживание
+      handleJobUpdate(initialJob);
+    }
+  }, [initialJob, baseId, job, handleJobUpdate]);
+
   useEffect(() => {
     if (!baseId) {
       if (timerRef.current) {
@@ -215,12 +243,23 @@ export function CrawlInlineProgress({
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
       setJob(null);
+      setLastRun(null);
       setEvents([]);
       setConnectionError(null);
       setActionError(null);
+      setIsInitialLoad(true);
       previousJobRef.current = null;
       onStateChangeRef.current?.({ running: false, job: null });
       return;
+    }
+
+    // Сбрасываем состояние при смене baseId
+    setIsInitialLoad(true);
+    
+    // Сбрасываем lastRun при смене baseId, только если нет initialJob для этого baseId
+    // Это нужно, чтобы не сбрасывать lastRun, если initialJob еще не обработан
+    if (!initialJob || initialJob.baseId !== baseId) {
+      setLastRun(null);
     }
 
     let cancelled = false;
@@ -241,6 +280,7 @@ export function CrawlInlineProgress({
       abortControllerRef.current = controller;
 
       try {
+        setIsInitialLoad(false); // Первая загрузка завершена
         const response = await apiRequest(
           "GET",
           `/api/kb/${encodeURIComponent(baseId)}/crawl/active`,
@@ -255,18 +295,23 @@ export function CrawlInlineProgress({
         }
 
         if (!payload.running) {
-          const lastRun = payload.lastRun?.job ?? previousJobRef.current ?? null;
-          previousJobRef.current = lastRun;
+          const lastRunJob = payload.lastRun?.job ?? previousJobRef.current ?? null;
+          previousJobRef.current = lastRunJob;
           setJob(null);
+          // Сохраняем завершённую джобу для отображения (даже если краулинг завершен, показываем виджет)
+          setLastRun(lastRunJob);
           setEvents([]);
           setConnectionError(null);
-          if (baseId) {
+          if (baseId && lastRunJob) {
+            // Сохраняем завершенную джобу в localStorage для восстановления после обновления
+            updateKnowledgeBaseCrawlJob(baseId, lastRunJob);
+          } else if (baseId) {
             updateKnowledgeBaseCrawlJob(baseId, null);
           }
           onStateChangeRef.current?.({
             running: false,
             job: null,
-            lastRun: lastRun ?? undefined,
+            lastRun: lastRunJob ?? undefined,
           });
         } else {
           if (!payload.job) {
@@ -280,6 +325,7 @@ export function CrawlInlineProgress({
         if (cancelled || controller.signal.aborted) {
           return;
         }
+        setIsInitialLoad(false); // Первая загрузка завершена даже при ошибке
         const message =
           error instanceof Error ? error.message : "Не удалось получить статус краулинга";
         setConnectionError(message);
@@ -346,21 +392,84 @@ export function CrawlInlineProgress({
   }, [executeJobCommand]);
 
   const retry = useCallback(async () => {
-    await executeJobCommand("retry", setIsRetrying);
-  }, [executeJobCommand]);
+    // Для завершённой джобы используем jobId из lastRun
+    const jobToRetry = job || lastRun;
+    if (!jobToRetry) {
+      return;
+    }
 
-  if (!job) {
+    setIsRetrying(true);
+    setActionError(null);
+    try {
+      const response = await apiRequest(
+        "POST",
+        `/api/jobs/${encodeURIComponent(jobToRetry.jobId)}/retry`,
+      );
+      const payload = (await response.json()) as { job: KnowledgeBaseCrawlJobStatus };
+      handleJobUpdate(payload.job);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [job, lastRun, handleJobUpdate]);
+
+  // Отображаем активную джобу или последнюю завершённую джобу
+  // Если есть initialJob, используем его как fallback, чтобы показать прогресс сразу
+  // Также показываем виджет во время первой загрузки или если есть ошибка подключения
+  const jobToDisplay = job || lastRun || (initialJob && initialJob.baseId === baseId ? initialJob : null);
+  
+  // Показываем виджет если:
+  // 1. Есть джоба для отображения
+  // 2. Идет первая загрузка (чтобы не мигать при обновлении страницы)
+  // 3. Есть ошибка подключения (чтобы пользователь видел проблему)
+  if (!jobToDisplay && !isInitialLoad && !connectionError) {
     return null;
   }
+  
+  // Если нет джобы, но есть ошибка или идет загрузка, показываем виджет с placeholder
+  if (!jobToDisplay) {
+    // Создаем placeholder джобу для отображения во время загрузки или при ошибке
+    const placeholderJob: KnowledgeBaseCrawlJobStatus = {
+      jobId: 'loading',
+      baseId: baseId || '',
+      status: connectionError ? 'failed' : 'running',
+      percent: 0,
+      discovered: 0,
+      fetched: 0,
+      saved: 0,
+      errors: 0,
+      failed: 0,
+      etaSec: null,
+      lastUrl: null,
+      lastError: connectionError || null,
+      pagesNew: null,
+      extracted: null,
+      queued: null,
+    };
+    
+    return (
+      <KnowledgeBaseCrawlProgress
+        job={placeholderJob}
+        events={[]}
+        connectionError={connectionError}
+        actionError={actionError}
+      />
+    );
+  }
+
+  // Для завершённой джобы не показываем кнопки управления
+  const isTerminal = TERMINAL_STATUSES.includes(jobToDisplay.status);
+  const canControl = !isTerminal && job !== null;
 
   return (
     <KnowledgeBaseCrawlProgress
-      job={job}
+      job={jobToDisplay}
       events={events}
-      onPause={pause}
-      onResume={resume}
-      onCancel={cancel}
-      onRetry={retry}
+      onPause={canControl ? pause : undefined}
+      onResume={canControl ? resume : undefined}
+      onCancel={canControl ? cancel : undefined}
+      onRetry={isTerminal ? retry : undefined}
       isPausing={isPausing}
       isResuming={isResuming}
       isCanceling={isCanceling}

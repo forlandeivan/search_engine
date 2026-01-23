@@ -6,7 +6,9 @@ console.log("[main.tsx] Script started loading");
 // ===============================================
 
 const CHUNK_RELOAD_KEY = "chunk-reload-attempt";
-const CHUNK_RELOAD_TIMEOUT = 10000; // 10 секунд между попытками
+const CHUNK_RELOAD_COUNT_KEY = "chunk-reload-count";
+const CHUNK_RELOAD_TIMEOUT = 5000; // 5 секунд между попытками
+const MAX_RELOAD_ATTEMPTS = 2; // Максимум 2 автоматические попытки перезагрузки
 
 /**
  * Проверяет, является ли ошибка ошибкой загрузки чанка
@@ -29,8 +31,26 @@ function isChunkLoadError(error: unknown): boolean {
 function canAutoReload(): boolean {
   try {
     const lastReload = sessionStorage.getItem(CHUNK_RELOAD_KEY);
+    const reloadCount = parseInt(sessionStorage.getItem(CHUNK_RELOAD_COUNT_KEY) || "0", 10);
+    
+    // Если достигли максимума попыток - не перезагружаем
+    if (reloadCount >= MAX_RELOAD_ATTEMPTS) {
+      console.warn(
+        `[canAutoReload] Max reload attempts (${MAX_RELOAD_ATTEMPTS}) reached, stopping auto-reload`
+      );
+      return false;
+    }
+    
     if (!lastReload) return true;
-    return Date.now() - parseInt(lastReload, 10) > CHUNK_RELOAD_TIMEOUT;
+    
+    const timeSinceLastReload = Date.now() - parseInt(lastReload, 10);
+    if (timeSinceLastReload > CHUNK_RELOAD_TIMEOUT) {
+      // Если прошло достаточно времени - сбрасываем счетчик
+      sessionStorage.setItem(CHUNK_RELOAD_COUNT_KEY, "0");
+      return true;
+    }
+    
+    return false;
   } catch {
     return true;
   }
@@ -41,7 +61,10 @@ function canAutoReload(): boolean {
  */
 function performAutoReload(): void {
   try {
+    const currentCount = parseInt(sessionStorage.getItem(CHUNK_RELOAD_COUNT_KEY) || "0", 10);
     sessionStorage.setItem(CHUNK_RELOAD_KEY, Date.now().toString());
+    sessionStorage.setItem(CHUNK_RELOAD_COUNT_KEY, (currentCount + 1).toString());
+    console.info(`[performAutoReload] Performing reload attempt ${currentCount + 1}/${MAX_RELOAD_ATTEMPTS}`);
   } catch {
     // sessionStorage может быть недоступен
   }

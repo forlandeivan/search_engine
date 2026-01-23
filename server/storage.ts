@@ -7,6 +7,7 @@ import {
   authProviders,
   workspaces,
   workspaceMembers,
+  workspaceInvitations,
   workspaceVectorCollections,
   workspaceMemberRoles,
   skills,
@@ -51,6 +52,7 @@ import {
   asrExecutions,
   guardBlockEvents,
   workspaceCreditLedger,
+  workspaceCreditAccounts,
   systemNotificationLogs,
   type KnowledgeBaseIndexingJob,
   type KnowledgeBaseIndexingJobInsert,
@@ -135,6 +137,7 @@ import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { tariffPlanService } from "./tariff-plan-service";
+import { grantSubscriptionCreditsOnEvent } from "./credits-service";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { getCache, cacheKeys } from "./cache";
 import type {
@@ -143,6 +146,9 @@ import type {
   KnowledgeBaseRagConfig,
 } from "@shared/knowledge-base";
 import { getQdrantClient } from "./qdrant";
+import { createLogger } from "./lib/logger";
+
+const logger = createLogger('storage');
 
 let globalUserAuthSchemaReady = false;
 
@@ -9602,6 +9608,201 @@ export class DatabaseStorage implements IStorage {
     return await this.db.select().from(users).orderBy(desc(users.createdAt));
   }
 
+  /**
+   * List all workspaces owned by a user
+   */
+  async listUserOwnedWorkspaces(userId: string): Promise<Workspace[]> {
+    return await this.db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.ownerId, userId))
+      .orderBy(desc(workspaces.createdAt));
+  }
+
+  /**
+   * Delete a workspace and all related data (cascade)
+   */
+  async deleteWorkspace(workspaceId: string): Promise<boolean> {
+    // Подсчитываем связанные сущности перед удалением для логирования
+    const [
+      skillsCount,
+      knowledgeBasesCount,
+      chatSessionsCount,
+      filesCount,
+      actionsCount,
+      membersCount,
+      invitationsCount,
+      creditAccount,
+    ] = await Promise.all([
+      this.db.select({ count: sql<number>`count(*)` }).from(skills).where(eq(skills.workspaceId, workspaceId)),
+      this.db.select({ count: sql<number>`count(*)` }).from(knowledgeBases).where(eq(knowledgeBases.workspaceId, workspaceId)),
+      this.db.select({ count: sql<number>`count(*)` }).from(chatSessions).where(eq(chatSessions.workspaceId, workspaceId)),
+      this.db.select({ count: sql<number>`count(*)` }).from(files).where(eq(files.workspaceId, workspaceId)),
+      this.db.select({ count: sql<number>`count(*)` }).from(botActions).where(eq(botActions.workspaceId, workspaceId)),
+      this.db.select({ count: sql<number>`count(*)` }).from(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId)),
+      this.db.select({ count: sql<number>`count(*)` }).from(workspaceInvitations).where(eq(workspaceInvitations.workspaceId, workspaceId)),
+      this.db.select().from(workspaceCreditAccounts).where(eq(workspaceCreditAccounts.workspaceId, workspaceId)).limit(1),
+    ]);
+
+    const stats = {
+      skills: Number(skillsCount[0]?.count ?? 0),
+      knowledgeBases: Number(knowledgeBasesCount[0]?.count ?? 0),
+      chatSessions: Number(chatSessionsCount[0]?.count ?? 0),
+      files: Number(filesCount[0]?.count ?? 0),
+      actions: Number(actionsCount[0]?.count ?? 0),
+      members: Number(membersCount[0]?.count ?? 0),
+      invitations: Number(invitationsCount[0]?.count ?? 0),
+      hasCreditAccount: creditAccount.length > 0,
+    };
+
+    logger.info({
+      workspaceId,
+      beforeDelete: stats,
+    }, '[deleteWorkspace] Starting workspace deletion with cascade');
+
+    const result = await this.db
+      .delete(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .returning({ id: workspaces.id });
+
+    const deleted = result.length > 0;
+
+    if (deleted) {
+      // Проверяем что всё удалилось каскадно
+      const [
+        skillsAfter,
+        knowledgeBasesAfter,
+        chatSessionsAfter,
+        filesAfter,
+        actionsAfter,
+        membersAfter,
+        invitationsAfter,
+        creditAccountAfter,
+      ] = await Promise.all([
+        this.db.select({ count: sql<number>`count(*)` }).from(skills).where(eq(skills.workspaceId, workspaceId)),
+        this.db.select({ count: sql<number>`count(*)` }).from(knowledgeBases).where(eq(knowledgeBases.workspaceId, workspaceId)),
+        this.db.select({ count: sql<number>`count(*)` }).from(chatSessions).where(eq(chatSessions.workspaceId, workspaceId)),
+        this.db.select({ count: sql<number>`count(*)` }).from(files).where(eq(files.workspaceId, workspaceId)),
+        this.db.select({ count: sql<number>`count(*)` }).from(botActions).where(eq(botActions.workspaceId, workspaceId)),
+        this.db.select({ count: sql<number>`count(*)` }).from(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId)),
+        this.db.select({ count: sql<number>`count(*)` }).from(workspaceInvitations).where(eq(workspaceInvitations.workspaceId, workspaceId)),
+        this.db.select().from(workspaceCreditAccounts).where(eq(workspaceCreditAccounts.workspaceId, workspaceId)).limit(1),
+      ]);
+
+      const afterStats = {
+        skills: Number(skillsAfter[0]?.count ?? 0),
+        knowledgeBases: Number(knowledgeBasesAfter[0]?.count ?? 0),
+        chatSessions: Number(chatSessionsAfter[0]?.count ?? 0),
+        files: Number(filesAfter[0]?.count ?? 0),
+        actions: Number(actionsAfter[0]?.count ?? 0),
+        members: Number(membersAfter[0]?.count ?? 0),
+        invitations: Number(invitationsAfter[0]?.count ?? 0),
+        hasCreditAccount: creditAccountAfter.length > 0,
+      };
+
+      const hasOrphans = Object.values(afterStats).some(v => (typeof v === 'number' ? v > 0 : v === true));
+
+      if (hasOrphans) {
+        logger.warn({
+          workspaceId,
+          beforeDelete: stats,
+          afterDelete: afterStats,
+        }, '[deleteWorkspace] ⚠️ WARNING: Found orphaned entities after workspace deletion!');
+      } else {
+        logger.info({
+          workspaceId,
+          beforeDelete: stats,
+          afterDelete: afterStats,
+        }, '[deleteWorkspace] ✅ Workspace and all related entities deleted successfully');
+      }
+    } else {
+      logger.warn({ workspaceId }, '[deleteWorkspace] Workspace not found or already deleted');
+    }
+
+    return deleted;
+  }
+
+  /**
+   * Delete a user (cascade will remove related data)
+   */
+  async deleteUser(userId: string): Promise<boolean> {
+    await this.ensureUserAuthColumns();
+
+    // Подсчитываем связанные сущности перед удалением
+    const [
+      ownedWorkspacesCount,
+      membershipsCount,
+      invitationsSentCount,
+      personalApiTokensCount,
+    ] = await Promise.all([
+      this.db.select({ count: sql<number>`count(*)` }).from(workspaces).where(eq(workspaces.ownerId, userId)),
+      this.db.select({ count: sql<number>`count(*)` }).from(workspaceMembers).where(eq(workspaceMembers.userId, userId)),
+      this.db.select({ count: sql<number>`count(*)` }).from(workspaceInvitations).where(eq(workspaceInvitations.invitedByUserId, userId)),
+      this.db.select({ count: sql<number>`count(*)` }).from(personalApiTokens).where(eq(personalApiTokens.userId, userId)),
+    ]);
+
+    const stats = {
+      ownedWorkspaces: Number(ownedWorkspacesCount[0]?.count ?? 0),
+      memberships: Number(membershipsCount[0]?.count ?? 0),
+      invitationsSent: Number(invitationsSentCount[0]?.count ?? 0),
+      personalApiTokens: Number(personalApiTokensCount[0]?.count ?? 0),
+    };
+
+    logger.info({
+      userId,
+      beforeDelete: stats,
+    }, '[deleteUser] Starting user deletion with cascade');
+
+    const result = await this.db
+      .delete(users)
+      .where(eq(users.id, userId))
+      .returning({ id: users.id });
+
+    const deleted = result.length > 0;
+
+    if (deleted) {
+      // Проверяем что всё удалилось каскадно
+      const [
+        ownedWorkspacesAfter,
+        membershipsAfter,
+        invitationsSentAfter,
+        personalApiTokensAfter,
+      ] = await Promise.all([
+        this.db.select({ count: sql<number>`count(*)` }).from(workspaces).where(eq(workspaces.ownerId, userId)),
+        this.db.select({ count: sql<number>`count(*)` }).from(workspaceMembers).where(eq(workspaceMembers.userId, userId)),
+        this.db.select({ count: sql<number>`count(*)` }).from(workspaceInvitations).where(eq(workspaceInvitations.invitedByUserId, userId)),
+        this.db.select({ count: sql<number>`count(*)` }).from(personalApiTokens).where(eq(personalApiTokens.userId, userId)),
+      ]);
+
+      const afterStats = {
+        ownedWorkspaces: Number(ownedWorkspacesAfter[0]?.count ?? 0),
+        memberships: Number(membershipsAfter[0]?.count ?? 0),
+        invitationsSent: Number(invitationsSentAfter[0]?.count ?? 0),
+        personalApiTokens: Number(personalApiTokensAfter[0]?.count ?? 0),
+      };
+
+      const hasOrphans = Object.values(afterStats).some(v => v > 0);
+
+      if (hasOrphans) {
+        logger.warn({
+          userId,
+          beforeDelete: stats,
+          afterDelete: afterStats,
+        }, '[deleteUser] ⚠️ WARNING: Found orphaned entities after user deletion!');
+      } else {
+        logger.info({
+          userId,
+          beforeDelete: stats,
+          afterDelete: afterStats,
+        }, '[deleteUser] ✅ User and all related entities deleted successfully');
+      }
+    } else {
+      logger.warn({ userId }, '[deleteUser] User not found or already deleted');
+    }
+
+    return deleted;
+  }
+
   async updateUserRole(userId: string, role: User["role"]): Promise<User | undefined> {
     await this.ensureUserAuthColumns();
     const [updatedUser] = await this.db
@@ -10014,6 +10215,20 @@ export class DatabaseStorage implements IStorage {
 
     if (!member) {
       throw new Error("Не удалось сохранить участника рабочего пространства");
+    }
+
+    // Начисляем начальные кредиты согласно тарифу
+    const creditsAmount = Number(freePlan.includedCreditsAmount ?? 0);
+    if (creditsAmount > 0) {
+      const sourceRef = `workspace-create:${workspace.id}:${freePlan.id}:${workspace.createdAt?.toISOString?.() ?? Date.now()}`;
+      await grantSubscriptionCreditsOnEvent({
+        workspaceId: workspace.id,
+        planId: freePlan.id,
+        planCode: freePlan.code,
+        amount: creditsAmount,
+        sourceRef,
+        period: "monthly",
+      });
     }
 
     try {

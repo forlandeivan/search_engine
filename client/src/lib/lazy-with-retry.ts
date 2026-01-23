@@ -2,7 +2,9 @@ import { lazy, type ComponentType } from "react";
 
 // Ключ для предотвращения бесконечных перезагрузок
 const RELOAD_KEY = "chunk-reload-attempt";
-const RELOAD_TIMEOUT = 10000; // 10 секунд между попытками
+const RELOAD_COUNT_KEY = "chunk-reload-count";
+const RELOAD_TIMEOUT = 5000; // 5 секунд между попытками
+const MAX_RELOAD_ATTEMPTS = 2; // Максимум 2 автоматические попытки перезагрузки
 
 /**
  * Проверяет, является ли ошибка ошибкой загрузки чанка (dynamic import)
@@ -32,12 +34,38 @@ export function isChunkLoadError(error: unknown): boolean {
  * (защита от бесконечного цикла перезагрузок)
  */
 export function canAutoReload(): boolean {
-  const lastReload = sessionStorage.getItem(RELOAD_KEY);
-  if (!lastReload) {
-    return true;
+  try {
+    const lastReload = sessionStorage.getItem(RELOAD_KEY);
+    const reloadCount = parseInt(sessionStorage.getItem(RELOAD_COUNT_KEY) || "0", 10);
+    
+    // Если достигли максимума попыток - не перезагружаем
+    if (reloadCount >= MAX_RELOAD_ATTEMPTS) {
+      console.warn(
+        `[canAutoReload] Max reload attempts (${MAX_RELOAD_ATTEMPTS}) reached, stopping auto-reload`
+      );
+      return false;
+    }
+    
+    // Если нет записи о последней перезагрузке - можно перезагружать
+    if (!lastReload) {
+      return true;
+    }
+    
+    // Проверяем, прошло ли достаточно времени с последней попытки
+    const now = Date.now();
+    const timeSinceLastReload = now - parseInt(lastReload, 10);
+    
+    if (timeSinceLastReload > RELOAD_TIMEOUT) {
+      // Если прошло достаточно времени - сбрасываем счетчик
+      sessionStorage.setItem(RELOAD_COUNT_KEY, "0");
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error("[canAutoReload] Error checking reload status:", error);
+    return true; // В случае ошибки разрешаем перезагрузку
   }
-  const now = Date.now();
-  return now - parseInt(lastReload, 10) > RELOAD_TIMEOUT;
 }
 
 /**
@@ -45,7 +73,14 @@ export function canAutoReload(): boolean {
  * с сохранением времени перезагрузки для защиты от бесконечного цикла
  */
 export function performAutoReload(): void {
-  sessionStorage.setItem(RELOAD_KEY, Date.now().toString());
+  try {
+    const currentCount = parseInt(sessionStorage.getItem(RELOAD_COUNT_KEY) || "0", 10);
+    sessionStorage.setItem(RELOAD_KEY, Date.now().toString());
+    sessionStorage.setItem(RELOAD_COUNT_KEY, (currentCount + 1).toString());
+    console.info(`[performAutoReload] Performing reload attempt ${currentCount + 1}/${MAX_RELOAD_ATTEMPTS}`);
+  } catch (error) {
+    console.error("[performAutoReload] Error saving reload state:", error);
+  }
   window.location.reload();
 }
 

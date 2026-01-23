@@ -205,10 +205,8 @@ export function CreateKnowledgeDocumentDialog({
   const jsonFileInputRef = useRef<HTMLInputElement | null>(null);
   
   // Bulk import hook
-  const resolvedWorkspaceId = workspaceId ?? "";
-  const bulkImportMutation = useBulkDocumentImport(resolvedWorkspaceId, baseId ?? "");
   const { uploadFile, uploadProgress, isUploading, error: uploadError, abort } = useJsonImportUpload(
-    resolvedWorkspaceId,
+    workspaceId ?? "",
   );
 
   const folderOptions = useMemo(() => buildFolderOptions(structure), [structure]);
@@ -740,7 +738,7 @@ export function CreateKnowledgeDocumentDialog({
             `/api/kb/${baseId}/crawl`,
             { crawl_config: crawlConfigPayload },
             undefined,
-            { workspaceId: resolvedWorkspaceId }
+            { workspaceId: workspaceId ?? undefined }
           );
 
           if (!response.ok) {
@@ -1304,7 +1302,7 @@ export function CreateKnowledgeDocumentDialog({
                     setJsonIsMappingValid(isValid);
                   }}
                   showValidationErrors={jsonShowMappingValidationErrors}
-                  workspaceId={resolvedWorkspaceId}
+                  workspaceId={workspaceId ?? ""}
                 />
               </div>
             )}

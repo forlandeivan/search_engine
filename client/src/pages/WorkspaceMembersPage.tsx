@@ -35,6 +35,21 @@ import { Loader2, Trash2, RefreshCw, Clock, Mail } from "lucide-react";
 import type { WorkspaceMemberRole } from "@shared/schema";
 
 // ============================================================================
+// Helpers
+// ============================================================================
+
+function formatDate(value: string | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Нет данных";
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    dateStyle: "medium",
+  }).format(date);
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -54,11 +69,10 @@ const roleLabels: Record<WorkspaceMemberRole, string> = {
 type WorkspaceMember = {
   id: string;
   email: string;
-  fullName: string;
+  fullName: string | null;
   role: WorkspaceMemberRole;
-  createdAt: string;
-  updatedAt: string;
-  isYou: boolean;
+  joinedAt: string;
+  isCurrentUser: boolean;
 };
 
 type MembersResponse = {
@@ -298,7 +312,7 @@ export default function WorkspaceMembersPage() {
                 <TableCell className="font-medium">
                   <div className="flex items-center gap-2">
                     <span>{member.fullName || "Без имени"}</span>
-                    {member.isYou ? <Badge variant="secondary">Это вы</Badge> : null}
+                    {member.isCurrentUser ? <Badge variant="secondary">Это вы</Badge> : null}
                   </div>
                 </TableCell>
                 <TableCell>{member.email}</TableCell>
@@ -308,7 +322,7 @@ export default function WorkspaceMembersPage() {
                     onValueChange={(value) =>
                       updateRoleMutation.mutate({ memberId: member.id, role: value as WorkspaceMemberRole })
                     }
-                    disabled={isUpdating || member.isYou}
+                    disabled={isUpdating || member.isCurrentUser}
                   >
                     <SelectTrigger className="w-[160px]">
                       <SelectValue />
@@ -324,7 +338,7 @@ export default function WorkspaceMembersPage() {
                 </TableCell>
                 <TableCell>
                   <div className="text-sm text-muted-foreground">
-                    {new Date(member.createdAt).toLocaleDateString("ru-RU")}
+                    {formatDate(member.joinedAt)}
                   </div>
                 </TableCell>
                 <TableCell className="text-right">
@@ -332,7 +346,7 @@ export default function WorkspaceMembersPage() {
                     variant="ghost"
                     size="icon"
                     onClick={() => removeMemberMutation.mutate({ memberId: member.id })}
-                    disabled={isRemoving || member.isYou}
+                    disabled={isRemoving || member.isCurrentUser}
                     aria-label={`Удалить ${member.fullName || member.email}`}
                   >
                     {isRemoving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}

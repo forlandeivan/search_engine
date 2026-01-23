@@ -48,6 +48,16 @@ export type InfoTooltipIconProps = {
 export type SkillActionsPreviewProps = {
   skillId: string;
   canEdit?: boolean;
+  onChange?: (changes: SkillActionChange[]) => void;
+  pendingChanges?: SkillActionChange[];
+  autoActionId?: string | null; // ID действия, выбранного как автодействие для транскрипции
+};
+
+export type SkillActionChange = {
+  actionId: string;
+  enabled: boolean;
+  enabledPlacements: string[];
+  labelOverride: string | null;
 };
 
 export type LlmSelectionOption = {

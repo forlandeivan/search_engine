@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@/lib/zod-resolver";
 import { z } from "zod";
@@ -99,6 +99,7 @@ import {
   SkillActionsPreview,
   ActionsPreviewForNewSkill,
   IconPicker,
+  type SkillActionChange,
 } from './SkillsPage/components';
 
 // Re-export for backward compatibility
@@ -218,6 +219,8 @@ export function SkillFormContent({
   const lastSavedRef = useRef<SkillFormValues>(defaultFormValues);
   const currentTab = activeTab ?? internalTab;
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [skillActionsChanges, setSkillActionsChanges] = useState<SkillActionChange[]>([]);
   const [callbackTokenStatus, setCallbackTokenStatus] = useState<{
     isSet: boolean;
     lastRotatedAt: string | null;
@@ -434,10 +437,34 @@ export function SkillFormContent({
       const response = await apiRequest("GET", `/api/skills/${skill!.id}/actions`);
       const json = await response.json();
       const items = (json.items ?? []) as SkillActionConfigItem[];
-      return items.filter((item) => item.action.target === "transcript");
+      return items.filter((item) => {
+        // Фильтруем только действия с target="transcript" и включенные (enabled)
+        if (item.action.target !== "transcript") {
+          return false;
+        }
+        // Действие должно быть включено для навыка
+        if (!item.skillAction?.enabled) {
+          return false;
+        }
+        // Должен быть хотя бы один enabled placement, который есть в action.placements
+        const allowedPlacements = item.action.placements ?? [];
+        const enabledPlacements = item.skillAction.enabledPlacements ?? [];
+        const hasValidPlacement = enabledPlacements.some((p) => allowedPlacements.includes(p));
+        return hasValidPlacement;
+      });
     },
   });
   const transcriptActions = transcriptActionsQuery.data ?? [];
+  
+  // Очищаем выбранное автодействие, если оно больше не доступно (отключено)
+  useEffect(() => {
+    if (!transcriptActionsQuery.isLoading && transcriptActionsQuery.data && isAutoActionMode) {
+      const selectedActionId = form.getValues("onTranscriptionAutoActionId");
+      if (selectedActionId && !transcriptActions.some((item) => item.action.id === selectedActionId)) {
+        form.setValue("onTranscriptionAutoActionId", "", { shouldDirty: true });
+      }
+    }
+  }, [transcriptActions, transcriptActionsQuery.isLoading, transcriptActionsQuery.data, isAutoActionMode, form]);
   const systemSkillDescription =
     skill?.systemKey === "UNICA_CHAT"
       ? "Настройки Unica Chat управляются администратором инстанса. Изменить их из рабочего пространства нельзя."
@@ -658,6 +685,50 @@ export function SkillFormContent({
       }
       const didSave = await onSubmit(nextValues);
       if (didSave) {
+        // Сохраняем изменения действий если они есть
+        if (skillActionsChanges.length > 0 && skill?.id) {
+          try {
+            const autoActionId = form.getValues("onTranscriptionAutoActionId") || skill?.onTranscriptionAutoActionId || null;
+            
+            // Проверяем, не пытаются ли отключить автодействие
+            if (autoActionId) {
+              const autoActionChange = skillActionsChanges.find(c => c.actionId === autoActionId);
+              if (autoActionChange && !autoActionChange.enabled) {
+                toast({
+                  title: "Невозможно отключить автодействие",
+                  description: "Это действие используется как автодействие для транскрипции. Сначала выберите другое действие или отключите автодействие на вкладке «Транскрипция».",
+                  variant: "destructive",
+                });
+                throw new Error("Нельзя отключить действие, используемое как автодействие");
+              }
+            }
+            
+            for (const change of skillActionsChanges) {
+              const response = await apiRequest("PUT", `/api/skills/${skill.id}/actions/${change.actionId}`, {
+                enabled: change.enabled,
+                enabledPlacements: change.enabledPlacements,
+                labelOverride: change.labelOverride,
+              });
+              if (!response.ok) {
+                throw new Error(`Не удалось сохранить действие ${change.actionId}`);
+              }
+            }
+            // Инвалидируем и перезагружаем запрос действий, чтобы обновить данные на фронтенде
+            await queryClient.invalidateQueries({ queryKey: ["skill-actions", skill.id] });
+            await queryClient.refetchQueries({ queryKey: ["skill-actions", skill.id] });
+            // Очищаем изменения после успешного сохранения и обновления данных
+            setSkillActionsChanges([]);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Не удалось сохранить изменения действий";
+            toast({
+              title: "Ошибка сохранения действий",
+              description: message,
+              variant: "destructive",
+            });
+            // Не блокируем дальнейшие действия, даже если не удалось сохранить действия
+          }
+        }
+        
         const normalized: SkillFormValues = {
           ...nextValues,
           name: nextValues.name.trim(),
@@ -685,10 +756,11 @@ export function SkillFormContent({
     return Icon ? <Icon className={className} /> : null;
   };
 
-  const isDirty = form.formState.isDirty;
+  const isDirty = form.formState.isDirty || skillActionsChanges.length > 0;
 
   const handleReset = () => {
     form.reset(lastSavedRef.current);
+    setSkillActionsChanges([]); // Сбрасываем изменения действий
   };
 
   return (
@@ -1809,7 +1881,7 @@ export function SkillFormContent({
                                           transcriptActionsQuery.isLoading
                                             ? "Загружаем действия..."
                                             : transcriptActions.length === 0
-                                              ? "Нет действий с целью «Стенограмма»"
+                                              ? "Нет включенных действий с целью «Стенограмма»"
                                               : "Выберите действие"
                                         }
                                       />
@@ -1856,7 +1928,12 @@ export function SkillFormContent({
                           Настройка действий недоступна для системных навыков.
                         </div>
                       ) : skill?.id ? (
-                        <SkillActionsPreview skillId={skill.id} />
+                        <SkillActionsPreview 
+                          skillId={skill.id} 
+                          onChange={setSkillActionsChanges}
+                          pendingChanges={skillActionsChanges}
+                          autoActionId={form.watch("onTranscriptionAutoActionId") || skill?.onTranscriptionAutoActionId || null}
+                        />
                       ) : (
                         <ActionsPreviewForNewSkill />
                       )}
@@ -2081,7 +2158,7 @@ export default function SkillsPage() {
     for (const provider of llmProviders) {
       const models = byProvider[provider.id] ?? [];
       for (const model of models) {
-        const labelText = `${provider.name} · ${model.displayName}`;
+        const labelText = model.displayName;
         options.push({
           key: buildLlmKey(provider.id, model.key),
           label: labelText,

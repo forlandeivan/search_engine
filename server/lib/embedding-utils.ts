@@ -134,17 +134,41 @@ export async function fetchEmbeddingVector(
 
   const model = provider.model || 'text-embedding-ada-002';
   
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
-      input: text,
-      model,
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        input: text,
+        model,
+      }),
+    });
+  } catch (error) {
+    // Обрабатываем сетевые ошибки fetch
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isNetworkError = 
+      errorMessage.includes('fetch failed') ||
+      errorMessage.includes('Failed to fetch') ||
+      errorMessage.includes('NetworkError') ||
+      errorMessage.includes('Network request failed') ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('ETIMEDOUT');
+    
+    if (isNetworkError) {
+      throw new Error(
+        `Не удалось подключиться к сервису эмбеддингов по адресу ${endpoint}. Проверьте доступность сервиса и настройки сети.`
+      );
+    }
+    
+    // Для других ошибок пробрасываем как есть
+    throw new Error(
+      `Ошибка при запросе к сервису эмбеддингов: ${errorMessage}`
+    );
+  }
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'Unknown error');

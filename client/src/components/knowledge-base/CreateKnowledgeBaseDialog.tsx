@@ -476,8 +476,9 @@ export function CreateKnowledgeBaseDialog({
           allowedDomains: crawlConfig.allowedDomains || undefined,
           include: crawlConfig.include || undefined,
           exclude: crawlConfig.exclude || undefined,
-          maxPages: crawlConfig.maxPages || undefined,
-          maxDepth: crawlConfig.maxDepth || undefined,
+          // Для режима "single" ограничиваем краулинг одной страницей
+          maxPages: crawlMode === "single" ? 1 : (crawlConfig.maxPages || undefined),
+          maxDepth: crawlMode === "single" ? 0 : (crawlConfig.maxDepth || undefined),
           rateLimitRps: crawlConfig.rateLimitRps || undefined,
           robotsTxt: crawlConfig.robotsTxt ?? true,
           selectors: crawlConfig.selectors
@@ -746,7 +747,8 @@ export function CreateKnowledgeBaseDialog({
             </Alert>
           )}
 
-          {error && !isJsonImport && <p className="text-sm text-destructive">{error}</p>}
+          {/* Ошибка для краулинга выводится в CrawlImportPanel, чтобы избежать дублирования */}
+          {error && !isJsonImport && mode !== "crawler" && <p className="text-sm text-destructive">{error}</p>}
         </div>
 
         <DialogFooter className="sticky bottom-0 z-10 shrink-0 border-t bg-muted/50 px-6 py-4">

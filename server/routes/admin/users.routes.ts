@@ -5,6 +5,7 @@
  * - GET /api/admin/users - List all users
  * - PATCH /api/admin/users/:userId/role - Update user role
  * - POST /api/admin/users/:userId/activate - Activate user (confirm email)
+ * - DELETE /api/admin/users/:userId - Delete user with all owned workspaces (requires email confirmation)
  */
 
 import { Router } from 'express';
@@ -45,6 +46,10 @@ function toPublicUser(user: User): PublicUser {
 
 const updateUserRoleSchema = z.object({
   role: z.enum(userRoles),
+});
+
+const deleteUserSchema = z.object({
+  confirmEmail: z.string().email("Требуется email для подтверждения"),
 });
 
 // ============================================================================
@@ -104,6 +109,132 @@ adminUsersRouter.post('/:userId/activate', asyncHandler(async (req, res) => {
   }
 
   res.json({ user: toPublicUser(updatedUser) });
+}));
+
+/**
+ * DELETE /users/:userId
+ * Delete user with all owned workspaces (admin only)
+ * Requires email confirmation in request body for safety
+ */
+adminUsersRouter.delete('/:userId', asyncHandler(async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { confirmEmail } = deleteUserSchema.parse(req.body);
+
+    if (!userId) {
+      return res.status(400).json({ message: 'Не указан пользователь' });
+    }
+
+    // Получаем пользователя для проверки email
+    const user = await storage.getUser(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Пользователь не найден' });
+    }
+
+    // Проверяем, что переданный email совпадает с email пользователя
+    if (user.email.toLowerCase() !== confirmEmail.toLowerCase()) {
+      return res.status(400).json({ 
+        message: 'Email для подтверждения не совпадает с email пользователя',
+        hint: 'Передайте email пользователя в поле confirmEmail для подтверждения удаления'
+      });
+    }
+
+    // Получаем список workspace'ов, которые будут удалены
+    const ownedWorkspaces = await storage.listUserOwnedWorkspaces(userId);
+    
+    logger.info({
+      userId,
+      userEmail: user.email,
+      userFullName: user.fullName,
+      ownedWorkspacesCount: ownedWorkspaces.length,
+      ownedWorkspaceIds: ownedWorkspaces.map(w => w.id),
+      ownedWorkspaceNames: ownedWorkspaces.map(w => w.name),
+    }, '[DELETE /users/:userId] Starting user deletion process');
+
+    // Удаляем все workspace'ы, где пользователь - владелец
+    // (каскадно удалятся все связанные сущности: skills, chats, files, etc)
+    const workspaceDeletionResults: Array<{ workspaceId: string; workspaceName: string; success: boolean }> = [];
+    
+    for (const workspace of ownedWorkspaces) {
+      logger.info({ 
+        workspaceId: workspace.id, 
+        workspaceName: workspace.name,
+        userId,
+        userEmail: user.email,
+      }, '[DELETE /users/:userId] Deleting workspace');
+      
+      const success = await storage.deleteWorkspace(workspace.id);
+      workspaceDeletionResults.push({
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        success,
+      });
+      
+      if (success) {
+        logger.info({ 
+          workspaceId: workspace.id, 
+          workspaceName: workspace.name 
+        }, '[DELETE /users/:userId] Workspace deleted successfully');
+      } else {
+        logger.warn({ 
+          workspaceId: workspace.id, 
+          workspaceName: workspace.name 
+        }, '[DELETE /users/:userId] ⚠️ Workspace deletion returned false');
+      }
+    }
+
+    // Проверяем что все workspace'ы действительно удалились
+    const remainingWorkspaces = await storage.listUserOwnedWorkspaces(userId);
+    if (remainingWorkspaces.length > 0) {
+      logger.error({
+        userId,
+        userEmail: user.email,
+        expectedDeleted: ownedWorkspaces.length,
+        remainingCount: remainingWorkspaces.length,
+        remainingWorkspaceIds: remainingWorkspaces.map(w => w.id),
+      }, '[DELETE /users/:userId] ⚠️ ERROR: Some workspaces were not deleted!');
+    }
+
+    // Удаляем самого пользователя
+    logger.info({ userId, userEmail: user.email }, '[DELETE /users/:userId] Deleting user');
+    const userDeleted = await storage.deleteUser(userId);
+    
+    if (userDeleted) {
+      logger.info({ 
+        userId, 
+        userEmail: user.email,
+        deletedWorkspaces: workspaceDeletionResults.length,
+        allWorkspacesDeleted: remainingWorkspaces.length === 0,
+      }, '[DELETE /users/:userId] ✅ User deletion completed');
+    } else {
+      logger.error({ 
+        userId, 
+        userEmail: user.email 
+      }, '[DELETE /users/:userId] ⚠️ ERROR: User deletion returned false');
+    }
+
+    res.json({ 
+      success: true,
+      message: 'Пользователь и все его рабочие пространства удалены',
+      deletedUser: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+      },
+      deletedWorkspaces: ownedWorkspaces.map(w => ({
+        id: w.id,
+        name: w.name,
+      })),
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ 
+        message: 'Некорректные данные. Передайте confirmEmail в теле запроса', 
+        details: error.issues 
+      });
+    }
+    throw error;
+  }
 }));
 
 export default adminUsersRouter;

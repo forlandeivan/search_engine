@@ -217,7 +217,7 @@ import type {
 } from "./KnowledgeBasePage/types";
 
 export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {}) {
-  const [, setLocation] = useLocation();
+  const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const knowledgeBaseId = params?.knowledgeBaseId ?? null;
@@ -252,7 +252,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     useState<DocumentVectorizationProgressState | null>(null);
   const [shouldPollVectorizationJob, setShouldPollVectorizationJob] = useState(false);
   const [chunkDialogSignal, setChunkDialogSignal] = useState(0);
-  const [, setLocalKnowledgeBases] = useState<LocalKnowledgeBase[]>(() => {
+  const [localKnowledgeBases, setLocalKnowledgeBases] = useState<LocalKnowledgeBase[]>(() => {
     if (typeof window === "undefined") {
       return [];
     }
@@ -356,7 +356,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   };
   const handleBaseCreated = (base: LocalKnowledgeBase) => {
     setIsCreateBaseDialogOpen(false);
-    setLocation(`/knowledge/${base.id}`);
+    // Если база создана с краулингом, инициализируем состояние джобы
+    if (base.crawlJob) {
+      setLatestCrawlJob(base.crawlJob);
+    }
+    navigate(`/knowledge/${base.id}`);
     setCreateBaseMode("blank");
   };
   const handleQuickSwitcherOpenState = useCallback(
@@ -595,10 +599,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       enabled: Boolean(workspaceId),
     });
   const vectorCollections = vectorCollectionsResponse?.collections ?? [];
-  const selectedBase = useMemo(
-    () => bases.find((base) => base.id === knowledgeBaseId) ?? null,
-    [bases, knowledgeBaseId],
-  );
+  const selectedBase = useMemo(() => {
+    // Сначала ищем в bases (API), потом в localKnowledgeBases (localStorage)
+    // Это нужно, потому что после создания базы API может не обновиться сразу
+    const fromApi = bases.find((base) => base.id === knowledgeBaseId);
+    if (fromApi) return fromApi;
+    const fromLocal = localKnowledgeBases.find((base) => base.id === knowledgeBaseId);
+    return fromLocal ?? null;
+  }, [bases, localKnowledgeBases, knowledgeBaseId]);
   const startIndexingMutation = useStartKnowledgeBaseIndexing();
   const resetIndexingMutation = useResetKnowledgeBaseIndexing();
   const indexingSummaryQuery = useKnowledgeBaseIndexingSummary(
@@ -1096,7 +1104,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           action: (
             <ToastAction
               altText="Открыть библиотеку"
-              onClick={() => setLocation(`/knowledge/${job.baseId}`)}
+              onClick={() => navigate(`/knowledge/${job.baseId}`)}
             >
               Открыть библиотеку
             </ToastAction>
@@ -1117,7 +1125,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
 
     crawlJobPreviousRef.current = job;
-  }, [latestCrawlJob, selectedBase?.id, setLocation, toast]);
+  }, [latestCrawlJob, selectedBase?.id, navigate, toast]);
 
   useEffect(() => {
     setExpandedNodeIds(new Set());
@@ -1144,13 +1152,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     if (knowledgeBaseId) {
       const exists = bases.some((base) => base.id === knowledgeBaseId);
       if (!exists) {
-        setLocation(`/knowledge/${bases[0]?.id}`);
+        navigate(`/knowledge/${bases[0]?.id}`, { replace: false });
       }
       return;
     }
 
-    setLocation(`/knowledge/${bases[0]?.id}`);
-  }, [bases, knowledgeBaseId, setLocation]);
+    navigate(`/knowledge/${bases[0]?.id}`, { replace: false });
+  }, [bases, knowledgeBaseId, navigate]);
 
   useEffect(() => {
     if (!selectedBase || !selectedNodeId) {
@@ -1158,9 +1166,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
 
     if (!hasNode(selectedBase.rootNodes, selectedNodeId)) {
-      setLocation(`/knowledge/${selectedBase.id}`);
+      navigate(`/knowledge/${selectedBase.id}`);
     }
-  }, [selectedBase, selectedNodeId, setLocation]);
+  }, [selectedBase, selectedNodeId, navigate]);
 
   useEffect(() => {
     if (!vectorizeDialogState) {
@@ -1588,7 +1596,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         },
       });
       if (knowledgeBaseId === variables.baseId) {
-        setLocation("/knowledge");
+        navigate("/knowledge");
       }
     },
     onError: (error) => {
@@ -1616,7 +1624,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           return key === "knowledge-node" && baseId === variables.baseId;
         },
       });
-      setLocation(`/knowledge/${variables.baseId}`);
+      navigate(`/knowledge/${variables.baseId}`);
     },
     onError: (error) => {
       setDeleteTarget(null);
@@ -1662,7 +1670,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           return key === "knowledge-node" && baseId === variables.baseId;
         },
       });
-      setLocation(`/knowledge/${variables.baseId}/node/${document.id}`);
+      navigate(`/knowledge/${variables.baseId}/node/${document.id}`);
     },
     onError: (error) => {
       toast({
@@ -1715,7 +1723,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           return key === "knowledge-node" && baseId === variables.baseId;
         },
       });
-      setLocation(`/knowledge/${variables.baseId}/node/${document.id}`);
+      navigate(`/knowledge/${variables.baseId}/node/${document.id}`);
     },
     onError: (error) => {
       toast({
@@ -2438,7 +2446,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 <MarkdownRenderer markdown={markdownContent} />
               ) : sanitizedContent ? (
                 <div
-                  className="prose prose-sm max-w-none dark:prose-invert"
+                  className="prose prose-sm max-w-none dark:prose-invert overflow-x-hidden"
                   dangerouslySetInnerHTML={{ __html: sanitizedContent }}
                 />
               ) : (
@@ -2920,11 +2928,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             </PopoverContent>
           </Popover>
         </div>
-        <CrawlInlineProgress
-          baseId={selectedBase?.id}
-          onStateChange={handleCrawlStateChange}
-          onDocumentsSaved={handleCrawlDocumentsSaved}
-        />
         {detailContent}
       </div>
     );
@@ -3034,7 +3037,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     <div className="flex h-full min-h-[calc(100vh-4rem)] flex-col bg-background">
       {/* Шапка страницы */}
       <div className="flex items-center justify-between gap-4 border-b px-6 py-4">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 min-w-0 flex-1">
           {/* Заголовок с выбором базы знаний */}
           {basesQuery.isLoading ? (
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -3048,12 +3051,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+                  className="flex items-center gap-2 hover:opacity-80 transition-opacity min-w-0 flex-1"
                 >
-                  <h1 className="text-3xl font-semibold">
+                  <h1 className="text-3xl font-semibold truncate">
                     {selectedBase?.name ?? "Выберите базу"}
                   </h1>
-                  <ChevronsUpDown className="h-5 w-5 text-muted-foreground" />
+                  <ChevronsUpDown className="h-5 w-5 text-muted-foreground shrink-0" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-80">
@@ -3077,7 +3080,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   return (
                     <DropdownMenuItem
                       key={base.id}
-                      onSelect={() => setLocation(`/knowledge/${base.id}`)}
+                      onSelect={() => navigate(`/knowledge/${base.id}`)}
                       className={cn(
                         "flex items-start gap-3 py-2",
                         selectedBase?.id === base.id && "bg-accent"
@@ -3186,7 +3189,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
                   <DropdownMenuItem
-                    onSelect={() => setLocation(`/knowledge/${selectedBase.id}/indexing/history`)}
+                    onSelect={() => navigate(`/knowledge/${selectedBase.id}/indexing/history`)}
                   >
                     <History className="mr-2 h-4 w-4" /> История индексаций
                   </DropdownMenuItem>
@@ -3199,7 +3202,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                     <>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
-                        onSelect={() => setLocation(`/vector/collections/${encodeURIComponent(headerCollectionName)}`)}
+                        onSelect={() => navigate(`/vector/collections/${encodeURIComponent(headerCollectionName)}`)}
                       >
                         <Layers className="mr-2 h-4 w-4" /> Коллекция в Qdrant
                       </DropdownMenuItem>
@@ -3235,7 +3238,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </div>
 
       {/* Основной контент */}
-      {bases.length === 0 ? (
+      {/* Используем localKnowledgeBases вместо bases, так как bases обновляется с задержкой после создания */}
+      {bases.length === 0 && localKnowledgeBases.length === 0 && !knowledgeBaseId ? (
         <div className="flex-1 flex items-center justify-center p-6">
           <Card className="border border-dashed max-w-md w-full">
             <CardHeader className="space-y-2 text-center">
@@ -3296,6 +3300,17 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           {/* Правая колонка: содержимое */}
           <main className="flex-1 overflow-y-auto p-6">
             <div className="mx-auto max-w-4xl">
+              <CrawlInlineProgress
+                baseId={knowledgeBaseId}
+                initialJob={
+                  // Приоритет: latestCrawlJob (только что созданная) > selectedBase.crawlJob (из localStorage) > null
+                  latestCrawlJob && knowledgeBaseId === latestCrawlJob.baseId
+                    ? latestCrawlJob
+                    : selectedBase?.crawlJob ?? null
+                }
+                onStateChange={handleCrawlStateChange}
+                onDocumentsSaved={handleCrawlDocumentsSaved}
+              />
               {renderContent()}
             </div>
           </main>
