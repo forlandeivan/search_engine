@@ -1,256 +1,370 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import {
-  KnowledgeBase,
-  KnowledgeBaseSourceType,
-  readKnowledgeBaseStorage,
-  KNOWLEDGE_BASE_EVENT,
-  getKnowledgeBaseSourceLabel,
-  clearLegacyKnowledgeBaseStorageOnce,
-} from "@/lib/knowledge-base";
-import { formatDistanceToNow } from "date-fns";
-import { ru } from "date-fns/locale";
-import { Brain, LayoutDashboard } from "lucide-react";
+import { 
+  AlertCircle, 
+  MessageSquarePlus, 
+  Sparkles, 
+  Brain, 
+  Zap,
+  MessageSquare,
+  Users,
+  Loader2,
+} from "lucide-react";
+import { DashboardHeader } from "@/components/dashboard";
 import {
   CreateKnowledgeBaseDialog,
-  KNOWLEDGE_BASE_CREATION_OPTIONS,
 } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
 import type { SessionResponse } from "@/types/session";
+import type { KnowledgeBaseSourceType } from "@/lib/knowledge-base";
 
-const getKnowledgeBasesFromStorage = () => readKnowledgeBaseStorage().knowledgeBases;
+// =============================================================================
+// Types
+// =============================================================================
 
-const formatRelativeDate = (value?: string | null) => {
-  if (!value) {
-    return "Нет данных";
-  }
-
-  try {
-    return formatDistanceToNow(new Date(value), { addSuffix: true, locale: ru });
-  } catch (error) {
-    return "Недавно";
-  }
+type QuickAction = {
+  id: string;
+  title: string;
+  description: string;
+  icon: React.ElementType;
+  onClick: () => void;
 };
 
-export default function DashboardPage() {
-  const [, setLocation] = useLocation();
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>(() => getKnowledgeBasesFromStorage());
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [creationMode, setCreationMode] = useState<KnowledgeBaseSourceType>("blank");
-  const { data: session } = useQuery<SessionResponse>({ queryKey: ["/api/auth/session"] });
-  // Безопасный доступ к workspaceId с проверкой всех уровней
-  const workspaceId = session?.workspace?.active?.id ?? session?.activeWorkspaceId ?? null;
+// =============================================================================
+// Placeholder Components (будут вынесены в отдельные файлы в следующих стори)
+// =============================================================================
 
-  useEffect(() => {
-    const cleared = clearLegacyKnowledgeBaseStorageOnce();
-    if (cleared) {
-      setKnowledgeBases([]);
-    }
-  }, []);
+function ResourcesSummaryCardsPlaceholder({ isLoading }: { isLoading?: boolean }) {
+  if (isLoading) {
+    return (
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Card key={i}>
+            <CardContent className="flex items-center gap-4 p-4">
+              <Skeleton className="h-12 w-12 rounded-lg" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-6 w-12" />
+                <Skeleton className="h-4 w-20" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  }
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
+  // Placeholder статичные данные - будут заменены на реальные в US-2.2
+  const resources = [
+    { id: "skills", title: "Навыки", value: "—", icon: Sparkles },
+    { id: "actions", title: "Действия", value: "—", icon: Zap },
+    { id: "chats", title: "Чаты", value: "—", icon: MessageSquare },
+    { id: "knowledge", title: "Базы знаний", value: "—", icon: Brain },
+    { id: "members", title: "Участники", value: "—", icon: Users },
+  ];
 
-    const sync = () => {
-      setKnowledgeBases(getKnowledgeBasesFromStorage());
-    };
-
-    window.addEventListener(KNOWLEDGE_BASE_EVENT, sync);
-    window.addEventListener("storage", sync);
-
-    return () => {
-      window.removeEventListener(KNOWLEDGE_BASE_EVENT, sync);
-      window.removeEventListener("storage", sync);
-    };
-  }, []);
-
-  const orderedBases = useMemo(
-    () =>
-      [...knowledgeBases].sort((a, b) => {
-        const aDate = a.updatedAt || a.createdAt || "";
-        const bDate = b.updatedAt || b.createdAt || "";
-        return new Date(bDate).getTime() - new Date(aDate).getTime();
-      }),
-    [knowledgeBases]
+  return (
+    <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+      {resources.map((resource) => (
+        <Card key={resource.id} className="hover:shadow-md transition-shadow cursor-pointer">
+          <CardContent className="flex items-center gap-4 p-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+              <resource.icon className="h-6 w-6 text-primary" />
+            </div>
+            <div className="flex-1">
+              <p className="text-2xl font-bold">{resource.value}</p>
+              <p className="text-sm text-muted-foreground">{resource.title}</p>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
   );
+}
 
-  const totals = useMemo(() => {
-    const baseTotal = knowledgeBases.length;
-    const documents = knowledgeBases.reduce(
-      (acc, base) => acc + Object.keys(base.documents ?? {}).length,
-      0
+function CreditsWidgetPlaceholder({ isLoading }: { isLoading?: boolean }) {
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <Skeleton className="h-6 w-40" />
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Skeleton className="h-10 w-32" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-48" />
+        </CardContent>
+      </Card>
     );
-    const tasks = knowledgeBases.reduce(
-      (acc, base) => acc + (base.tasks?.total ?? 0),
-      0
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <div>
+          <CardTitle className="text-lg">Баланс кредитов</CardTitle>
+          <CardDescription>Месячное потребление</CardDescription>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-baseline gap-2">
+          <span className="text-3xl font-bold text-muted-foreground">—</span>
+          <span className="text-sm text-muted-foreground">кредитов</span>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Данные о кредитах будут доступны в следующем обновлении
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RecentChatsSectionPlaceholder({ isLoading }: { isLoading?: boolean }) {
+  if (isLoading) {
+    return (
+      <section className="space-y-3">
+        <Skeleton className="h-5 w-32" />
+        <Card>
+          <CardContent className="p-0">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="flex items-center justify-between p-4 border-b last:border-b-0">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-5 w-5" />
+                  <div className="space-y-1">
+                    <Skeleton className="h-5 w-48" />
+                    <Skeleton className="h-4 w-32" />
+                  </div>
+                </div>
+                <Skeleton className="h-8 w-24" />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </section>
     );
+  }
 
-    return { baseTotal, documents, tasks };
-  }, [knowledgeBases]);
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        Недавние чаты
+      </h2>
+      <Card>
+        <CardHeader className="flex flex-col items-center gap-3 text-center py-8">
+          <MessageSquare className="h-12 w-12 text-muted-foreground" />
+          <CardTitle className="text-lg">У вас пока нет чатов</CardTitle>
+          <CardDescription>
+            Начните диалог с AI-ассистентом через быстрые действия ниже
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    </section>
+  );
+}
 
-  const handleOpenDialog = (mode: KnowledgeBaseSourceType) => {
-    setCreationMode(mode);
-    setIsDialogOpen(true);
+function QuickActionsGridComponent({ 
+  workspaceId, 
+  onCreateKnowledgeBase 
+}: { 
+  workspaceId: string | null;
+  onCreateKnowledgeBase: () => void;
+}) {
+  const [, navigate] = useLocation();
+
+  const actions: QuickAction[] = useMemo(() => [
+    {
+      id: "new-chat",
+      title: "Новый чат",
+      description: "Начать диалог",
+      icon: MessageSquarePlus,
+      onClick: () => workspaceId && navigate(`/workspaces/${workspaceId}/chat`),
+    },
+    {
+      id: "create-skill",
+      title: "Создать навык",
+      description: "AI-агент",
+      icon: Sparkles,
+      onClick: () => workspaceId && navigate(`/workspaces/${workspaceId}/skills`),
+    },
+    {
+      id: "create-kb",
+      title: "База знаний",
+      description: "Добавить документы",
+      icon: Brain,
+      onClick: onCreateKnowledgeBase,
+    },
+    {
+      id: "create-action",
+      title: "Действие",
+      description: "Автоматизация",
+      icon: Zap,
+      onClick: () => workspaceId && navigate(`/workspaces/${workspaceId}/actions`),
+    },
+  ], [workspaceId, navigate, onCreateKnowledgeBase]);
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        Быстрые действия
+      </h2>
+      <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+        {actions.map((action) => (
+          <Card
+            key={action.id}
+            className="cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all"
+            onClick={action.onClick}
+            tabIndex={0}
+            role="button"
+            onKeyDown={(e) => e.key === "Enter" && action.onClick()}
+          >
+            <CardContent className="flex flex-col items-center gap-2 p-4 text-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                <action.icon className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="font-medium text-sm">{action.title}</p>
+                <p className="text-xs text-muted-foreground">{action.description}</p>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SystemStatusPanelPlaceholder({ isLoading }: { isLoading?: boolean }) {
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <Skeleton className="h-6 w-32" />
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-5 w-64" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Loader2 className="h-5 w-5" />
+          Статус систем
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-muted-foreground">
+          Мониторинг систем будет доступен в следующем обновлении
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// =============================================================================
+// Main Component
+// =============================================================================
+
+export default function DashboardPage() {
+  const [, navigate] = useLocation();
+  const [isKbDialogOpen, setIsKbDialogOpen] = useState(false);
+  const [kbCreationMode, setKbCreationMode] = useState<KnowledgeBaseSourceType>("blank");
+
+  // Получение данных сессии
+  const { 
+    data: session, 
+    isLoading: isSessionLoading,
+    isError: isSessionError,
+    error: sessionError,
+    refetch: refetchSession,
+  } = useQuery<SessionResponse>({ 
+    queryKey: ["/api/auth/session"],
+  });
+
+  // Извлечение данных из сессии
+  const workspaceId = session?.workspace?.active?.id ?? null;
+  const workspaceName = session?.workspace?.active?.name ?? null;
+  const userRole = session?.workspace?.active?.role ?? null;
+
+  // Определение роли пользователя
+  const isAdminOrManager = userRole === "owner" || userRole === "manager";
+
+  // Обработчики
+  const handleOpenKbDialog = () => {
+    setKbCreationMode("blank");
+    setIsKbDialogOpen(true);
   };
-  const handleBaseCreated = (base: KnowledgeBase) => {
-    setKnowledgeBases(getKnowledgeBasesFromStorage());
-    setLocation(`/knowledge/${base.id}`);
+
+  const handleKnowledgeBaseCreated = (base: { id: string }) => {
+    navigate(`/knowledge/${base.id}`);
   };
+
+  // Состояние ошибки
+  if (isSessionError) {
+    return (
+      <div className="flex h-full flex-col gap-6 px-5 py-6">
+        <DashboardHeader />
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Ошибка загрузки</AlertTitle>
+          <AlertDescription className="flex items-center justify-between">
+            <span>
+              {sessionError instanceof Error 
+                ? sessionError.message 
+                : "Не удалось загрузить данные сессии"}
+            </span>
+            <Button variant="outline" size="sm" onClick={() => refetchSession()}>
+              Повторить
+            </Button>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col gap-6 px-5 py-6">
-      <header className="flex flex-wrap items-start gap-4">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-            <LayoutDashboard className="h-5 w-5" />
-            Домашняя страница рабочего пространства
-          </div>
-          <h1 className="text-3xl font-semibold">AI KMS Дашборд</h1>
-          <p className="max-w-2xl text-sm text-muted-foreground">
-            Управляйте корпоративными знаниями, создавайте базы, назначайте задания команде и отслеживайте актуальность
-            контента в пределах рабочего пространства.
-          </p>
-          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-            <Badge variant="secondary" className="px-3 py-1 text-xs">
-              Баз знаний: {totals.baseTotal}
-            </Badge>
-            <Badge variant="outline" className="px-3 py-1 text-xs">
-              Документов: {totals.documents}
-            </Badge>
-            <Badge variant="outline" className="px-3 py-1 text-xs">
-              Заданий: {totals.tasks}
-            </Badge>
-          </div>
-        </div>
-      </header>
+      {/* Header с заголовком */}
+      <DashboardHeader 
+        workspaceName={workspaceName ?? undefined} 
+        isLoading={isSessionLoading} 
+      />
 
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Быстрые сценарии создания
-          </h2>
-        </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          {KNOWLEDGE_BASE_CREATION_OPTIONS.map((option) => (
-            <Card key={option.value} className="transition hover:-translate-y-1 hover:shadow-md">
-              <button
-                type="button"
-                onClick={() => handleOpenDialog(option.value)}
-                className="flex h-full flex-col items-start gap-3 rounded-lg p-5 text-left"
-              >
-                <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <option.icon className="h-6 w-6" />
-                </div>
-                <div className="space-y-1">
-                  <h3 className="text-lg font-semibold">{option.title}</h3>
-                  <p className="text-sm text-muted-foreground">{option.description}</p>
-                </div>
-              </button>
-            </Card>
-          ))}
-        </div>
-      </section>
+      {/* Карточки сводки ресурсов */}
+      <ResourcesSummaryCardsPlaceholder isLoading={isSessionLoading} />
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Ваши базы знаний
-        </h2>
-        {orderedBases.length === 0 ? (
-          <Card>
-            <CardHeader className="flex flex-col items-center gap-3 text-center">
-              <Brain className="h-12 w-12 text-muted-foreground" />
-              <CardTitle>В этом рабочем пространстве нет баз знаний</CardTitle>
-              <CardDescription>
-                Создайте базу, импортируйте документы или подключите автоматический сбор, чтобы построить AI KMS.
-              </CardDescription>
-            </CardHeader>
-            <CardFooter className="justify-center pb-6">
-              <Button onClick={() => handleOpenDialog("blank")}>Создать первую базу знаний</Button>
-            </CardFooter>
-          </Card>
-        ) : (
-          <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-            {orderedBases.map((base) => {
-              const documentCount = Object.keys(base.documents ?? {}).length;
-              const tasks = base.tasks ?? { total: 0, inProgress: 0, completed: 0 };
-              const lastActivity = base.updatedAt || base.createdAt || null;
+      {/* Виджет кредитов - только для admin/manager */}
+      {isAdminOrManager && (
+        <CreditsWidgetPlaceholder isLoading={isSessionLoading} />
+      )}
 
-              return (
-                <Card key={base.id} className="flex h-full flex-col">
-                  <CardHeader className="space-y-2">
-                    <div className="flex items-center justify-between gap-2 min-w-0">
-                      <CardTitle className="text-lg font-semibold truncate">{base.name}</CardTitle>
-                      <Badge variant="outline" className="border-dashed text-xs uppercase tracking-wide shrink-0">
-                        {getKnowledgeBaseSourceLabel(base.sourceType)}
-                      </Badge>
-                    </div>
-                    {base.description && (
-                      <CardDescription className="line-clamp-3 text-sm">{base.description}</CardDescription>
-                    )}
-                  </CardHeader>
-                  <CardContent className="flex flex-1 flex-col gap-4">
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      <div className="rounded-lg border bg-muted/40 p-3">
-                        <p className="text-xs text-muted-foreground">Документов</p>
-                        <p className="text-lg font-semibold">{documentCount}</p>
-                      </div>
-                      <div className="rounded-lg border bg-muted/40 p-3">
-                        <p className="text-xs text-muted-foreground">Заданий всего</p>
-                        <p className="text-lg font-semibold">{tasks.total}</p>
-                      </div>
-                      <div className="rounded-lg border bg-muted/40 p-3">
-                        <p className="text-xs text-muted-foreground">В работе</p>
-                        <p className="text-lg font-semibold text-amber-600 dark:text-amber-400">{tasks.inProgress}</p>
-                      </div>
-                      <div className="rounded-lg border bg-muted/40 p-3">
-                        <p className="text-xs text-muted-foreground">Завершено</p>
-                        <p className="text-lg font-semibold text-emerald-600 dark:text-emerald-400">
-                          {tasks.completed}
-                        </p>
-                      </div>
-                    </div>
-                    <Separator />
-                    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-                      <span>Последняя активность: {formatRelativeDate(lastActivity)}</span>
-                      <span>Последнее открытие: {formatRelativeDate(base.lastOpenedAt)}</span>
-                      {base.ingestion?.seedUrl && <span>Источник: {base.ingestion.seedUrl}</span>}
-                      {base.ingestion?.archiveName && <span>Архив: {base.ingestion.archiveName}</span>}
-                    </div>
-                  </CardContent>
-                  <CardFooter className="flex items-center justify-between">
-                    <Button size="sm" onClick={() => setLocation(`/knowledge/${base.id}`)}>
-                      Открыть базу
-                    </Button>
-                    <Button size="sm" variant="outline" disabled>
-                      Задание (скоро)
-                    </Button>
-                  </CardFooter>
-                </Card>
-              );
-            })}
-          </div>
-        )}
-      </section>
+      {/* Секция недавних чатов */}
+      <RecentChatsSectionPlaceholder isLoading={isSessionLoading} />
 
-      <CreateKnowledgeBaseDialog
-        open={isDialogOpen}
-        onOpenChange={setIsDialogOpen}
-        initialMode={creationMode}
+      {/* Grid быстрых действий */}
+      <QuickActionsGridComponent 
         workspaceId={workspaceId}
-        onCreated={handleBaseCreated}
+        onCreateKnowledgeBase={handleOpenKbDialog}
+      />
+
+      {/* Панель статуса систем - только для admin/manager */}
+      {isAdminOrManager && (
+        <SystemStatusPanelPlaceholder isLoading={isSessionLoading} />
+      )}
+
+      {/* Диалог создания базы знаний */}
+      <CreateKnowledgeBaseDialog
+        open={isKbDialogOpen}
+        onOpenChange={setIsKbDialogOpen}
+        initialMode={kbCreationMode}
+        workspaceId={workspaceId}
+        onCreated={handleKnowledgeBaseCreated}
       />
     </div>
   );
