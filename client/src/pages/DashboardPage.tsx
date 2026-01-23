@@ -15,7 +15,7 @@ import {
   Users,
   Loader2,
 } from "lucide-react";
-import { DashboardHeader, ResourcesSummaryCards } from "@/components/dashboard";
+import { DashboardHeader, ResourcesSummaryCards, RecentChatsSection } from "@/components/dashboard";
 import {
   CreateKnowledgeBaseDialog,
 } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
@@ -72,49 +72,6 @@ function CreditsWidgetPlaceholder({ isLoading }: { isLoading?: boolean }) {
         </p>
       </CardContent>
     </Card>
-  );
-}
-
-function RecentChatsSectionPlaceholder({ isLoading }: { isLoading?: boolean }) {
-  if (isLoading) {
-    return (
-      <section className="space-y-3">
-        <Skeleton className="h-5 w-32" />
-        <Card>
-          <CardContent className="p-0">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="flex items-center justify-between p-4 border-b last:border-b-0">
-                <div className="flex items-center gap-3">
-                  <Skeleton className="h-5 w-5" />
-                  <div className="space-y-1">
-                    <Skeleton className="h-5 w-48" />
-                    <Skeleton className="h-4 w-32" />
-                  </div>
-                </div>
-                <Skeleton className="h-8 w-24" />
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </section>
-    );
-  }
-
-  return (
-    <section className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        Недавние чаты
-      </h2>
-      <Card>
-        <CardHeader className="flex flex-col items-center gap-3 text-center py-8">
-          <MessageSquare className="h-12 w-12 text-muted-foreground" />
-          <CardTitle className="text-lg">У вас пока нет чатов</CardTitle>
-          <CardDescription>
-            Начните диалог с AI-ассистентом через быстрые действия ниже
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    </section>
   );
 }
 
@@ -301,7 +258,7 @@ export default function DashboardPage() {
       )}
 
       {/* Секция недавних чатов */}
-      <RecentChatsSectionPlaceholder isLoading={isSessionLoading} />
+      <RecentChatsSection workspaceId={workspaceId} />
 
       {/* Grid быстрых действий */}
       <QuickActionsGridComponent 
