@@ -22,6 +22,7 @@ import {
   getKnowledgeBaseCrawlJobStateForBase,
   startKnowledgeBaseCrawl,
 } from '../kb-crawler';
+import { storage } from '../storage';
 import type { PublicUser } from '@shared/schema';
 
 const logger = createLogger('knowledge-crawl');
@@ -236,10 +237,12 @@ knowledgeCrawlRouter.get('/:baseId/crawl/active', asyncHandler(async (req, res) 
   if (!user) return;
 
   const { baseId } = req.params;
-  const { id: workspaceId, role: workspaceRole } = getRequestWorkspace(req);
+  const { id: workspaceId } = getRequestWorkspace(req);
   
-  if (!isWorkspaceAdmin(workspaceRole)) {
-    return res.status(403).json({ error: 'Недостаточно прав' });
+  // Проверяем, что база знаний принадлежит workspace пользователя
+  const base = await storage.getKnowledgeBase(baseId);
+  if (!base || base.workspaceId !== workspaceId) {
+    return res.status(404).json({ error: 'База знаний не найдена' });
   }
 
   const { active, latest } = getKnowledgeBaseCrawlJobStateForBase(baseId, workspaceId);

@@ -53,6 +53,7 @@ export function CrawlInlineProgress({
   const [events, setEvents] = useState<CrawlActivityEvent[]>([]);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isInitialLoad, setIsInitialLoad] = useState(true); // Флаг первой загрузки
   const [isPausing, setIsPausing] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [isCanceling, setIsCanceling] = useState(false);
@@ -246,11 +247,15 @@ export function CrawlInlineProgress({
       setEvents([]);
       setConnectionError(null);
       setActionError(null);
+      setIsInitialLoad(true);
       previousJobRef.current = null;
       onStateChangeRef.current?.({ running: false, job: null });
       return;
     }
 
+    // Сбрасываем состояние при смене baseId
+    setIsInitialLoad(true);
+    
     // Сбрасываем lastRun при смене baseId, только если нет initialJob для этого baseId
     // Это нужно, чтобы не сбрасывать lastRun, если initialJob еще не обработан
     if (!initialJob || initialJob.baseId !== baseId) {
@@ -275,6 +280,7 @@ export function CrawlInlineProgress({
       abortControllerRef.current = controller;
 
       try {
+        setIsInitialLoad(false); // Первая загрузка завершена
         const response = await apiRequest(
           "GET",
           `/api/kb/${encodeURIComponent(baseId)}/crawl/active`,
@@ -292,10 +298,14 @@ export function CrawlInlineProgress({
           const lastRunJob = payload.lastRun?.job ?? previousJobRef.current ?? null;
           previousJobRef.current = lastRunJob;
           setJob(null);
-          setLastRun(lastRunJob); // Сохраняем завершённую джобу для отображения
+          // Сохраняем завершённую джобу для отображения (даже если краулинг завершен, показываем виджет)
+          setLastRun(lastRunJob);
           setEvents([]);
           setConnectionError(null);
-          if (baseId) {
+          if (baseId && lastRunJob) {
+            // Сохраняем завершенную джобу в localStorage для восстановления после обновления
+            updateKnowledgeBaseCrawlJob(baseId, lastRunJob);
+          } else if (baseId) {
             updateKnowledgeBaseCrawlJob(baseId, null);
           }
           onStateChangeRef.current?.({
@@ -315,6 +325,7 @@ export function CrawlInlineProgress({
         if (cancelled || controller.signal.aborted) {
           return;
         }
+        setIsInitialLoad(false); // Первая загрузка завершена даже при ошибке
         const message =
           error instanceof Error ? error.message : "Не удалось получить статус краулинга";
         setConnectionError(message);
@@ -405,10 +416,46 @@ export function CrawlInlineProgress({
 
   // Отображаем активную джобу или последнюю завершённую джобу
   // Если есть initialJob, используем его как fallback, чтобы показать прогресс сразу
+  // Также показываем виджет во время первой загрузки или если есть ошибка подключения
   const jobToDisplay = job || lastRun || (initialJob && initialJob.baseId === baseId ? initialJob : null);
   
-  if (!jobToDisplay) {
+  // Показываем виджет если:
+  // 1. Есть джоба для отображения
+  // 2. Идет первая загрузка (чтобы не мигать при обновлении страницы)
+  // 3. Есть ошибка подключения (чтобы пользователь видел проблему)
+  if (!jobToDisplay && !isInitialLoad && !connectionError) {
     return null;
+  }
+  
+  // Если нет джобы, но есть ошибка или идет загрузка, показываем виджет с placeholder
+  if (!jobToDisplay) {
+    // Создаем placeholder джобу для отображения во время загрузки или при ошибке
+    const placeholderJob: KnowledgeBaseCrawlJobStatus = {
+      jobId: 'loading',
+      baseId: baseId || '',
+      status: connectionError ? 'failed' : 'running',
+      percent: 0,
+      discovered: 0,
+      fetched: 0,
+      saved: 0,
+      errors: 0,
+      failed: 0,
+      etaSec: null,
+      lastUrl: null,
+      lastError: connectionError || null,
+      pagesNew: null,
+      extracted: null,
+      queued: null,
+    };
+    
+    return (
+      <KnowledgeBaseCrawlProgress
+        job={placeholderJob}
+        events={[]}
+        connectionError={connectionError}
+        actionError={actionError}
+      />
+    );
   }
 
   // Для завершённой джобы не показываем кнопки управления
