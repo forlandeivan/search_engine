@@ -135,6 +135,7 @@ import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { tariffPlanService } from "./tariff-plan-service";
+import { grantSubscriptionCreditsOnEvent } from "./credits-service";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { getCache, cacheKeys } from "./cache";
 import type {
@@ -9602,6 +9603,40 @@ export class DatabaseStorage implements IStorage {
     return await this.db.select().from(users).orderBy(desc(users.createdAt));
   }
 
+  /**
+   * List all workspaces owned by a user
+   */
+  async listUserOwnedWorkspaces(userId: string): Promise<Workspace[]> {
+    return await this.db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.ownerId, userId))
+      .orderBy(desc(workspaces.createdAt));
+  }
+
+  /**
+   * Delete a workspace and all related data (cascade)
+   */
+  async deleteWorkspace(workspaceId: string): Promise<boolean> {
+    const result = await this.db
+      .delete(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .returning({ id: workspaces.id });
+    return result.length > 0;
+  }
+
+  /**
+   * Delete a user (cascade will remove related data)
+   */
+  async deleteUser(userId: string): Promise<boolean> {
+    await this.ensureUserAuthColumns();
+    const result = await this.db
+      .delete(users)
+      .where(eq(users.id, userId))
+      .returning({ id: users.id });
+    return result.length > 0;
+  }
+
   async updateUserRole(userId: string, role: User["role"]): Promise<User | undefined> {
     await this.ensureUserAuthColumns();
     const [updatedUser] = await this.db
@@ -10014,6 +10049,20 @@ export class DatabaseStorage implements IStorage {
 
     if (!member) {
       throw new Error("Не удалось сохранить участника рабочего пространства");
+    }
+
+    // Начисляем начальные кредиты согласно тарифу
+    const creditsAmount = Number(freePlan.includedCreditsAmount ?? 0);
+    if (creditsAmount > 0) {
+      const sourceRef = `workspace-create:${workspace.id}:${freePlan.id}:${workspace.createdAt?.toISOString?.() ?? Date.now()}`;
+      await grantSubscriptionCreditsOnEvent({
+        workspaceId: workspace.id,
+        planId: freePlan.id,
+        planCode: freePlan.code,
+        amount: creditsAmount,
+        sourceRef,
+        period: "monthly",
+      });
     }
 
     try {

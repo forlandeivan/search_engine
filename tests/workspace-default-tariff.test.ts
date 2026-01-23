@@ -1,12 +1,24 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { storage } from "../server/storage";
-import { tariffPlans, users } from "@shared/schema";
+import { tariffPlans, users, workspaceCreditAccounts } from "@shared/schema";
 import { tariffPlanService } from "../server/tariff-plan-service";
+
+const TEST_FREE_PLAN_CREDITS = 5000; // 50.00 кредитов в центах
 
 async function ensureFreePlan() {
   const existing = await tariffPlanService.getPlanByCode("FREE");
-  if (existing) return existing;
+  if (existing) {
+    // Обновляем кредиты для теста, если они отличаются
+    if (existing.includedCreditsAmount !== TEST_FREE_PLAN_CREDITS) {
+      await storage.db
+        .update(tariffPlans)
+        .set({ includedCreditsAmount: TEST_FREE_PLAN_CREDITS })
+        .where(eq(tariffPlans.id, existing.id));
+      return { ...existing, includedCreditsAmount: TEST_FREE_PLAN_CREDITS };
+    }
+    return existing;
+  }
 
   const [inserted] = await storage.db
     .insert(tariffPlans)
@@ -15,6 +27,7 @@ async function ensureFreePlan() {
       name: "Free",
       description: "Default free plan",
       isActive: true,
+      includedCreditsAmount: TEST_FREE_PLAN_CREDITS,
     })
     .onConflictDoNothing()
     .returning();
@@ -50,5 +63,21 @@ describe("Workspace default tariff", () => {
 
     expect(workspace.tariffPlanId).toBe(freePlan.id);
     expect(workspace.plan).toBe("free");
+  });
+
+  it("grants initial credits according to FREE plan when creating personal workspace", async () => {
+    const freePlan = await ensureFreePlan();
+    const user = await createUser();
+
+    const workspace = await storage.ensurePersonalWorkspace(user);
+
+    // Проверяем, что кредитный аккаунт создан с правильным балансом
+    const [creditAccount] = await storage.db
+      .select()
+      .from(workspaceCreditAccounts)
+      .where(eq(workspaceCreditAccounts.workspaceId, workspace.id));
+
+    expect(creditAccount).toBeDefined();
+    expect(creditAccount.currentBalance).toBe(TEST_FREE_PLAN_CREDITS);
   });
 });
