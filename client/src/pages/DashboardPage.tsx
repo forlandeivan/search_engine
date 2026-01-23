@@ -15,7 +15,7 @@ import {
   Users,
   Loader2,
 } from "lucide-react";
-import { DashboardHeader } from "@/components/dashboard";
+import { DashboardHeader, ResourcesSummaryCards } from "@/components/dashboard";
 import {
   CreateKnowledgeBaseDialog,
 } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
@@ -37,53 +37,6 @@ type QuickAction = {
 // =============================================================================
 // Placeholder Components (будут вынесены в отдельные файлы в следующих стори)
 // =============================================================================
-
-function ResourcesSummaryCardsPlaceholder({ isLoading }: { isLoading?: boolean }) {
-  if (isLoading) {
-    return (
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Card key={i}>
-            <CardContent className="flex items-center gap-4 p-4">
-              <Skeleton className="h-12 w-12 rounded-lg" />
-              <div className="flex-1 space-y-2">
-                <Skeleton className="h-6 w-12" />
-                <Skeleton className="h-4 w-20" />
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    );
-  }
-
-  // Placeholder статичные данные - будут заменены на реальные в US-2.2
-  const resources = [
-    { id: "skills", title: "Навыки", value: "—", icon: Sparkles },
-    { id: "actions", title: "Действия", value: "—", icon: Zap },
-    { id: "chats", title: "Чаты", value: "—", icon: MessageSquare },
-    { id: "knowledge", title: "Базы знаний", value: "—", icon: Brain },
-    { id: "members", title: "Участники", value: "—", icon: Users },
-  ];
-
-  return (
-    <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
-      {resources.map((resource) => (
-        <Card key={resource.id} className="hover:shadow-md transition-shadow cursor-pointer">
-          <CardContent className="flex items-center gap-4 p-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
-              <resource.icon className="h-6 w-6 text-primary" />
-            </div>
-            <div className="flex-1">
-              <p className="text-2xl font-bold">{resource.value}</p>
-              <p className="text-sm text-muted-foreground">{resource.title}</p>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  );
-}
 
 function CreditsWidgetPlaceholder({ isLoading }: { isLoading?: boolean }) {
   if (isLoading) {
@@ -337,7 +290,10 @@ export default function DashboardPage() {
       />
 
       {/* Карточки сводки ресурсов */}
-      <ResourcesSummaryCardsPlaceholder isLoading={isSessionLoading} />
+      <ResourcesSummaryCards 
+        workspaceId={workspaceId}
+        isSessionLoading={isSessionLoading}
+      />
 
       {/* Виджет кредитов - только для admin/manager */}
       {isAdminOrManager && (
