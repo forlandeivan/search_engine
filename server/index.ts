@@ -8,6 +8,7 @@ import { getAllowedHostnames } from "./cors-cache";
 import { isDatabaseConfigured } from "./db";
 import fs from "fs";
 import path from "path";
+import open from "open";
 import { configureAuth } from "./auth";
 import { startSkillExecutionLogRetentionJob } from "./skill-execution-log-retention";
 import { startSystemNotificationLogRetentionJob } from "./system-notification-log-retention";
@@ -354,6 +355,12 @@ function validateProductionSecrets(): void {
   // START SERVER IMMEDIATELY - don't wait for database
   server.listen(listenOptions, () => {
     log(`serving on port ${port}`);
+    // Автоматически открыть браузер при запуске в режиме разработки
+    if (process.env.NODE_ENV === "development") {
+      open(`http://localhost:${port}`).catch((err) => {
+        log(`Не удалось открыть браузер: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
   });
 
   // Initialize database in background (non-blocking with 45s timeout)
