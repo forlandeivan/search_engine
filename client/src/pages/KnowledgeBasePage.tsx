@@ -3038,7 +3038,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     <div className="flex h-full min-h-[calc(100vh-4rem)] flex-col bg-background">
       {/* Шапка страницы */}
       <div className="flex items-center justify-between gap-4 border-b px-6 py-4">
-        <div className="flex items-center gap-4 min-w-0 flex-1">
+        <div className="flex items-center gap-4 min-w-0">
           {/* Заголовок с выбором базы знаний */}
           {basesQuery.isLoading ? (
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -3048,18 +3048,19 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           ) : bases.length === 0 ? (
             <h1 className="text-3xl font-semibold">Базы знаний</h1>
           ) : (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="flex items-center gap-2 hover:opacity-80 transition-opacity min-w-0 flex-1"
-                >
-                  <h1 className="text-3xl font-semibold truncate">
-                    {selectedBase?.name ?? "Выберите базу"}
-                  </h1>
-                  <ChevronsUpDown className="h-5 w-5 text-muted-foreground shrink-0" />
-                </button>
-              </DropdownMenuTrigger>
+            <div className="min-w-0 flex-1">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 hover:opacity-80 transition-opacity min-w-0 w-full"
+                  >
+                    <h1 className="text-3xl font-semibold truncate">
+                      {selectedBase?.name ?? "Выберите базу"}
+                    </h1>
+                    <ChevronsUpDown className="h-5 w-5 text-muted-foreground shrink-0" />
+                  </button>
+                </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-80">
                 {bases.map((base) => {
                   // Определяем цвет точки для каждой базы
@@ -3104,13 +3105,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 })}
               </DropdownMenuContent>
             </DropdownMenu>
+            </div>
           )}
 
           {/* Badge статуса с HoverCard */}
           {selectedBase && statusBadge && (
             <HoverCard>
               <HoverCardTrigger asChild>
-                <button type="button" className="cursor-pointer">
+                <button type="button" className="cursor-pointer shrink-0">
                   <Badge 
                     variant={statusBadge.variant}
                     className={cn("gap-1.5 border-0", statusBadge.className)}
@@ -3152,7 +3154,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
           {/* Button Group: Индексировать + Dropdown */}
           {selectedBase && (
-            <ButtonGroup>
+            <div className="shrink-0">
+              <ButtonGroup>
               <Button
                 type="button"
                 variant="outline"
@@ -3229,6 +3232,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 </DropdownMenuContent>
               </DropdownMenu>
             </ButtonGroup>
+            </div>
           )}
         </div>
 
