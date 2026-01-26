@@ -1,6 +1,4 @@
 import JSZip from "jszip";
-import { Archive } from "libarchive.js/main.js";
-import workerBundleUrl from "libarchive.js/dist/worker-bundle.js?url";
 
 import {
   convertBufferToHtml,
@@ -16,23 +14,17 @@ import {
   type KnowledgeBaseImportErrorCode,
 } from "@/lib/knowledge-base";
 
-// Инициализируем libarchive.js один раз
-let archiveInitialized = false;
-const initArchive = async () => {
-  if (!archiveInitialized) {
-    try {
-      await Archive.init({
-        workerUrl: workerBundleUrl,
-      });
-      archiveInitialized = true;
-    } catch (error) {
-      console.warn("Failed to initialize libarchive.js:", error);
-      // Продолжаем работу, возможно worker уже загружен
-    }
-  }
-};
+// Поддержка RAR/7z временно отключена
+// TODO: Добавить поддержку через альтернативную библиотеку (например, uncompress.js или node-unrar-js)
 
 type FolderNode = TreeNode & { children: TreeNode[] };
+
+// Константы безопасности
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 МБ на файл
+const MAX_TOTAL_FILES = 10000; // Максимум файлов в архиве
+const MAX_PATH_DEPTH = 50; // Максимальная глубина вложенности
+const MAX_FILENAME_LENGTH = 255; // Максимальная длина имени файла
+const MAX_ARCHIVE_SIZE = 500 * 1024 * 1024; // 500 МБ общий размер архива
 
 const INVALID_SEGMENT_PATTERN = /[\u0000]/;
 
@@ -51,6 +43,11 @@ const sanitizePathSegments = (rawPath: string): string[] | null => {
     .map((segment) => segment.trim())
     .filter((segment) => segment.length > 0 && segment !== ".");
 
+  // Проверка глубины вложенности
+  if (segments.length > MAX_PATH_DEPTH) {
+    return null;
+  }
+
   const safeSegments: string[] = [];
 
   for (const segment of segments) {
@@ -59,6 +56,11 @@ const sanitizePathSegments = (rawPath: string): string[] | null => {
     }
 
     if (INVALID_SEGMENT_PATTERN.test(segment)) {
+      return null;
+    }
+
+    // Проверка длины имени файла/папки
+    if (segment.length > MAX_FILENAME_LENGTH) {
       return null;
     }
 
@@ -149,140 +151,8 @@ const isZipFile = async (file: File): Promise<boolean> => {
   }
 };
 
-/**
- * Собирает все файлы из объекта архива в плоский список
- */
-const collectFilesFromArchive = (
-  filesObj: Record<string, File | Record<string, unknown>>,
-  basePath = "",
-): Array<{ path: string; file: File }> => {
-  const files: Array<{ path: string; file: File }> = [];
-
-  for (const [key, value] of Object.entries(filesObj)) {
-    const fullPath = basePath ? `${basePath}/${key}` : key;
-
-    if (value instanceof File) {
-      files.push({ path: fullPath, file: value });
-    } else if (typeof value === "object" && value !== null) {
-      // Рекурсивно обрабатываем вложенные папки
-      files.push(...collectFilesFromArchive(value as Record<string, File | Record<string, unknown>>, fullPath));
-    }
-  }
-
-  return files;
-};
-
-/**
- * Обрабатывает архив через libarchive.js (RAR, 7z и другие форматы)
- */
-const processArchiveWithLibArchive = async (
-  file: File,
-  rootNodes: TreeNode[],
-  folderMap: Map<string, FolderNode>,
-  documents: Record<string, KnowledgeDocument>,
-  createdDocumentByPath: Map<string, string>,
-  errors: KnowledgeBaseImportError[],
-): Promise<{ totalFiles: number; importedFiles: number; skippedFiles: number }> => {
-  let totalFiles = 0;
-  let importedFiles = 0;
-  let skippedFiles = 0;
-
-  try {
-    // Инициализируем libarchive.js перед использованием
-    await initArchive();
-    
-    const archive = await Archive.open(file);
-    const filesObj = await archive.extractFiles();
-
-    // Собираем все файлы в плоский список
-    const allFiles = collectFilesFromArchive(filesObj as Record<string, File | Record<string, unknown>>);
-
-    // Обрабатываем все файлы и собираем результаты
-    const results = await Promise.all(
-      allFiles.map(async ({ path, file: archiveFile }) => {
-        const segments = sanitizePathSegments(path);
-        if (!segments) {
-          errors.push(buildError("invalid_path", path, "Неверный путь внутри архива"));
-          return { imported: false, skipped: true };
-        }
-
-        if (segments.length === 0) {
-          return { imported: false, skipped: false };
-        }
-
-        const normalizedPath = segments.join("/");
-        if (createdDocumentByPath.has(normalizedPath)) {
-          errors.push(buildError("duplicate_path", normalizedPath, "Файл уже обработан"));
-          return { imported: false, skipped: true };
-        }
-
-        const fileName = segments[segments.length - 1];
-        const extension = fileName.split(".").pop()?.toLowerCase() ?? "";
-
-        if (!SUPPORTED_DOCUMENT_EXTENSIONS.has(extension)) {
-          errors.push(buildError("unsupported_type", normalizedPath, "Формат файла не поддерживается"));
-          return { imported: false, skipped: true };
-        }
-
-        try {
-          const buffer = await archiveFile.arrayBuffer();
-          const { title, html } = await convertBufferToHtml({ data: buffer, filename: fileName });
-          const sanitizedContent = getSanitizedContent(html);
-
-          if (!sanitizedContent.trim()) {
-            errors.push(buildError("empty_document", normalizedPath, "Документ не содержит контента"));
-            return { imported: false, skipped: true };
-          }
-
-          const documentId = createRandomId();
-          documents[documentId] = {
-            id: documentId,
-            title,
-            content: sanitizedContent,
-            updatedAt: new Date().toISOString(),
-            vectorization: null,
-            chunkSet: null,
-          } satisfies KnowledgeDocument;
-
-          const folderSegments = segments.slice(0, -1);
-          const parentChildren = ensureFolder(folderSegments, rootNodes, folderMap);
-          const nodeId = createRandomId();
-
-          parentChildren.push({
-            id: nodeId,
-            title,
-            type: "document",
-            documentId,
-          });
-
-          createdDocumentByPath.set(normalizedPath, documentId);
-          return { imported: true, skipped: false };
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Не удалось обработать документ";
-          errors.push(buildError("failed_conversion", normalizedPath, message));
-          return { imported: false, skipped: true };
-        }
-      }),
-    );
-
-    // Подсчитываем результаты
-    totalFiles = allFiles.length;
-    importedFiles = results.filter((r) => r.imported).length;
-    skippedFiles = results.filter((r) => r.skipped).length;
-
-    return { totalFiles, importedFiles, skippedFiles };
-  } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Не удалось обработать архив";
-    errors.push(buildError("failed_conversion", file.name, message));
-    return { totalFiles, importedFiles, skippedFiles };
-  }
-};
+// Функции для обработки RAR/7z временно удалены
+// TODO: Добавить поддержку RAR/7z через альтернативную библиотеку
 
 export const importKnowledgeArchive = async (file: File): Promise<ArchiveImportResult> => {
   const startedAt = new Date().toISOString();
@@ -292,6 +162,27 @@ export const importKnowledgeArchive = async (file: File): Promise<ArchiveImportR
   const createdDocumentByPath = new Map<string, string>();
   const errors: KnowledgeBaseImportError[] = [];
 
+  // Проверка размера архива
+  if (file.size > MAX_ARCHIVE_SIZE) {
+    const errorMessage = `Размер архива превышает максимально допустимый (${MAX_ARCHIVE_SIZE / 1024 / 1024} МБ)`;
+    const summary: KnowledgeBaseImportSummary = {
+      totalFiles: 0,
+      importedFiles: 0,
+      skippedFiles: 0,
+      errors: [buildError("unsupported_type", file.name, errorMessage)],
+      archiveName: file.name,
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+
+    return {
+      structure: rootNodes,
+      documents,
+      errors: summary.errors,
+      summary,
+    };
+  }
+
   // Проверяем формат архива
   const archiveType = getArchiveType(file.name);
   
@@ -299,19 +190,30 @@ export const importKnowledgeArchive = async (file: File): Promise<ArchiveImportR
   let importedFiles = 0;
   let skippedFiles = 0;
 
-  // Если это RAR или 7z, используем libarchive.js
+  // Проверка количества файлов перед обработкой (для ZIP)
+  // Для RAR/7z проверка будет внутри processArchiveWithLibArchive
+
+  // Если это RAR или 7z, выдаем ошибку (поддержка временно отключена)
   if (archiveType === "rar" || archiveType === "7z") {
-    const result = await processArchiveWithLibArchive(
-      file,
-      rootNodes,
-      folderMap,
+    const archiveTypeName = archiveType === "rar" ? "RAR" : "7z";
+    const errorMessage = `Формат архива ${archiveTypeName} временно не поддерживается. Пожалуйста, конвертируйте архив в ZIP формат перед импортом.`;
+    
+    const summary: KnowledgeBaseImportSummary = {
+      totalFiles: 0,
+      importedFiles: 0,
+      skippedFiles: 0,
+      errors: [buildError("unsupported_type", file.name, errorMessage)],
+      archiveName: file.name,
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+
+    return {
+      structure: rootNodes,
       documents,
-      createdDocumentByPath,
-      errors,
-    );
-    totalFiles = result.totalFiles;
-    importedFiles = result.importedFiles;
-    skippedFiles = result.skippedFiles;
+      errors: summary.errors,
+      summary,
+    };
   } else {
     // Для ZIP и неизвестных форматов сначала пробуем ZIP
     const isZip = archiveType === "zip" || (archiveType === "unknown" && (await isZipFile(file)));
@@ -322,19 +224,26 @@ export const importKnowledgeArchive = async (file: File): Promise<ArchiveImportR
       try {
         zip = await JSZip.loadAsync(file);
       } catch (error) {
-        // Если ZIP не загрузился, пробуем через libarchive.js
+        // Если ZIP не загрузился и формат неизвестен, выдаем ошибку
         if (archiveType === "unknown") {
-          const result = await processArchiveWithLibArchive(
-            file,
-            rootNodes,
-            folderMap,
+          const errorMessage = "Файл не является ZIP архивом. Пожалуйста, используйте ZIP архив.";
+          
+          const summary: KnowledgeBaseImportSummary = {
+            totalFiles: 0,
+            importedFiles: 0,
+            skippedFiles: 0,
+            errors: [buildError("unsupported_type", file.name, errorMessage)],
+            archiveName: file.name,
+            startedAt,
+            completedAt: new Date().toISOString(),
+          };
+
+          return {
+            structure: rootNodes,
             documents,
-            createdDocumentByPath,
-            errors,
-          );
-          totalFiles = result.totalFiles;
-          importedFiles = result.importedFiles;
-          skippedFiles = result.skippedFiles;
+            errors: summary.errors,
+            summary,
+          };
         } else {
           // Обрабатываем ошибки загрузки ZIP
           const errorMessage =
@@ -366,6 +275,27 @@ export const importKnowledgeArchive = async (file: File): Promise<ArchiveImportR
       if (zip) {
         // Обрабатываем ZIP через JSZip
         const entries = Object.values(zip.files);
+
+        // Проверка количества файлов (защита от bomb-атак)
+        if (entries.length > MAX_TOTAL_FILES) {
+          const errorMessage = `Количество файлов в архиве превышает максимально допустимое (${MAX_TOTAL_FILES})`;
+          const summary: KnowledgeBaseImportSummary = {
+            totalFiles: 0,
+            importedFiles: 0,
+            skippedFiles: 0,
+            errors: [buildError("unsupported_type", file.name, errorMessage)],
+            archiveName: file.name,
+            startedAt,
+            completedAt: new Date().toISOString(),
+          };
+
+          return {
+            structure: rootNodes,
+            documents,
+            errors: summary.errors,
+            summary,
+          };
+        }
 
         for (const entry of entries) {
           const segments = sanitizePathSegments(entry.name);
@@ -402,6 +332,19 @@ export const importKnowledgeArchive = async (file: File): Promise<ArchiveImportR
           }
 
           try {
+            // Проверка размера файла перед загрузкой
+            if (entry.uncompressedSize > MAX_FILE_SIZE) {
+              errors.push(
+                buildError(
+                  "unsupported_type",
+                  normalizedPath,
+                  `Размер файла превышает максимально допустимый (${MAX_FILE_SIZE / 1024 / 1024} МБ)`,
+                ),
+              );
+              skippedFiles += 1;
+              continue;
+            }
+
             const buffer = await entry.async("arraybuffer");
             const { title, html } = await convertBufferToHtml({ data: buffer, filename: fileName });
             const sanitizedContent = getSanitizedContent(html);
@@ -446,18 +389,25 @@ export const importKnowledgeArchive = async (file: File): Promise<ArchiveImportR
         }
       }
     } else {
-      // Неизвестный формат, пробуем через libarchive.js
-      const result = await processArchiveWithLibArchive(
-        file,
-        rootNodes,
-        folderMap,
+      // Неизвестный формат - выдаем ошибку
+      const errorMessage = "Файл не является ZIP архивом. Пожалуйста, используйте ZIP архив.";
+      
+      const summary: KnowledgeBaseImportSummary = {
+        totalFiles: 0,
+        importedFiles: 0,
+        skippedFiles: 0,
+        errors: [buildError("unsupported_type", file.name, errorMessage)],
+        archiveName: file.name,
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+
+      return {
+        structure: rootNodes,
         documents,
-        createdDocumentByPath,
-        errors,
-      );
-      totalFiles = result.totalFiles;
-      importedFiles = result.importedFiles;
-      skippedFiles = result.skippedFiles;
+        errors: summary.errors,
+        summary,
+      };
     }
   }
 

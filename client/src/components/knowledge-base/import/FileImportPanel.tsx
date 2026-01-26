@@ -73,7 +73,7 @@ export function FileImportPanel({
 
   const getAcceptTypes = () => {
     if (mode === "archive") {
-      return ".zip,.rar,.7z";
+      return ".zip"; // Временно только ZIP, поддержка RAR/7z отключена
     }
     return acceptedTypes;
   };
@@ -209,7 +209,7 @@ export function FileImportPanel({
           </div>
           <p className="text-xs text-muted-foreground">
             {mode === "archive"
-              ? "Перетащите архив сюда или выберите на компьютере. Поддерживаются ZIP, RAR и 7z архивы."
+              ? "Перетащите ZIP архив сюда или выберите на компьютере. Поддерживаются только ZIP архивы."
               : mode === "multiple"
                 ? `Перетащите файлы сюда или выберите на компьютере. Максимальный размер — ${(maxFileSize / 1024 / 1024).toFixed(0)} МБ на файл. Поддерживаются ${SUPPORTED_FORMAT_LABEL}.`
                 : `Перетащите файл сюда или выберите на компьютере. Максимальный размер — ${(maxFileSize / 1024 / 1024).toFixed(0)} МБ. Поддерживаются ${SUPPORTED_FORMAT_LABEL}.`}
