@@ -1,4 +1,4 @@
-import { MouseEvent, useState } from "react";
+import { MouseEvent, useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,8 +33,21 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { RefreshCcw, DatabaseZap, MoreVertical, Loader2, Copy } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { RefreshCcw, MoreVertical, Loader2, Copy, Plus, CircleCheck, CircleAlert, CircleDashed, AlertCircle, Database } from "lucide-react";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+  EmptyMedia,
+} from "@/components/ui/empty";
+import { cn } from "@/lib/utils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -105,12 +118,13 @@ export default function VectorCollectionsPage() {
   });
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [collectionToDelete, setCollectionToDelete] = useState<string | null>(null);
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
 
-  const { data, isLoading, isFetching, error } = useQuery<CollectionsResponse>({
+  const { data, isLoading, isFetching, error, refetch } = useQuery<CollectionsResponse>({
     queryKey: ["/api/vector/collections"],
     staleTime: 0,
     refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
   const {
@@ -210,6 +224,14 @@ export default function VectorCollectionsPage() {
   const isInitialLoading = isLoading && !data;
   const isRefreshing = isFetching || isLoading;
 
+  // Автоматически обновляем данные при монтировании компонента и при переходе на страницу
+  // Это гарантирует, что после индексации базы знаний новые коллекции появятся без перезагрузки
+  useEffect(() => {
+    if (location === "/vector/collections") {
+      queryClient.invalidateQueries({ queryKey: ["/api/vector/collections"] });
+    }
+  }, [location]);
+
   const handleCopyCollectionId = async (event: MouseEvent<HTMLDivElement>, collectionId: string) => {
     event.preventDefault();
     event.stopPropagation();
@@ -292,8 +314,58 @@ export default function VectorCollectionsPage() {
   };
 
   const vectorHealthErrorDetails = vectorHealth ? formatErrorDetails(vectorHealth.errorDetails) : null;
-  const vectorHealthIndicatorClass =
-    vectorHealth?.status === "ok" ? "bg-emerald-500" : "bg-destructive-500";
+  
+  const getVectorStatusBadge = () => {
+    if (isVectorHealthLoading) {
+      return {
+        variant: "outline" as const,
+        className: "rounded-full bg-blue-500/15 text-blue-700 border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20",
+        label: "Проверка...",
+        icon: <Loader2 className="h-3 w-3 animate-spin" />,
+      };
+    }
+    if (!vectorHealth) {
+      return {
+        variant: "outline" as const,
+        className: "rounded-full bg-gray-500/10 text-gray-600 border-gray-500/20 dark:bg-gray-500/10 dark:text-gray-400 dark:border-gray-500/15",
+        label: "Неизвестно",
+        icon: <CircleDashed className="h-3 w-3" />,
+      };
+    }
+    if (vectorHealth.status === "ok") {
+      return {
+        variant: "outline" as const,
+        className: "rounded-full bg-green-500/15 text-green-700 border-green-500/25 dark:bg-green-500/10 dark:text-green-400 dark:border-green-500/20",
+        label: "Подключено",
+        icon: <CircleCheck className="h-3 w-3" />,
+      };
+    }
+    if (vectorHealth.status === "not_configured") {
+      return {
+        variant: "outline" as const,
+        className: "rounded-full bg-yellow-500/15 text-yellow-700 border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20",
+        label: "Не настроено",
+        icon: <CircleAlert className="h-3 w-3" />,
+      };
+    }
+    if (vectorHealth.status === "error") {
+      return {
+        variant: "outline" as const,
+        className: "rounded-full bg-red-500/15 text-red-700 border-red-500/25 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20",
+        label: "Ошибка",
+        icon: <CircleAlert className="h-3 w-3" />,
+      };
+    }
+    return {
+      variant: "outline" as const,
+      className: "rounded-full bg-gray-500/10 text-gray-600 border-gray-500/20 dark:bg-gray-500/10 dark:text-gray-400 dark:border-gray-500/15",
+      label: "Неизвестно",
+      icon: <CircleDashed className="h-3 w-3" />,
+    };
+  };
+
+  const vectorStatusBadge = getVectorStatusBadge();
+  
   const vectorHealthTooltipContent = (() => {
     if (isVectorHealthLoading) {
       return <p className="text-xs text-muted-foreground">Проверяем подключение к Qdrant...</p>;
@@ -371,61 +443,88 @@ export default function VectorCollectionsPage() {
   return (
     <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
       <div className="space-y-6 p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">Коллекции</h1>
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-2 cursor-pointer">
-                    <Badge variant="secondary" className="flex items-center gap-1">
-                      <DatabaseZap className="h-4 w-4" />
-                      Qdrant
-                    </Badge>
-                    <span
-                      className={`h-2 w-2 rounded-full ${vectorHealthIndicatorClass}`}
-                      aria-hidden="true"
-                    />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">{vectorHealthTooltipContent}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
-          <p className="text-muted-foreground">
-            Управляйте векторными коллекциями и отслеживайте их состояние в Qdrant
-          </p>
-          {error && (
-            <p className="mt-2 text-sm text-destructive">
-              Не удалось загрузить данные: {error instanceof Error ? error.message : "неизвестная ошибка"}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <DialogTrigger asChild>
-            <Button>Создать коллекцию</Button>
-          </DialogTrigger>
-          <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
-            <RefreshCcw className="mr-2 h-4 w-4" />
-            Обновить
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-semibold">Коллекции</h1>
+          <Button variant="ghost" size="icon" onClick={handleRefresh} disabled={isRefreshing} className="h-8 w-8">
+            <RefreshCcw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+            <span className="sr-only">Обновить</span>
           </Button>
+          <HoverCard>
+            <HoverCardTrigger asChild>
+              <button type="button" className="cursor-pointer shrink-0">
+                <Badge 
+                  variant={vectorStatusBadge.variant}
+                  className={cn("gap-1.5 border-0", vectorStatusBadge.className)}
+                >
+                  {vectorStatusBadge.icon}
+                  {vectorStatusBadge.label}
+                </Badge>
+              </button>
+            </HoverCardTrigger>
+            <HoverCardContent className="max-w-xs">
+              {vectorHealthTooltipContent}
+            </HoverCardContent>
+          </HoverCard>
         </div>
+        <DialogTrigger asChild>
+          <Button>
+            <Plus className="mr-2 h-4 w-4" />
+            Создать коллекцию
+          </Button>
+        </DialogTrigger>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Список коллекций</CardTitle>
-          <CardDescription>
-            Отслеживайте параметры каждой коллекции и объём загруженных данных
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isInitialLoading ? (
-            <p className="text-muted-foreground">Загрузка коллекций...</p>
-          ) : collections.length === 0 ? (
-            <p className="text-muted-foreground">Коллекции ещё не созданы.</p>
-          ) : (
+      {isInitialLoading ? (
+        <Card>
+          <CardContent className="py-12">
+            <div className="flex items-center justify-center gap-2 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span>Загрузка коллекций...</span>
+            </div>
+          </CardContent>
+        </Card>
+      ) : error ? (
+        <Empty className="border-destructive/20">
+          <EmptyHeader>
+            <EmptyMedia variant="icon" className="bg-destructive/10 text-destructive">
+              <AlertCircle className="h-6 w-6" />
+            </EmptyMedia>
+            <EmptyTitle>Не удалось загрузить коллекции</EmptyTitle>
+            <EmptyDescription>
+              {error instanceof Error ? error.message : "неизвестная ошибка"}
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button variant="outline" onClick={handleRefresh}>
+              <RefreshCcw className="mr-2 h-4 w-4" />
+              Повторить попытку
+            </Button>
+          </EmptyContent>
+        </Empty>
+      ) : collections.length === 0 ? (
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Database />
+            </EmptyMedia>
+            <EmptyTitle>Коллекции ещё не созданы</EmptyTitle>
+            <EmptyDescription>
+              Создайте первую коллекцию для хранения векторных данных.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Создать коллекцию
+              </Button>
+            </DialogTrigger>
+          </EmptyContent>
+        </Empty>
+      ) : (
+        <Card>
+          <CardContent>
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -498,9 +597,9 @@ export default function VectorCollectionsPage() {
                 </TableBody>
               </Table>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
       </div>
 
       <DialogContent>
