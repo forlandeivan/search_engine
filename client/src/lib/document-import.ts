@@ -67,10 +67,19 @@ export const buildHtmlFromPlainText = (text: string, title: string) => {
 export const decodeDocBinaryToText = (buffer: ArrayBuffer) => {
   const view = new Uint8Array(buffer);
 
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/3820721a-dfe6-4e19-ad07-3f93ea9c609e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document-import.ts:67',message:'decodeDocBinaryToText ENTRY',data:{bufferSize:buffer.byteLength,firstBytes:Array.from(view.slice(0,32))},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'B,D'})}).catch(()=>{});
+  // #endregion
+
   for (const encoding of TEXT_DECODER_ENCODINGS) {
     try {
       const decoder = new TextDecoder(encoding, { fatal: false });
       const decoded = decoder.decode(view);
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/3820721a-dfe6-4e19-ad07-3f93ea9c609e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document-import.ts:78',message:'Tried encoding',data:{encoding,decodedLength:decoded.length,decodedPreview:decoded.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      
       const cleaned = decoded
         .replace(CLEAN_CONTROL_CHARS, "\n")
         .replace(/[\r\f]+/g, "\n")
@@ -79,6 +88,9 @@ export const decodeDocBinaryToText = (buffer: ArrayBuffer) => {
         .filter(Boolean)
         .join("\n");
       if (cleaned.length > 0) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/3820721a-dfe6-4e19-ad07-3f93ea9c609e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document-import.ts:90',message:'Encoding SUCCESS',data:{encoding,cleanedLength:cleaned.length,cleanedPreview:cleaned.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
         return cleaned;
       }
     } catch (error) {
@@ -153,6 +165,8 @@ const assertExtensionMatchesContent = (extension: string, buffer: ArrayBuffer) =
     }
   }
 
+  // Для .docx проверяем ZIP контейнер (Office Open XML)
+  // Для .doc не проверяем, так как это бинарный формат Word 97-2003
   if (["docx", "pptx", "xlsx"].includes(extension)) {
     if (!detectIsZipContainer(buffer)) {
       throw new Error("Файл не соответствует ожидаемому формату Office OpenXML");
@@ -183,6 +197,11 @@ const convertPdfToHtml = async (buffer: ArrayBuffer, title: string) => {
   return buildHtmlFromPlainText(plainText, title);
 };
 
+/**
+ * Конвертирует DOCX файл в HTML используя библиотеку mammoth
+ * Только для .docx формата (Office Open XML)
+ * Для .doc формата используется decodeDocBinaryToText fallback
+ */
 const convertDocBufferToHtml = async (buffer: ArrayBuffer, title: string) => {
   try {
     const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
@@ -356,10 +375,15 @@ export const convertBufferToHtml = async ({
   const extension = filename.split(".").pop()?.toLowerCase() ?? "";
   const title = normalizeTitleFromFilename(filename);
 
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/3820721a-dfe6-4e19-ad07-3f93ea9c609e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document-import.ts:356',message:'convertBufferToHtml ENTRY',data:{filename,extension,bufferSize:data.byteLength,title},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'A,C'})}).catch(()=>{});
+  // #endregion
+
   if (!SUPPORTED_DOCUMENT_EXTENSIONS.has(extension)) {
     throw new Error("Неподдерживаемый формат файла");
   }
 
+  // Для .doc не проверяем содержимое, так как это бинарный формат
   if (["pdf", "docx", "pptx", "xlsx"].includes(extension)) {
     assertExtensionMatchesContent(extension, data);
   }
@@ -368,7 +392,60 @@ export const convertBufferToHtml = async ({
     return { title, html: await convertPdfToHtml(data, title) };
   }
 
-  if (extension === "doc" || extension === "docx") {
+  if (extension === "doc") {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/3820721a-dfe6-4e19-ad07-3f93ea9c609e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document-import.ts:376',message:'DOC PATH - sending to server',data:{extension,title,bufferSize:data.byteLength},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'FIX'})}).catch(()=>{});
+    // #endregion
+    
+    // Для старого формата .doc отправляем на сервер для обработки
+    try {
+      const formData = new FormData();
+      const blob = new Blob([data], { type: 'application/msword' });
+      formData.append('file', blob, filename);
+      
+      const workspaceId = (window as any).__WORKSPACE_ID__ || localStorage.getItem('workspaceId') || '';
+      const response = await fetch('/api/knowledge/bases/convert-doc', {
+        method: 'POST',
+        headers: {
+          'X-Workspace-Id': workspaceId,
+        },
+        body: formData,
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: 'Ошибка сервера' }));
+        throw new Error(error.message || 'Не удалось обработать файл на сервере');
+      }
+      
+      const result = await response.json();
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/3820721a-dfe6-4e19-ad07-3f93ea9c609e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document-import.ts:408',message:'Server conversion SUCCESS',data:{textLength:result.text?.length || 0,textPreview:result.text?.substring(0,200) || ''},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'FIX'})}).catch(()=>{});
+      // #endregion
+      
+      if (!result.text) {
+        throw new Error('Сервер не вернул текст');
+      }
+      
+      const html = buildHtmlFromPlainText(result.text, title);
+      return { title, html };
+    } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/3820721a-dfe6-4e19-ad07-3f93ea9c609e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'document-import.ts:421',message:'Server conversion FAILED - using fallback',data:{error:error instanceof Error ? error.message : String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'FIX'})}).catch(()=>{});
+      // #endregion
+      
+      // Fallback к клиентской обработке если сервер недоступен
+      const extractedText = decodeDocBinaryToText(data);
+      if (!extractedText) {
+        throw new Error("Не удалось прочитать содержимое документа.");
+      }
+      const html = buildHtmlFromPlainText(extractedText, title);
+      return { title, html };
+    }
+  }
+
+  if (extension === "docx") {
     return { title, html: await convertDocBufferToHtml(data, title) };
   }
 

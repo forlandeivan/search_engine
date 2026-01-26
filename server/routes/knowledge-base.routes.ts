@@ -1404,6 +1404,45 @@ knowledgeBaseRouter.get('/json-import/:jobId/errors/export', asyncHandler(async 
   }
 }));
 
+/**
+ * POST /bases/convert-doc
+ * Convert .doc file to text on server (for old Word 97-2003 format)
+ */
+const uploadDoc = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB max
+  },
+});
+
+knowledgeBaseRouter.post('/bases/convert-doc', uploadDoc.single('file'), asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  if (!req.file) {
+    return res.status(400).json({ message: 'Файл не предоставлен' });
+  }
+
+  const { extractTextFromBuffer } = await import('../text-extraction');
+  
+  try {
+    const result = await extractTextFromBuffer({
+      buffer: req.file.buffer,
+      filename: req.file.originalname,
+      mimeType: req.file.mimetype,
+    });
+
+    res.json({
+      text: result.text,
+      bytes: result.bytes,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'Failed to extract text from .doc file');
+    const message = error instanceof Error ? error.message : 'Не удалось извлечь текст из документа';
+    res.status(400).json({ message });
+  }
+}));
+
 // Error handler for this router
 knowledgeBaseRouter.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   if (err instanceof z.ZodError) {
