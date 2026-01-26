@@ -203,6 +203,105 @@ export function useCreateKnowledgeBase(workspaceId?: string | null) {
           createdAt: created.updatedAt,
           updatedAt: created.updatedAt,
         };
+
+        // Если есть документы из архива, отправляем их на сервер
+        if (documents && Object.keys(documents).length > 0 && structure) {
+          try {
+            // Сначала создаем папки и сохраняем их ID
+            const folderMap = new Map<string, string>(); // Map<localId, serverId>
+            
+            const createFoldersRecursively = async (nodes: typeof structure, parentId: string | null = null): Promise<void> => {
+              for (const node of nodes) {
+                if (node.type === 'folder') {
+                  try {
+                    const folderResponse = await apiRequest(
+                      'POST',
+                      `/api/knowledge/bases/${created.id}/folders`,
+                      {
+                        name: node.title,
+                        parentId: parentId || undefined,
+                      },
+                      undefined,
+                      { workspaceId: resolvedWorkspaceId },
+                    );
+
+                    if (folderResponse.ok) {
+                      const folderData = await folderResponse.json();
+                      const serverFolderId = folderData.folder?.id || folderData.id;
+                      if (serverFolderId) {
+                        folderMap.set(node.id, serverFolderId);
+                        // Рекурсивно создаем вложенные папки и документы
+                        if (node.children) {
+                          await createFoldersRecursively(node.children, serverFolderId);
+                        }
+                      }
+                    }
+                  } catch (error) {
+                    console.warn(`Не удалось создать папку "${node.title}":`, error);
+                    // Продолжаем создание остальных элементов
+                  }
+                } else if (node.type === 'document' && node.documentId && documents[node.documentId]) {
+                  // Документы будут созданы после создания всех папок
+                }
+              }
+            };
+
+            // Создаем все папки
+            await createFoldersRecursively(structure);
+
+            // Теперь собираем документы с правильными parentId
+            const documentsToCreate: Array<{
+              title: string;
+              content: string;
+              parentId: string | null;
+              sourceType: 'import';
+              importFileName: string | null;
+            }> = [];
+
+            const collectDocuments = (nodes: typeof structure, parentId: string | null = null) => {
+              for (const node of nodes) {
+                if (node.type === 'document' && node.documentId && documents[node.documentId]) {
+                  const doc = documents[node.documentId];
+                  documentsToCreate.push({
+                    title: doc.title,
+                    content: doc.content,
+                    parentId,
+                    sourceType: 'import' as const,
+                    importFileName: archiveFile?.name || null,
+                  });
+                } else if (node.type === 'folder') {
+                  // Используем serverId папки из folderMap
+                  const serverFolderId = folderMap.get(node.id) || null;
+                  if (node.children) {
+                    collectDocuments(node.children, serverFolderId);
+                  }
+                }
+              }
+            };
+
+            collectDocuments(structure);
+
+            // Отправляем документы на сервер батчами
+            if (documentsToCreate.length > 0) {
+              const bulkResponse = await apiRequest(
+                'POST',
+                `/api/knowledge/bases/${created.id}/documents/bulk`,
+                { documents: documentsToCreate },
+                undefined,
+                { workspaceId: resolvedWorkspaceId },
+              );
+
+              if (!bulkResponse.ok) {
+                const errorData = await bulkResponse.json().catch(() => ({}));
+                console.warn('Не удалось создать некоторые документы из архива:', errorData);
+                // Не бросаем ошибку, чтобы база знаний все равно была создана
+              }
+            }
+          } catch (error) {
+            console.error('Ошибка при создании документов из архива:', error);
+            // Не бросаем ошибку, чтобы база знаний все равно была создана
+          }
+        }
       }
 
       const currentState = readKnowledgeBaseStorage();
