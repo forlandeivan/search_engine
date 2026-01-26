@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRoute } from "wouter";
 import { Link } from "wouter";
 import {
@@ -15,7 +15,7 @@ import { IndexingLogDialog } from "@/components/knowledge-base/IndexingLogDialog
 import { useKnowledgeBaseIndexingHistory } from "@/hooks/useKnowledgeBaseIndexingHistory";
 import { useKnowledgeBaseIndexingSummary } from "@/hooks/useKnowledgeBaseIndexingSummary";
 import { useActiveIndexingActions } from "@/hooks/useActiveIndexingActions";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionResponse } from "@/types/session";
 
 type KnowledgeBaseIndexingHistoryPageProps = {
@@ -29,16 +29,49 @@ export default function KnowledgeBaseIndexingHistoryPage({ params }: KnowledgeBa
   const baseId = params?.knowledgeBaseId ?? routeParams?.baseId ?? null;
   const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const queryClient = useQueryClient();
+  const prevActiveActionIdRef = useRef<string | null>(null);
 
   const { data: session } = useQuery<SessionResponse>({ queryKey: ["/api/auth/session"] });
   const workspaceId = session?.workspace?.active?.id ?? session?.activeWorkspaceId ?? null;
 
-  const { data, isLoading, isError, error } = useKnowledgeBaseIndexingHistory(baseId, 25);
+  const { data, isLoading, isError, error, refetch } = useKnowledgeBaseIndexingHistory(baseId, 25);
   const { data: indexingSummary } = useKnowledgeBaseIndexingSummary(workspaceId, baseId);
   const { data: activeActions = [] } = useActiveIndexingActions(workspaceId);
   const activeActionForBase = baseId
     ? activeActions.find((action) => action.baseId === baseId)
     : undefined;
+
+  // Автоматическое обновление истории при завершении индексации
+  useEffect(() => {
+    if (!baseId) {
+      prevActiveActionIdRef.current = null;
+      return;
+    }
+
+    const currentActionId = activeActionForBase?.actionId ?? null;
+    const prevActionId = prevActiveActionIdRef.current;
+
+    const finishedStatuses = new Set(["done", "canceled", "error"]);
+    const isFinishedNow =
+      Boolean(activeActionForBase?.status) &&
+      finishedStatuses.has(activeActionForBase!.status);
+
+    // Сценарий A: индексация закончилась и действие исчезло из списка активных
+    const becameInactive = Boolean(prevActionId) && !currentActionId;
+    // Сценарий B: бэкенд вернул финальный статус, но действие ещё видно в active
+    const becameFinished = Boolean(currentActionId) && isFinishedNow;
+
+    if (becameInactive || becameFinished) {
+      // Инвалидируем и обновляем историю индексаций
+      void queryClient.invalidateQueries({
+        queryKey: ["/api/knowledge/bases", baseId, "indexing/actions/history"],
+      });
+      void refetch();
+    }
+
+    prevActiveActionIdRef.current = currentActionId;
+  }, [baseId, activeActionForBase?.actionId, activeActionForBase?.status, queryClient, refetch]);
 
   const handleViewLog = (actionId: string) => {
     setSelectedActionId(actionId);
@@ -70,15 +103,9 @@ export default function KnowledgeBaseIndexingHistoryPage({ params }: KnowledgeBa
 
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold">История индексаций</h1>
-        <p className="text-sm text-muted-foreground">
-          Просмотр истории последних индексаций базы знаний с детальной информацией о каждом запуске.
-        </p>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Журнал индексаций</CardTitle>
-        </CardHeader>
         <CardContent>
           <IndexingHistoryPanel
             items={data?.items ?? []}
