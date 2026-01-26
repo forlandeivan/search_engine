@@ -551,9 +551,11 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
       return;
     }
 
+    // Очищаем поле ввода сразу, чтобы текст "улетел" в бабл сообщения
+    setValue("");
+
     try {
       await onSend(trimmed);
-      setValue("");
     } finally {
       setIsSending(false);
     }
