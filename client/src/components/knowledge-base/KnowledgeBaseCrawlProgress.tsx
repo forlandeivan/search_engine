@@ -98,7 +98,7 @@ export function KnowledgeBaseCrawlProgress({
   const showRetry = job.status === "failed";
 
   return (
-    <Card className="border border-primary/30 bg-primary/5">
+    <Card className="border border-primary/30 bg-primary/5" data-testid="crawl-progress-widget">
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
@@ -164,6 +164,7 @@ export function KnowledgeBaseCrawlProgress({
                 onClick={() => {
                   void onCancel?.();
                 }}
+                data-testid="crawl-cancel-button"
               >
                 <StopCircle className="mr-2 h-4 w-4" /> Отменить
               </Button>
