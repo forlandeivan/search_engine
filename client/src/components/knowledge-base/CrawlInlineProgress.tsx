@@ -64,7 +64,34 @@ export function CrawlInlineProgress({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideCanceledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canceledJobIdRef = useRef<string | null>(null); // ID отмененной джобы, которую нужно скрыть
-  const hiddenCanceledJobIdsRef = useRef<Set<string>>(new Set()); // Множество ID отмененных джоб, которые уже скрыты
+  
+  // Используем sessionStorage для сохранения информации о скрытых джобах между переключениями баз
+  const getHiddenCanceledJobIds = useCallback((): Set<string> => {
+    try {
+      const stored = sessionStorage.getItem('hiddenCanceledCrawlJobIds');
+      if (stored) {
+        return new Set(JSON.parse(stored));
+      }
+    } catch (e) {
+      // Игнорируем ошибки парсинга
+    }
+    return new Set<string>();
+  }, []);
+  
+  const addHiddenCanceledJobId = useCallback((jobId: string) => {
+    try {
+      const current = getHiddenCanceledJobIds();
+      current.add(jobId);
+      sessionStorage.setItem('hiddenCanceledCrawlJobIds', JSON.stringify(Array.from(current)));
+    } catch (e) {
+      // Игнорируем ошибки записи
+    }
+  }, [getHiddenCanceledJobIds]);
+  
+  const isJobHidden = useCallback((jobId: string | null | undefined): boolean => {
+    if (!jobId) return false;
+    return getHiddenCanceledJobIds().has(jobId);
+  }, [getHiddenCanceledJobIds]);
   const onStateChangeRef = useRef(onStateChange);
   const onDocumentsSavedRef = useRef(onDocumentsSaved);
 
@@ -83,10 +110,10 @@ export function CrawlInlineProgress({
         clearTimeout(hideCanceledTimerRef.current);
         hideCanceledTimerRef.current = null;
       }
-      canceledJobIdRef.current = null;
-      hiddenCanceledJobIdsRef.current.clear();
-      abortControllerRef.current?.abort();
-      abortControllerRef.current = null;
+    canceledJobIdRef.current = null;
+    // НЕ очищаем sessionStorage при размонтировании - информация должна сохраняться в рамках сессии
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     };
   }, []);
 
@@ -113,9 +140,17 @@ export function CrawlInlineProgress({
         }
         onStateChangeRef.current?.({ running: false, job: null, lastRun: incoming });
         
-        // Если джоба отменена, скрываем виджет через 2 секунды
-        if (incoming.status === "canceled") {
+        // Если джоба ТОЛЬКО ЧТО отменена (статус изменился на "canceled"), скрываем виджет через 2 секунды
+        // Проверяем, что:
+        // 1. Предыдущий статус был не "canceled" (значит пользователь нажал "Отмена" сейчас)
+        // 2. И есть предыдущее состояние (normalizedPrevious !== null) - значит это не первая загрузка
+        // Это гарантирует, что таймер запускается только при реальном нажатии "Отмена", а не при загрузке уже отмененной джобы
+        if (incoming.status === "canceled" && normalizedPrevious && normalizedPrevious.status !== "canceled") {
           canceledJobIdRef.current = incoming.jobId;
+          // Сохраняем ID джобы в sessionStorage СРАЗУ, чтобы при переключении баз виджет не появлялся снова
+          if (incoming.jobId) {
+            addHiddenCanceledJobId(incoming.jobId);
+          }
           if (hideCanceledTimerRef.current) {
             clearTimeout(hideCanceledTimerRef.current);
           }
@@ -247,26 +282,16 @@ export function CrawlInlineProgress({
     
       // Если джоба уже завершена, сохраняем её как lastRun
       if (TERMINAL_STATUSES.includes(initialJob.status)) {
+        // Если джоба отменена, не показываем её - она была отменена ДО загрузки страницы
+        // Таймер запускается только когда пользователь нажимает "Отмена" сейчас (в handleJobUpdate)
+        if (initialJob.status === "canceled") {
+          // Не показываем отмененные джобы при инициализации
+          return;
+        }
+        
         setLastRun(initialJob);
         previousJobRef.current = initialJob;
         onStateChangeRef.current?.({ running: false, job: null, lastRun: initialJob });
-        
-        // Если джоба отменена, скрываем виджет через 2 секунды
-        if (initialJob.status === "canceled") {
-          canceledJobIdRef.current = initialJob.jobId;
-          if (hideCanceledTimerRef.current) {
-            clearTimeout(hideCanceledTimerRef.current);
-          }
-          hideCanceledTimerRef.current = setTimeout(() => {
-            setLastRun(null);
-            hideCanceledTimerRef.current = null;
-            // Сохраняем ID джобы в множестве скрытых, чтобы не показывать её снова
-            if (initialJob.jobId) {
-              hiddenCanceledJobIdsRef.current.add(initialJob.jobId);
-            }
-            canceledJobIdRef.current = null;
-          }, 2000);
-        }
       } else {
       // Для активной джобы инициализируем состояние и начинаем отслеживание
       handleJobUpdate(initialJob);
@@ -284,7 +309,7 @@ export function CrawlInlineProgress({
         hideCanceledTimerRef.current = null;
       }
       canceledJobIdRef.current = null;
-      hiddenCanceledJobIdsRef.current.clear();
+      // НЕ очищаем sessionStorage при отсутствии baseId - информация должна сохраняться в рамках сессии
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
       setJob(null);
@@ -301,13 +326,13 @@ export function CrawlInlineProgress({
     // Сбрасываем состояние при смене baseId
     setIsInitialLoad(true);
     
-    // Очищаем таймер скрытия при смене baseId
+    // Очищаем таймер скрытия при смене baseId (но НЕ очищаем hiddenCanceledJobIdsRef - это глобальная информация)
     if (hideCanceledTimerRef.current) {
       clearTimeout(hideCanceledTimerRef.current);
       hideCanceledTimerRef.current = null;
     }
     canceledJobIdRef.current = null;
-    hiddenCanceledJobIdsRef.current.clear();
+    // НЕ очищаем hiddenCanceledJobIdsRef при смене baseId - информация о скрытых джобах должна сохраняться
     
     // Сбрасываем lastRun при смене baseId, только если нет initialJob для этого baseId
     // Это нужно, чтобы не сбрасывать lastRun, если initialJob еще не обработан
@@ -350,50 +375,23 @@ export function CrawlInlineProgress({
         if (!payload.running) {
           const lastRunJob = payload.lastRun?.job ?? previousJobRef.current ?? null;
           
-          // Если это отмененная джоба, которую мы уже скрыли (или скрываем), не устанавливаем её снова
+          // Если это отмененная джоба, которую мы уже скрыли, не устанавливаем её снова
           // Проверяем ДО установки lastRun, чтобы предотвратить повторное появление виджета
           if (lastRunJob?.status === "canceled") {
-            // Если таймер уже запущен для этой джобы, не обновляем lastRun
+            // Если джоба уже была скрыта ранее (пользователь нажал "Отмена" ранее), не показываем её снова
+            if (isJobHidden(lastRunJob.jobId)) {
+              // Джоба уже была скрыта, не показываем её снова
+              return;
+            }
+            // Если таймер уже запущен для этой джобы (пользователь только что нажал "Отмена"), не обновляем lastRun
             if (canceledJobIdRef.current === lastRunJob.jobId) {
               // Таймер уже запущен, не обновляем lastRun - виджет должен быть скрыт
               return;
             }
-            // Если джоба уже была скрыта ранее, не показываем её снова
-            if (lastRunJob.jobId && hiddenCanceledJobIdsRef.current.has(lastRunJob.jobId)) {
-              // Джоба уже была скрыта, не показываем её снова
-              return;
-            }
-            // Если таймер еще не запущен, устанавливаем lastRun (чтобы показать виджет на 2 секунды) и запускаем таймер
-            canceledJobIdRef.current = lastRunJob.jobId;
-            previousJobRef.current = lastRunJob;
-            setJob(null);
-            setLastRun(lastRunJob); // Показываем виджет на 2 секунды
-            setEvents([]);
-            setConnectionError(null);
-            if (baseId && lastRunJob) {
-              updateKnowledgeBaseCrawlJob(baseId, lastRunJob);
-            } else if (baseId) {
-              updateKnowledgeBaseCrawlJob(baseId, null);
-            }
-            onStateChangeRef.current?.({
-              running: false,
-              job: null,
-              lastRun: lastRunJob ?? undefined,
-            });
-            // Запускаем таймер для скрытия виджета через 2 секунды
-            if (hideCanceledTimerRef.current) {
-              clearTimeout(hideCanceledTimerRef.current);
-            }
-            hideCanceledTimerRef.current = setTimeout(() => {
-              setLastRun(null);
-              hideCanceledTimerRef.current = null;
-              // Сохраняем ID джобы в множестве скрытых, чтобы не показывать её снова
-              if (lastRunJob?.jobId) {
-                hiddenCanceledJobIdsRef.current.add(lastRunJob.jobId);
-              }
-              canceledJobIdRef.current = null;
-            }, 2000);
-            return; // Не продолжаем дальше для отмененных джоб
+            // Если джоба отменена, но таймер не запущен - значит она была отменена ДО загрузки страницы
+            // Не показываем такие джобы, они не должны быть видны
+            // Таймер запускается только когда пользователь нажимает "Отмена" сейчас (в handleJobUpdate)
+            return;
           }
           
           // Для неотмененных джоб устанавливаем lastRun как обычно
@@ -451,7 +449,7 @@ export function CrawlInlineProgress({
         hideCanceledTimerRef.current = null;
       }
       canceledJobIdRef.current = null;
-      hiddenCanceledJobIdsRef.current.clear();
+      // НЕ очищаем sessionStorage при смене baseId - информация должна сохраняться
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
     };
@@ -526,7 +524,7 @@ export function CrawlInlineProgress({
   const initialJobToDisplay = initialJob && initialJob.baseId === baseId 
     && !(initialJob.status === "canceled" && (
       canceledJobIdRef.current === initialJob.jobId || 
-      hiddenCanceledJobIdsRef.current.has(initialJob.jobId)
+      isJobHidden(initialJob.jobId)
     ))
     ? initialJob 
     : null;

@@ -2622,7 +2622,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           </CardHeader>
           <CardContent className="space-y-4">
             {detail.description && (
-              <p className="text-sm text-muted-foreground">{detail.description}</p>
+              <p className="text-sm text-muted-foreground break-words">{detail.description}</p>
             )}
             
             {/* Статистика */}
