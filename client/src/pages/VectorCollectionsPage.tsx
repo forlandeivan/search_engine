@@ -523,82 +523,80 @@ export default function VectorCollectionsPage() {
           </EmptyContent>
         </Empty>
       ) : (
-        <Card>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Название</TableHead>
-                    <TableHead>Количество записей</TableHead>
-                    <TableHead>Размер вектора</TableHead>
-                    <TableHead>Метрика</TableHead>
-                    <TableHead className="w-0" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {collections.map((collection) => (
-                    <TableRow key={collection.name}>
-                      <TableCell className="font-medium">
-                        <div className="flex flex-col gap-1">
-                          <Link
-                            href={`/vector/collections/${encodeURIComponent(collection.name)}`}
-                            className="text-primary hover:underline"
+        <div className="rounded-lg border bg-card">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Название</TableHead>
+                  <TableHead>Количество записей</TableHead>
+                  <TableHead>Размер вектора</TableHead>
+                  <TableHead>Метрика</TableHead>
+                  <TableHead className="w-0" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {collections.map((collection) => (
+                  <TableRow key={collection.name}>
+                    <TableCell className="font-medium">
+                      <div className="flex flex-col gap-1">
+                        <Link
+                          href={`/vector/collections/${encodeURIComponent(collection.name)}`}
+                          className="text-primary hover:underline"
+                        >
+                          {collection.name}
+                        </Link>
+                        <div className="flex flex-wrap gap-1.5">
+                          <Badge
+                            variant="outline"
+                            onClick={(event) => void handleCopyCollectionId(event, collection.name)}
+                            className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
                           >
-                            {collection.name}
-                          </Link>
-                          <div className="flex flex-wrap gap-1.5">
-                            <Badge
-                              variant="outline"
-                              onClick={(event) => void handleCopyCollectionId(event, collection.name)}
-                              className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
-                            >
-                              <Copy className="h-3.5 w-3.5" /> ID: {collection.name}
-                            </Badge>
-                          </div>
-                          {collection.error && (
-                            <span className="text-xs text-destructive">{collection.error}</span>
-                          )}
+                            <Copy className="h-3.5 w-3.5" /> ID: {collection.name}
+                          </Badge>
                         </div>
-                      </TableCell>
-                      <TableCell>{collection.pointsCount ?? "—"}</TableCell>
-                      <TableCell>{collection.vectorSize ?? "—"}</TableCell>
-                      <TableCell>{collection.distance ?? "—"}</TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreVertical className="h-4 w-4" />
-                              <span className="sr-only">Открыть действия</span>
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onSelect={(event) => {
-                                event.preventDefault();
-                                setLocation(`/vector/collections/${encodeURIComponent(collection.name)}`);
-                              }}
-                            >
-                              Открыть коллекцию
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onSelect={(event) => {
-                                event.preventDefault();
-                                setCollectionToDelete(collection.name);
-                              }}
-                            >
-                              Удалить коллекцию
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
+                        {collection.error && (
+                          <span className="text-xs text-destructive">{collection.error}</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>{collection.pointsCount ?? "—"}</TableCell>
+                    <TableCell>{collection.vectorSize ?? "—"}</TableCell>
+                    <TableCell>{collection.distance ?? "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <MoreVertical className="h-4 w-4" />
+                            <span className="sr-only">Открыть действия</span>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onSelect={(event) => {
+                              event.preventDefault();
+                              setLocation(`/vector/collections/${encodeURIComponent(collection.name)}`);
+                            }}
+                          >
+                            Открыть коллекцию
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={(event) => {
+                              event.preventDefault();
+                              setCollectionToDelete(collection.name);
+                            }}
+                          >
+                            Удалить коллекцию
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
       )}
       </div>
 
