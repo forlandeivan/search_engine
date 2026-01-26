@@ -1,5 +1,6 @@
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import mammoth from "mammoth";
+import WordExtractor from "word-extractor";
 import { TextDecoder } from "util";
 import { fileURLToPath } from "url";
 import path from "path";
@@ -132,14 +133,34 @@ async function extractPdf(buffer: Buffer): Promise<string> {
   return textChunks.join("\n\n");
 }
 
+/**
+ * Извлекает текст из файла DOCX (Office Open XML)
+ * Использует библиотеку mammoth для парсинга DOCX
+ */
+async function extractDocx(buffer: Buffer): Promise<string> {
+  const result = await mammoth.extractRawText({ buffer });
+  if (typeof result.value === "string" && result.value.trim()) {
+    return result.value;
+  }
+  throw new Error("Не удалось извлечь текст из DOCX файла");
+}
+
+/**
+ * Извлекает текст из файла DOC (Microsoft Word 97-2003 binary format)
+ * Использует библиотеку word-extractor для парсинга бинарного формата .doc
+ * В случае ошибки использует fallback метод decodeDocBinaryToText
+ */
 async function extractDoc(buffer: Buffer): Promise<string> {
   try {
-    const result = await mammoth.extractRawText({ buffer });
-    if (typeof result.value === "string" && result.value.trim()) {
-      return result.value;
+    const extractor = new WordExtractor();
+    const extracted = await extractor.extract(buffer);
+    const text = extracted.getBody();
+    if (text && text.trim()) {
+      return text;
     }
-  } catch {
-    // fallback ниже
+  } catch (error) {
+    console.warn("[text-extraction] word-extractor failed for .doc file:", error instanceof Error ? error.message : String(error));
+    // fallback к бинарному декодированию
   }
 
   return decodeDocBinaryToText(buffer);
@@ -167,7 +188,9 @@ export async function extractTextFromBuffer(params: {
       text = decodeTextBuffer(buffer);
     } else if (extension === "pdf") {
       text = await extractPdf(buffer);
-    } else if (extension === "doc" || extension === "docx") {
+    } else if (extension === "docx") {
+      text = await extractDocx(buffer);
+    } else if (extension === "doc") {
       text = await extractDoc(buffer);
     } else {
       throw new TextExtractionError({

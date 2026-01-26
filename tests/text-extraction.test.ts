@@ -124,6 +124,15 @@ describe("text extraction", () => {
     expect(result.text).toContain("Hello DOCX");
   });
 
+  it("extracts text from doc (Word 97-2003) using fallback", async () => {
+    // Простой текстовый буфер будет обработан fallback методом decodeDocBinaryToText
+    // когда word-extractor не сможет распознать формат
+    const buffer = Buffer.from("Test DOC content for extraction", "utf8");
+    const result = await extractTextFromBuffer({ buffer, filename: "file.doc", mimeType: "application/msword" });
+    expect(result.text).toContain("Test DOC");
+    expect(result.contentType).toBe("application/msword");
+  });
+
   it("extracts text from pdf", async () => {
     const buffer = buildPdfBuffer("Hello PDF");
     const result = await extractTextFromBuffer({ buffer, filename: "file.pdf", mimeType: "application/pdf" });
