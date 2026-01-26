@@ -83,6 +83,13 @@ export function useCreateKnowledgeBase(workspaceId?: string | null) {
         }
 
         const archiveImport = await importKnowledgeArchive(archiveFile);
+        
+        // Проверяем наличие критических ошибок (например, неподдерживаемый формат)
+        if (archiveImport.errors.length > 0 && archiveImport.summary.importedFiles === 0) {
+          const errorMessages = archiveImport.errors.map(err => err.message).join('; ');
+          throw new Error(`Не удалось импортировать архив: ${errorMessages}`);
+        }
+        
         if (archiveImport.summary.importedFiles === 0) {
           throw new Error(
             "Не удалось импортировать ни один документ из архива. Проверьте поддерживаемые форматы и структуру файлов.",

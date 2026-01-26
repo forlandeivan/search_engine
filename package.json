@@ -85,6 +85,7 @@
         "jsdom": "^25.0.1",
         "jspdf": "^3.0.3",
         "jszip": "^3.10.1",
+        "libarchive.js": "^2.0.2",
         "lucide-react": "^0.453.0",
         "mammoth": "^1.8.0",
         "marked": "^15.0.11",

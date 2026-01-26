@@ -209,6 +209,12 @@ export function CreateKnowledgeDocumentDialog({
     workspaceId ?? "",
   );
 
+  // Bulk document import hook
+  const bulkImportMutation = useBulkDocumentImport(
+    workspaceId ?? "",
+    baseId ?? "",
+  );
+
   const folderOptions = useMemo(() => buildFolderOptions(structure), [structure]);
 
   const resetJsonImportState = () => {
@@ -623,6 +629,77 @@ export function CreateKnowledgeDocumentDialog({
       setJsonError(message);
     } finally {
       setJsonIsSubmitting(false);
+    }
+  };
+
+  const handleBulkImport = async () => {
+    if (!workspaceId || !baseId) {
+      setFormError("Не указаны workspaceId или baseId для импорта");
+      return;
+    }
+
+    if (importFiles.length === 0) {
+      setFormError("Выберите файлы для импорта");
+      return;
+    }
+
+    // Проверка размера файлов
+    const oversizedFiles = importFiles.filter(file => file.size > MAX_FILE_SIZE_BYTES);
+    if (oversizedFiles.length > 0) {
+      const fileNames = oversizedFiles.map(f => f.name).join(", ");
+      setFormError(`Следующие файлы слишком большие (максимум ${MAX_FILE_SIZE_BYTES / 1024 / 1024} МБ): ${fileNames}`);
+      return;
+    }
+
+    setIsBulkImporting(true);
+    setFormError(null);
+    setBulkImportResult(null);
+    setBulkImportProgress({ current: 0, total: importFiles.length });
+
+    try {
+      const parentId = parentValue === ROOT_PARENT_VALUE ? null : parentValue;
+      const isArchive = fileImportMode === "archive";
+
+      const result = await bulkImportMutation.mutateAsync({
+        files: importFiles,
+        parentId,
+        isArchive,
+      });
+
+      // Преобразуем результат в нужный формат
+      const createdCount = result.created.length;
+      const failedCount = result.failed.length;
+      
+      // Собираем ошибки из result.errors и добавляем информацию о failed документах
+      const allErrors = [...result.errors];
+      if (failedCount > result.errors.length) {
+        // Если есть failed документы без описания ошибок, добавляем общую ошибку
+        for (let i = result.errors.length; i < failedCount; i++) {
+          allErrors.push({
+            title: `Документ ${i + 1}`,
+            error: "Не удалось импортировать документ",
+          });
+        }
+      }
+
+      setBulkImportResult({
+        created: createdCount,
+        failed: failedCount,
+        errors: allErrors,
+      });
+
+      // Если все успешно, закрываем диалог через небольшую задержку
+      if (result.failed.length === 0) {
+        setTimeout(() => {
+          onOpenChange(false);
+        }, 2000);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Не удалось импортировать файлы";
+      setFormError(message);
+    } finally {
+      setIsBulkImporting(false);
+      setBulkImportProgress(undefined);
     }
   };
 
