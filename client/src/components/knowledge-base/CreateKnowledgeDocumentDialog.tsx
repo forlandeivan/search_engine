@@ -1201,7 +1201,7 @@ export function CreateKnowledgeDocumentDialog({
                     {importHtml && (
                       <div className="space-y-2">
                         <Label>Предпросмотр содержимого</Label>
-                        <div className="prose prose-sm max-h-64 w-full max-w-none overflow-auto rounded-md border bg-muted/40 p-3">
+                        <div className="prose prose-sm dark:prose-invert text-foreground max-h-64 w-full max-w-none overflow-auto rounded-md border bg-muted/40 p-3">
                           <div
                             dangerouslySetInnerHTML={{
                               __html: applyTitleToImportedHtml(
