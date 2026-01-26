@@ -172,6 +172,7 @@ import {
   CircleCheck,
   CircleAlert,
   CircleDashed,
+  ArrowLeft,
 } from "lucide-react";
 import {
   HoverCard,
@@ -3262,6 +3263,22 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             <div className="p-4 border-b">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold">Структура базы</h3>
+                {selectedBase && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      "h-7 px-2",
+                      !selectedNodeId && "invisible pointer-events-none"
+                    )}
+                    onClick={() => navigate(`/knowledge/${selectedBase.id}`)}
+                    title="Обзор базы"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5 mr-1" />
+                    <span className="text-xs">Обзор базы</span>
+                  </Button>
+                )}
               </div>
               {selectedBase && (
                 <Button
