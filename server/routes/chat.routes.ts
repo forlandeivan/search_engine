@@ -120,6 +120,20 @@ function getRequestWorkspace(req: Request): { id: string } {
   return { id: String(workspaceId) };
 }
 
+/**
+ * Исправляет кодировку имени файла из Content-Disposition.
+ * Браузер может отправить кириллицу в UTF-8, а Node/Express парсит заголовок как Latin-1 — получаются кракозябры.
+ * Переинтерпретация байтов Latin-1 как UTF-8 восстанавливает корректное имя.
+ */
+function fixFilenameEncoding(raw: string): string {
+  if (!raw || /^[\x00-\x7F]*$/.test(raw)) return raw;
+  try {
+    return Buffer.from(raw, 'latin1').toString('utf8');
+  } catch {
+    return raw;
+  }
+}
+
 function pickFirstString(...values: unknown[]): string | undefined {
   for (const val of values) {
     if (typeof val === 'string' && val.trim().length > 0) {
@@ -1206,8 +1220,8 @@ chatRouter.post('/sessions/:chatId/messages/attachment', chatAttachmentUpload.si
     return res.status(400).json({ message: 'Навык не найден' });
   }
 
-  // 3. Validate file
-  const filename = file.originalname || 'file';
+  // 3. Validate file (fix UTF-8 filename if parsed as Latin-1 by Node)
+  const filename = fixFilenameEncoding(file.originalname || 'file');
   const mimeType = file.mimetype || null;
   const validation = validateChatFile({
     size: file.size,
@@ -1466,7 +1480,7 @@ chatRouter.post('/sessions/:chatId/messages/file', fileUpload.single('file'), as
     });
   }
 
-  const fileName = file.originalname || 'audio.wav';
+  const fileName = fixFilenameEncoding(file.originalname || 'audio.wav');
   const mimeType = file.mimetype || 'application/octet-stream';
   const sizeBytes = file.size;
 
