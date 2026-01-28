@@ -28,6 +28,7 @@ import {
   chatMessages,
   botActions,
   chatAttachments,
+  chatFileIngestionJobs,
   skillFiles,
   skillFileIngestionJobs,
   transcripts,
@@ -103,6 +104,8 @@ import {
   type SkillFileInsert,
   type SkillFileIngestionJob,
   type SkillFileIngestionJobInsert,
+  type ChatFileIngestionJob,
+  type ChatFileIngestionJobInsert,
   type ChatMessage,
   type ChatMessageInsert,
   type ChatCard,
@@ -1173,6 +1176,25 @@ export interface IStorage {
   createChatAttachment(values: ChatAttachmentInsert): Promise<ChatAttachment>;
   findChatAttachmentByMessageId(messageId: string): Promise<ChatAttachment | undefined>;
   getChatAttachment(id: string): Promise<ChatAttachment | undefined>;
+  
+  // Chat file ingestion jobs
+  createChatFileIngestionJob(value: ChatFileIngestionJobInsert): Promise<ChatFileIngestionJob | null>;
+  findChatFileIngestionJobByAttachment(
+    attachmentId: string,
+    fileVersion: number,
+  ): Promise<ChatFileIngestionJob | undefined>;
+  claimNextChatFileIngestionJob(now?: Date): Promise<ChatFileIngestionJob | null>;
+  markChatFileIngestionJobDone(
+    jobId: string,
+    stats: { chunkCount: number; totalChars: number; totalTokens: number },
+  ): Promise<void>;
+  rescheduleChatFileIngestionJob(jobId: string, nextRetryAt: Date, errorMessage?: string | null): Promise<void>;
+  failChatFileIngestionJob(jobId: string, errorMessage?: string | null): Promise<void>;
+  
+  // Chat attachment cleanup (housekeeper)
+  getCleanableChatAttachments(params: { minAgeHours: number; limit?: number }): Promise<ChatAttachment[]>;
+  markChatAttachmentCleaned(attachmentId: string): Promise<void>;
+  
   createSkillFiles(values: SkillFileInsert[], options?: { createIngestionJobs?: boolean }): Promise<SkillFile[]>;
   updateSkillFileStatus(
     id: string,
@@ -7619,6 +7641,215 @@ export class DatabaseStorage implements IStorage {
         updatedAt: now,
       })
       .where(eq(skillFileIngestionJobs.id, jobId));
+  }
+
+  // ===== Chat File Ingestion Jobs =====
+
+  async createChatFileIngestionJob(
+    value: ChatFileIngestionJobInsert,
+  ): Promise<ChatFileIngestionJob | null> {
+    await ensureChatTables();
+    const normalized: ChatFileIngestionJobInsert = {
+      jobType: value.jobType ?? "chat_file_ingestion",
+      workspaceId: value.workspaceId,
+      skillId: value.skillId,
+      chatId: value.chatId,
+      attachmentId: value.attachmentId,
+      fileVersion: value.fileVersion ?? 1,
+      status: value.status ?? "pending",
+      attempts: value.attempts ?? 0,
+      nextRetryAt: value.nextRetryAt ?? null,
+      lastError: value.lastError ?? null,
+    };
+
+    const [created] = await this.db
+      .insert(chatFileIngestionJobs)
+      .values(normalized)
+      .onConflictDoNothing({
+        target: [
+          chatFileIngestionJobs.jobType,
+          chatFileIngestionJobs.attachmentId,
+          chatFileIngestionJobs.fileVersion,
+        ],
+      })
+      .returning();
+
+    if (created) {
+      return created;
+    }
+
+    // Job already exists, return existing
+    const [existing] = await this.db
+      .select()
+      .from(chatFileIngestionJobs)
+      .where(
+        and(
+          eq(chatFileIngestionJobs.jobType, normalized.jobType ?? "chat_file_ingestion"),
+          eq(chatFileIngestionJobs.attachmentId, normalized.attachmentId),
+          eq(chatFileIngestionJobs.fileVersion, normalized.fileVersion ?? 1),
+        ),
+      )
+      .limit(1);
+
+    return existing ?? null;
+  }
+
+  async findChatFileIngestionJobByAttachment(
+    attachmentId: string,
+    fileVersion: number,
+  ): Promise<ChatFileIngestionJob | undefined> {
+    await ensureChatTables();
+    const rows = await this.db
+      .select()
+      .from(chatFileIngestionJobs)
+      .where(
+        and(
+          eq(chatFileIngestionJobs.attachmentId, attachmentId),
+          eq(chatFileIngestionJobs.fileVersion, fileVersion),
+          eq(chatFileIngestionJobs.jobType, "chat_file_ingestion"),
+        ),
+      )
+      .limit(1);
+    return rows[0];
+  }
+
+  async claimNextChatFileIngestionJob(now: Date = new Date()): Promise<ChatFileIngestionJob | null> {
+    await ensureChatTables();
+    const result = await this.db.execute(sql`
+      UPDATE "chat_file_ingestion_jobs" AS jobs
+      SET
+        "status" = 'processing',
+        "attempts" = jobs."attempts" + 1,
+        "updated_at" = ${now}
+      WHERE jobs."id" = (
+        SELECT id
+        FROM "chat_file_ingestion_jobs"
+        WHERE "status" = 'pending'
+          AND ("next_retry_at" IS NULL OR "next_retry_at" <= ${now})
+          AND "job_type" = 'chat_file_ingestion'
+        ORDER BY "created_at"
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *
+    `);
+
+    const row = (result.rows ?? [])[0] as Record<string, unknown> | undefined;
+    if (!row) return null;
+
+    // Map the row to ChatFileIngestionJob
+    return {
+      id: String(row.id),
+      jobType: String(row.job_type || "chat_file_ingestion"),
+      workspaceId: String(row.workspace_id),
+      skillId: String(row.skill_id),
+      chatId: String(row.chat_id),
+      attachmentId: String(row.attachment_id),
+      fileVersion: Number(row.file_version || 1),
+      status: String(row.status || "pending") as ChatFileIngestionJob["status"],
+      attempts: Number(row.attempts || 0),
+      nextRetryAt: row.next_retry_at ? new Date(String(row.next_retry_at)) : null,
+      lastError: row.last_error ? String(row.last_error) : null,
+      chunkCount: row.chunk_count ? Number(row.chunk_count) : null,
+      totalChars: row.total_chars ? Number(row.total_chars) : null,
+      totalTokens: row.total_tokens ? Number(row.total_tokens) : null,
+      createdAt: new Date(String(row.created_at)),
+      updatedAt: new Date(String(row.updated_at)),
+    };
+  }
+
+  async markChatFileIngestionJobDone(
+    jobId: string,
+    stats: { chunkCount: number; totalChars: number; totalTokens: number },
+  ): Promise<void> {
+    await ensureChatTables();
+    const now = new Date();
+    await this.db
+      .update(chatFileIngestionJobs)
+      .set({
+        status: "done",
+        nextRetryAt: null,
+        lastError: null,
+        chunkCount: stats.chunkCount,
+        totalChars: stats.totalChars,
+        totalTokens: stats.totalTokens,
+        updatedAt: now,
+      })
+      .where(eq(chatFileIngestionJobs.id, jobId));
+  }
+
+  async rescheduleChatFileIngestionJob(
+    jobId: string,
+    nextRetryAt: Date,
+    errorMessage?: string | null,
+  ): Promise<void> {
+    await ensureChatTables();
+    const now = new Date();
+    await this.db
+      .update(chatFileIngestionJobs)
+      .set({
+        status: "pending",
+        nextRetryAt,
+        lastError: errorMessage?.trim() || null,
+        updatedAt: now,
+      })
+      .where(eq(chatFileIngestionJobs.id, jobId));
+  }
+
+  async failChatFileIngestionJob(jobId: string, errorMessage?: string | null): Promise<void> {
+    await ensureChatTables();
+    const now = new Date();
+    await this.db
+      .update(chatFileIngestionJobs)
+      .set({
+        status: "error",
+        nextRetryAt: null,
+        lastError: errorMessage?.trim() || null,
+        updatedAt: now,
+      })
+      .where(eq(chatFileIngestionJobs.id, jobId));
+  }
+
+  // ===== Chat Attachment Cleanup (Housekeeper) =====
+
+  async getCleanableChatAttachments(params: {
+    minAgeHours: number;
+    limit?: number;
+  }): Promise<ChatAttachment[]> {
+    await ensureChatTables();
+    const { minAgeHours, limit = 100 } = params;
+    const cutoffDate = new Date();
+    cutoffDate.setHours(cutoffDate.getHours() - minAgeHours);
+
+    // Get attachments with completed ingestion and non-empty storage_key
+    const result = await this.db
+      .select({
+        attachment: chatAttachments,
+      })
+      .from(chatAttachments)
+      .innerJoin(
+        chatFileIngestionJobs,
+        eq(chatFileIngestionJobs.attachmentId, chatAttachments.id),
+      )
+      .where(
+        and(
+          isNotNull(chatAttachments.storageKey),
+          ne(chatAttachments.storageKey, ""),
+          eq(chatFileIngestionJobs.status, "done"),
+          lt(chatAttachments.createdAt, cutoffDate),
+        ),
+      )
+      .limit(limit);
+
+    return result.map((r) => r.attachment);
+  }
+
+  async markChatAttachmentCleaned(attachmentId: string): Promise<void> {
+    await ensureChatTables();
+    await this.db
+      .update(chatAttachments)
+      .set({ storageKey: "" })
+      .where(eq(chatAttachments.id, attachmentId));
   }
 
   async createKnowledgeBaseIndexingJob(

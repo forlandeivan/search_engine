@@ -1689,6 +1689,7 @@ export const skills = pgTable(
       .default("raw_only"),
     onTranscriptionAutoActionId: varchar("on_transcription_auto_action_id"),
     status: text("status").$type<SkillStatus>().notNull().default("active"),
+    sharedChatFiles: boolean("shared_chat_files").notNull().default(false),
     icon: text("icon"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -2016,6 +2017,47 @@ export const chatAttachments = pgTable(
 
 export type ChatAttachment = typeof chatAttachments.$inferSelect;
 export type ChatAttachmentInsert = typeof chatAttachments.$inferInsert;
+
+export const chatFileIngestionJobStatuses = ["pending", "processing", "done", "error"] as const;
+export type ChatFileIngestionJobStatus = (typeof chatFileIngestionJobStatuses)[number];
+
+export const chatFileIngestionJobs = pgTable(
+  "chat_file_ingestion_jobs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    jobType: text("job_type").notNull().default("chat_file_ingestion"),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    skillId: varchar("skill_id").notNull(),
+    chatId: varchar("chat_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    attachmentId: varchar("attachment_id").notNull(),
+    fileVersion: integer("file_version").notNull().default(1),
+    status: text("status").$type<ChatFileIngestionJobStatus>().notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextRetryAt: timestamp("next_retry_at"),
+    lastError: text("last_error"),
+    chunkCount: integer("chunk_count"),
+    totalChars: integer("total_chars"),
+    totalTokens: integer("total_tokens"),
+    createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    statusIdx: index("chat_file_ingestion_jobs_status_idx").on(table.status, table.nextRetryAt),
+    attachmentIdx: index("chat_file_ingestion_jobs_attachment_idx").on(table.attachmentId),
+    uniqueJob: uniqueIndex("chat_file_ingestion_jobs_unique_idx").on(
+      table.jobType,
+      table.attachmentId,
+      table.fileVersion,
+    ),
+  }),
+);
+
+export type ChatFileIngestionJob = typeof chatFileIngestionJobs.$inferSelect;
+export type ChatFileIngestionJobInsert = typeof chatFileIngestionJobs.$inferInsert;
 
 export const skillFileStatuses = ["uploaded", "processing", "ready", "error"] as const;
 export type SkillFileStatus = (typeof skillFileStatuses)[number];
