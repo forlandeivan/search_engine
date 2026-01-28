@@ -1295,6 +1295,32 @@ export default function ChatPage({ params }: ChatPageProps) {
             disabled={disableInput}
             readOnlyHint={readOnlyHint}
             chatId={effectiveChatId ?? null}
+            onEnsureChat={async () => {
+              // Если чат уже есть, возвращаем его ID
+              if (effectiveChatId) return effectiveChatId;
+              
+              // Если нет дефолтного навыка, не можем создать чат
+              if (!defaultSkill) {
+                setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
+                return null;
+              }
+              
+              try {
+                // Создаем новый чат с дефолтным навыком
+                const newChat = await createChat({
+                  workspaceId,
+                  skillId: defaultSkill.id,
+                });
+                debugLog("[chat] created new chat for attachment", { chatId: newChat.id });
+                setOverrideChatId(newChat.id);
+                handleSelectChat(newChat.id);
+                return newChat.id;
+              } catch (error) {
+                debugLog("[chat] failed to create chat for attachment", error);
+                setStreamError(formatApiErrorMessage(error));
+                return null;
+              }
+            }}
             placeholder={
               placeholder
             }
