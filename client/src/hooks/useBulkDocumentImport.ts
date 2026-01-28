@@ -36,6 +36,13 @@ export function useBulkDocumentImport(workspaceId: string, baseId: string) {
         const archiveFile = files[0];
         const archiveResult = await importKnowledgeArchive(archiveFile);
 
+        // Проверяем наличие критических ошибок (например, неподдерживаемый формат)
+        if (archiveResult.errors.length > 0 && Object.keys(archiveResult.documents).length === 0) {
+          // Если нет документов и есть ошибки, это критическая ошибка
+          const errorMessages = archiveResult.errors.map(err => err.message).join('; ');
+          throw new Error(`Не удалось импортировать архив: ${errorMessages}`);
+        }
+
         // Преобразуем в плоский список документов (игнорируем структуру папок)
         documents = Object.values(archiveResult.documents).map((doc) => ({
           title: doc.title,
@@ -44,6 +51,12 @@ export function useBulkDocumentImport(workspaceId: string, baseId: string) {
           sourceType: 'import' as const,
           importFileName: archiveFile.name,
         }));
+
+        // Если есть ошибки, но документы импортированы, добавляем их в результат
+        if (archiveResult.errors.length > 0) {
+          // Ошибки будут отображены через summary, но мы можем их обработать здесь
+          // Пока просто продолжаем с импортированными документами
+        }
       } else {
         // Обработка множественных файлов
         documents = await Promise.all(
