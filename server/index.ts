@@ -375,6 +375,11 @@ function validateProductionSecrets(): void {
         await ensureDatabaseSchema();
         dbInitialized = true;
         log("✅ Проверка схемы базы данных выполнена");
+        
+        // Initialize default tariffs if not present
+        const { seedDefaultTariffs } = await import("./tariff-seed");
+        await seedDefaultTariffs();
+        log("✅ Инициализация тарифов выполнена");
       } catch (error) {
         log(`❌ Не удалось подготовить схему базы данных: ${error instanceof Error ? error.message : String(error)}`);
       }
