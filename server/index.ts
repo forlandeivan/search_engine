@@ -19,6 +19,7 @@ import { startFileEventOutboxWorker } from "./no-code-file-events-outbox";
 import { startBotActionWatchdog } from "./bot-action-watchdog";
 import { startJsonImportWorker } from "./json-import-jobs";
 import { startJsonImportCleanupJob } from "./json-import-cleanup";
+import { startChatFileCleanupJob } from "./chat-file-cleanup";
 import { closePubSub } from "./realtime";
 import { cleanupChatSubscriptions } from "./chat-events";
 import { closeCache } from "./cache";
@@ -202,6 +203,7 @@ const fileEventOutboxWorker = startFileEventOutboxWorker();
 const botActionWatchdog = startBotActionWatchdog();
 const jsonImportWorker = startJsonImportWorker();
 const jsonImportCleanupJob = startJsonImportCleanupJob();
+const chatFileCleanupJob = startChatFileCleanupJob();
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -402,6 +404,7 @@ function validateProductionSecrets(): void {
       botActionWatchdog?.stop?.();
       jsonImportWorker?.stop?.();
       jsonImportCleanupJob?.stop?.();
+      chatFileCleanupJob?.stop?.();
       // Close HTTP server
       await new Promise<void>((resolve, reject) => {
         server.close((err) => {
