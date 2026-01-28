@@ -530,6 +530,201 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: strin
 const EMBED_TIMEOUT_MS = Number(process.env.CHAT_RETRIEVAL_EMBED_TIMEOUT_MS ?? "800");
 const VECTOR_TIMEOUT_MS = Number(process.env.CHAT_RETRIEVAL_VECTOR_TIMEOUT_MS ?? "800");
 
+// ===== Chat File Attachments Formatting =====
+
+/**
+ * Тип metadata для файловых сообщений
+ */
+interface FileMessageMetadata {
+  type: 'audio' | 'document';
+  fileName: string;
+  mimeType: string | null;
+  sizeBytes: number;
+  attachmentId?: string;
+  extractedText?: string;
+  extractedTextLength?: number;
+  isTruncated?: boolean;
+  extractionError?: string | null;
+  isIndexed?: boolean;
+  indexedChunks?: number;
+  transcriptionStatus?: 'pending' | 'processing' | 'done' | 'error';
+  transcriptionText?: string;
+}
+
+/**
+ * Форматировать сообщение с прикрепленным документом
+ * Добавляет содержимое файла к тексту сообщения
+ */
+function formatMessageWithAttachment(message: ChatMessage): ChatConversationMessage {
+  const meta = message.metadata as FileMessageMetadata | null;
+  
+  // Если это документ с извлеченным текстом
+  if (meta?.type === 'document' && meta.extractedText) {
+    const attachmentBlock = [
+      '',
+      `--- Прикрепленный документ: ${meta.fileName} ---`,
+      meta.extractedText,
+      `--- Конец документа ---`,
+      '',
+    ].join('\n');
+    
+    return {
+      role: message.role,
+      content: `${message.content || ''}${attachmentBlock}`,
+    };
+  }
+  
+  // Если это аудио с транскрипцией
+  if (meta?.type === 'audio' && meta.transcriptionText) {
+    const transcriptBlock = [
+      '',
+      `--- Транскрипция аудио: ${meta.fileName} ---`,
+      meta.transcriptionText,
+      `--- Конец транскрипции ---`,
+      '',
+    ].join('\n');
+    
+    return {
+      role: message.role,
+      content: `${message.content || ''}${transcriptBlock}`,
+    };
+  }
+  
+  // Обычное сообщение
+  return {
+    role: message.role,
+    content: message.content ?? '',
+  };
+}
+
+/**
+ * Проверить, содержит ли сообщение проиндексированный файл
+ */
+function hasIndexedFile(message: ChatMessage): boolean {
+  const meta = message.metadata as FileMessageMetadata | null;
+  return meta?.type === 'document' && meta?.isIndexed === true;
+}
+
+/**
+ * Получить ID attachment из сообщения
+ */
+function getAttachmentId(message: ChatMessage): string | null {
+  const meta = message.metadata as FileMessageMetadata | null;
+  return meta?.attachmentId ?? null;
+}
+
+// ===== Chat File RAG =====
+
+const CHAT_FILE_EMBED_TIMEOUT_MS = Number(process.env.CHAT_FILE_EMBED_TIMEOUT_MS ?? "800");
+const CHAT_FILE_VECTOR_TIMEOUT_MS = Number(process.env.CHAT_FILE_VECTOR_TIMEOUT_MS ?? "800");
+
+/**
+ * Построить контекст из проиндексированных файлов чата
+ * Вызывается для файлов, которые были обрезаны из истории
+ */
+async function buildChatFileRetrievalContext(options: {
+  workspaceId: string;
+  skillId: string;
+  chatId: string;
+  sharedChatFiles: boolean;
+  userMessage: string;
+  excludeAttachmentIds: string[];  // Файлы уже в контексте — не искать по ним
+}): Promise<string[] | null> {
+  const { workspaceId, skillId, chatId, sharedChatFiles, userMessage, excludeAttachmentIds } = options;
+
+  // 1. Получить embedding provider
+  let provider;
+  let rules;
+  try {
+    const resolved = await resolveEmbeddingProviderForWorkspace({ workspaceId });
+    provider = resolved.provider;
+    rules = resolved.rules;
+  } catch (error) {
+    console.warn("[chat-file-retrieval] embedding provider not available", { workspaceId, error });
+    return null;
+  }
+
+  // 2. Эмбеддинг запроса пользователя
+  let embedding;
+  try {
+    embedding = await withTimeout(
+      embedTextWithProvider(provider, userMessage),
+      CHAT_FILE_EMBED_TIMEOUT_MS,
+      "chat_file_query_embedding",
+    );
+  } catch (error) {
+    console.warn("[chat-file-retrieval] failed to embed user message", { workspaceId, chatId, error });
+    return null;
+  }
+
+  // 3. Векторный поиск по файлам чата
+  const { searchChatFileVectors } = await import("./chat-file-vector-store");
+  let searchResult;
+  try {
+    searchResult = await withTimeout(
+      searchChatFileVectors({
+        workspaceId,
+        skillId,
+        chatId,
+        sharedChatFiles,
+        provider,
+        vector: embedding.vector,
+        limit: rules.topK ?? 6,
+        scoreThreshold: rules.relevanceThreshold ?? null,
+      }),
+      CHAT_FILE_VECTOR_TIMEOUT_MS,
+      "chat_file_vector_search",
+    );
+  } catch (error) {
+    console.warn("[chat-file-retrieval] vector search failed", { workspaceId, chatId, error });
+    return null;
+  }
+
+  if (!searchResult?.chunks || searchResult.chunks.length === 0) {
+    return null;
+  }
+
+  // 4. Фильтрация результатов
+  const threshold = rules.relevanceThreshold ?? 0;
+  const filtered = searchResult.chunks.filter((chunk) => {
+    // Фильтр по score
+    if (chunk.score < threshold) {
+      return false;
+    }
+    
+    // Исключить файлы, которые уже в контексте
+    if (excludeAttachmentIds.includes(chunk.attachmentId)) {
+      return false;
+    }
+    
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    return null;
+  }
+
+  // 5. Извлечь текстовые фрагменты
+  const fragments: string[] = [];
+  for (const chunk of filtered.slice(0, rules.topK ?? 6)) {
+    if (chunk.text && chunk.text.trim()) {
+      const prefix = chunk.originalName ? `[Из файла: ${chunk.originalName}] ` : '';
+      fragments.push(`${prefix}${chunk.text.trim()}`);
+    }
+  }
+
+  if (fragments.length > 0) {
+    console.info("[chat-file-retrieval] found fragments", { 
+      workspaceId, 
+      chatId, 
+      count: fragments.length,
+      sharedChatFiles,
+    });
+  }
+
+  return fragments.length > 0 ? fragments : null;
+}
+
 async function buildSkillRetrievalContext(options: {
   workspaceId: string;
   skill: SkillDto;
@@ -909,16 +1104,35 @@ export async function buildChatLlmContext(
   });
 
   const chatMessages = await storage.listChatMessages(chatId);
-  const conversation: ChatConversationMessage[] = chatMessages.map((entry) => ({
-    role: entry.role,
-    content: entry.content,
+  
+  // Форматируем сообщения с attachments (добавляем extractedText)
+  const formattedMessages = chatMessages.map((msg) => ({
+    ...msg,
+    formattedContent: formatMessageWithAttachment(msg),
   }));
+
+  // Преобразуем в формат для LLM
+  const conversation: ChatConversationMessage[] = formattedMessages.map((entry) => entry.formattedContent);
+  
   const contextLimit = indexingRules.contextInputLimit ?? null;
   const limitedConversation = applyContextLimitByCharacters(conversation, contextLimit);
+  
+  // Определяем, какие сообщения попали в контекст
+  const includedCount = limitedConversation.length;
+  const excludedMessages = formattedMessages.slice(0, formattedMessages.length - includedCount);
+  
+  // Находим проиндексированные файлы, которые были обрезаны
+  const excludedIndexedFiles = excludedMessages.filter((msg) => hasIndexedFile(msg));
+  const includedAttachmentIds = formattedMessages
+    .slice(formattedMessages.length - includedCount)
+    .map((msg) => getAttachmentId(msg))
+    .filter((id): id is string => id !== null);
+  
   let retrievedContext: string[] | undefined;
 
   const lastUserMessage = [...limitedConversation].reverse().find((entry) => entry.role === "user");
   if (lastUserMessage?.content) {
+    // 1. RAG по skill files (существующая логика)
     try {
       const fragments = await buildSkillRetrievalContext({
         workspaceId,
@@ -934,6 +1148,27 @@ export async function buildChatLlmContext(
         skillId: skill.id,
         error,
       });
+    }
+
+    // 2. RAG по обрезанным файлам чата (новая логика)
+    if (excludedIndexedFiles.length > 0) {
+      try {
+        const chatFileFragments = await buildChatFileRetrievalContext({
+          workspaceId,
+          skillId: skill.id,
+          chatId,
+          sharedChatFiles: skill.sharedChatFiles ?? false,
+          userMessage: lastUserMessage.content,
+          excludeAttachmentIds: includedAttachmentIds,
+        });
+        
+        if (chatFileFragments && chatFileFragments.length > 0) {
+          // Объединяем с контекстом skill files
+          retrievedContext = [...(retrievedContext ?? []), ...chatFileFragments];
+        }
+      } catch (error) {
+        console.warn("[chat-retrieval] chat files error", { workspaceId, chatId, error });
+      }
     }
   }
 
