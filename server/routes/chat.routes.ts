@@ -1273,11 +1273,14 @@ chatRouter.post('/sessions/:chatId/messages/attachment', chatAttachmentUpload.si
 
   if (category === 'document') {
     // Document files: extract text + create ingestion job
+    const logCtx = { chatId: chat.id, filename, mimeType, size: file.size };
     try {
+      logger.info(logCtx, '[chat/attachment] document step 1: start text extraction');
+
       // 1. Extract text from file
       let extractedText: string;
       let extractionError: string | null = null;
-      
+
       try {
         const result = await extractTextFromBuffer({
           buffer: file.buffer,
@@ -1285,11 +1288,14 @@ chatRouter.post('/sessions/:chatId/messages/attachment', chatAttachmentUpload.si
           mimeType,
         });
         extractedText = result.text;
+        logger.info({ ...logCtx, textLength: extractedText.length }, '[chat/attachment] document step 1: text extraction done');
       } catch (error) {
         if (error instanceof TextExtractionError) {
           extractionError = error.message;
           extractedText = '';
+          logger.warn({ ...logCtx, extractionError: error.message }, '[chat/attachment] document step 1: extraction failed, continuing with empty text');
         } else {
+          logger.error({ ...logCtx, err: error, message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined }, '[chat/attachment] document step 1: text extraction threw');
           throw error;
         }
       }
@@ -1297,12 +1303,16 @@ chatRouter.post('/sessions/:chatId/messages/attachment', chatAttachmentUpload.si
       // 2. Truncate text to limit
       const truncatedText = extractedText.slice(0, MAX_EXTRACTED_TEXT_CHARS);
       const isTruncated = extractedText.length > MAX_EXTRACTED_TEXT_CHARS;
+      logger.info({ ...logCtx, truncatedLength: truncatedText.length, isTruncated }, '[chat/attachment] document step 2: truncate done');
 
       // 3. Save file to storage
       const storageKey = `chat-attachments/${chat.id}/${randomUUID()}-${filename}`;
+      logger.info({ ...logCtx, storageKey }, '[chat/attachment] document step 3: uploading file to storage');
       await uploadWorkspaceFile(workspaceId, storageKey, file.buffer, mimeType || 'application/octet-stream', file.size);
+      logger.info({ ...logCtx, storageKey }, '[chat/attachment] document step 3: upload done');
 
       // 4. Create attachment record
+      logger.info(logCtx, '[chat/attachment] document step 4: creating attachment record');
       const attachment = await storage.createChatAttachment({
         workspaceId,
         chatId: chat.id,
@@ -1312,8 +1322,10 @@ chatRouter.post('/sessions/:chatId/messages/attachment', chatAttachmentUpload.si
         sizeBytes: file.size,
         storageKey,
       });
+      logger.info({ ...logCtx, attachmentId: attachment.id }, '[chat/attachment] document step 4: attachment created');
 
       // 5. Create message with extracted text
+      logger.info({ ...logCtx, attachmentId: attachment.id }, '[chat/attachment] document step 5: creating message');
       const message = await storage.createChatMessage({
         chatId: chat.id,
         role: 'user',
@@ -1332,9 +1344,11 @@ chatRouter.post('/sessions/:chatId/messages/attachment', chatAttachmentUpload.si
           isIndexed: false, // Will be set to true after ingestion
         },
       });
+      logger.info({ ...logCtx, attachmentId: attachment.id, messageId: message.id }, '[chat/attachment] document step 5: message created');
 
       // 6. Create ingestion job for background indexing (if text extracted)
       if (extractedText.length > 0) {
+        logger.info({ ...logCtx, attachmentId: attachment.id }, '[chat/attachment] document step 6: creating ingestion job');
         await storage.createChatFileIngestionJob({
           workspaceId,
           skillId: skill.id,
@@ -1342,15 +1356,18 @@ chatRouter.post('/sessions/:chatId/messages/attachment', chatAttachmentUpload.si
           attachmentId: attachment.id,
           fileVersion: 1,
         });
+        logger.info({ ...logCtx, attachmentId: attachment.id }, '[chat/attachment] document step 6: ingestion job created');
+      } else {
+        logger.info(logCtx, '[chat/attachment] document step 6: skipped (no text to index)');
       }
 
-      logger.info({ 
-        chatId: chat.id, 
-        attachmentId: attachment.id, 
+      logger.info({
+        chatId: chat.id,
+        attachmentId: attachment.id,
         category: 'document',
         textLength: extractedText.length,
         hasError: !!extractionError,
-      }, 'Document file uploaded');
+      }, '[chat/attachment] document pipeline complete');
 
       return res.status(201).json({
         message: mapMessage(message),
@@ -1368,7 +1385,14 @@ chatRouter.post('/sessions/:chatId/messages/attachment', chatAttachmentUpload.si
         },
       });
     } catch (error) {
-      logger.error({ err: error, chatId: chat.id }, 'Failed to upload document file');
+      const errMessage = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : undefined;
+      logger.error({
+        ...logCtx,
+        err: error,
+        message: errMessage,
+        stack: errStack,
+      }, '[chat/attachment] document pipeline failed');
       return res.status(500).json({ message: 'Не удалось обработать документ' });
     }
   }

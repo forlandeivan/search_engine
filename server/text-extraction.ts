@@ -7,6 +7,9 @@ import path from "path";
 import { extname } from "path";
 import type { Readable } from "stream";
 import { getWorkspaceFile } from "./workspace-storage-service";
+import { createLogger } from "./lib/logger";
+
+const logger = createLogger("text-extraction");
 
 type SupportedExtension = "pdf" | "doc" | "docx" | "txt";
 
@@ -173,7 +176,10 @@ export async function extractTextFromBuffer(params: {
 }): Promise<TextExtractionResult> {
   const { buffer, filename, mimeType } = params;
   const extension = normalizeExtension(filename, mimeType);
+  logger.info({ filename, mimeType, extension, bufferLength: buffer.length }, "[text-extraction] extractTextFromBuffer: start");
+
   if (!extension) {
+    logger.warn({ filename, mimeType }, "[text-extraction] extractTextFromBuffer: unsupported format");
     throw new TextExtractionError({
       code: "TEXT_UNSUPPORTED",
       message: "Неподдерживаемый формат файла",
@@ -185,13 +191,20 @@ export async function extractTextFromBuffer(params: {
 
   try {
     if (extension === "txt") {
+      logger.debug({ filename }, "[text-extraction] decoding txt");
       text = decodeTextBuffer(buffer);
     } else if (extension === "pdf") {
+      logger.info({ filename, bufferLength: buffer.length }, "[text-extraction] extracting PDF");
       text = await extractPdf(buffer);
+      logger.info({ filename, textLength: text.length }, "[text-extraction] PDF extraction done");
     } else if (extension === "docx") {
+      logger.info({ filename }, "[text-extraction] extracting DOCX");
       text = await extractDocx(buffer);
+      logger.info({ filename, textLength: text.length }, "[text-extraction] DOCX extraction done");
     } else if (extension === "doc") {
+      logger.info({ filename }, "[text-extraction] extracting DOC");
       text = await extractDoc(buffer);
+      logger.info({ filename, textLength: text.length }, "[text-extraction] DOC extraction done");
     } else {
       throw new TextExtractionError({
         code: "TEXT_UNSUPPORTED",
@@ -204,6 +217,7 @@ export async function extractTextFromBuffer(params: {
       error instanceof Error && error.message
         ? error.message
         : "Не удалось извлечь текст из файла. Попробуйте другой файл.";
+    logger.error({ err: error, filename, extension, message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined }, "[text-extraction] extractTextFromBuffer: extraction failed");
     throw new TextExtractionError({
       code: "TEXT_EXTRACTION_FAILED",
       message,
@@ -213,6 +227,7 @@ export async function extractTextFromBuffer(params: {
 
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized || normalized.length < MIN_TEXT_LENGTH) {
+    logger.warn({ filename, normalizedLength: normalized.length, MIN_TEXT_LENGTH }, "[text-extraction] extractTextFromBuffer: text too short or empty after extraction");
     throw new TextExtractionError({
       code: "TEXT_EMPTY_AFTER_EXTRACTION",
       message:
@@ -220,6 +235,7 @@ export async function extractTextFromBuffer(params: {
       retryable: false,
     });
   }
+  logger.info({ filename, textLength: normalized.length }, "[text-extraction] extractTextFromBuffer: done");
 
   return {
     text: normalized,
