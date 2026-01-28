@@ -53,7 +53,7 @@ function buildSkillFileCollectionName(workspaceId: string, provider: EmbeddingPr
   return buildWorkspaceScopedCollectionName(workspaceId, "skill_files", suffix);
 }
 
-function resolveSkillFileCollectionName(workspaceId: string, provider: EmbeddingProvider): string {
+export function resolveSkillFileCollectionName(workspaceId: string, provider: EmbeddingProvider): string {
   const configuredName =
     typeof provider.qdrantConfig?.collectionName === "string" &&
     provider.qdrantConfig.collectionName.trim().toLowerCase() !== "auto"
@@ -82,7 +82,7 @@ function buildVectorPayload(vector: number[], _vectorFieldName?: string | null |
   return sanitizedVector;
 }
 
-function isRetryableVectorError(error: unknown): boolean {
+export function isRetryableVectorError(error: unknown): boolean {
   const nodeCode = getErrorCode(error);
   if (typeof nodeCode === "string") {
     const retryableCodes = ["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "EPIPE"];
