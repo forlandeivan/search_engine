@@ -145,20 +145,21 @@ function EqualizerIcon() {
   );
 }
 
-const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput({
-  onSend,
-  onTranscribe,
-  onSendFile,
-  onCancelFileUpload,
-  onEnsureChat,
-  disabled,
-  readOnlyHint,
-  placeholder,
-  showAudioAttach = true,
-  chatId = null,
-  disableAudioTranscription = false,
-  fileUploadState = null,
-}, ref) {
+const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(props, ref) {
+  const {
+    onSend,
+    onTranscribe,
+    onSendFile,
+    onCancelFileUpload,
+    onEnsureChat,
+    disabled,
+    readOnlyHint,
+    placeholder,
+    showAudioAttach = true,
+    chatId = null,
+    disableAudioTranscription = false,
+    fileUploadState = null,
+  } = props;
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -674,7 +675,6 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     }
 
     // If we have an attached audio file, start transcription now (on Send)
-    if (attachedFile && !disableAudioTranscription) {
     if (attachedFile && !disableAudioTranscription) {
       console.log("[ChatInput] handleSend - starting transcription for attached file", {
         hasPreUploadedFile: !!preUploadedFile,
