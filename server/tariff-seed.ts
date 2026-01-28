@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { tariffLimits, tariffPlans } from "@shared/schema";
 import { LIMIT_KEYS, type LimitKey } from "./guards/types";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { fileURLToPath } from "url";
 
 type TariffSeedConfig = {
@@ -120,8 +120,10 @@ async function upsertLimit(planId: string, key: LimitKey, unit: string, value: n
   const [existing] = await db
     .select({ id: tariffLimits.id })
     .from(tariffLimits)
-    .where(eq(tariffLimits.planId, planId))
-    .where(eq(tariffLimits.limitKey, key))
+    .where(and(
+      eq(tariffLimits.planId, planId),
+      eq(tariffLimits.limitKey, key)
+    ))
     .limit(1);
 
   if (existing) {
@@ -147,16 +149,5 @@ export async function seedDefaultTariffs(): Promise<void> {
   }
 }
 
-// Allow standalone execution in ESM
-const isDirectRun = process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url);
-if (isDirectRun) {
-  seedDefaultTariffs()
-    .then(() => {
-      console.log("[tariff-seed] completed");
-      process.exit(0);
-    })
-    .catch((err) => {
-      console.error("[tariff-seed] failed", err);
-      process.exit(1);
-    });
-}
+// Export for programmatic use
+// For standalone execution, use: npm run seed:tariffs

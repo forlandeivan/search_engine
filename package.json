@@ -12,7 +12,7 @@
         "lint": "eslint . --ext .ts,.tsx --max-warnings 0",
         "lint:fix": "eslint . --ext .ts,.tsx --fix",
         "db:push": "node -e \"BigInt.prototype.toJSON=function(){return this.toString();}; process.argv=['node','drizzle-kit','push','--config=drizzle.config.ts']; require('./node_modules/drizzle-kit/bin.cjs');\"",
-        "seed:tariffs": "tsx server/tariff-seed.ts"
+        "seed:tariffs": "tsx server/scripts/seed-tariffs.ts"
     },
     "dependencies": {
         "@asteasolutions/zod-to-openapi": "^8.4.0",
