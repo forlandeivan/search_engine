@@ -48,6 +48,93 @@ export type ChatInputHandle = {
 const ACCEPTED_AUDIO_TYPES = ".ogg,.webm,.wav,.mp3,.m4a,.aac,.flac";
 const MAX_FILE_SIZE_MB = 500;
 
+// File type configuration
+const ALLOWED_FILE_TYPES = {
+  audio: {
+    mimeTypes: ['audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/webm', 'audio/m4a', 'audio/aac', 'audio/flac'],
+    extensions: ['.mp3', '.wav', '.ogg', '.webm', '.m4a', '.aac', '.flac'],
+    label: 'Аудио',
+  },
+  document: {
+    mimeTypes: [
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/msword',
+      'text/plain',
+    ],
+    extensions: ['.pdf', '.docx', '.doc', '.txt'],
+    label: 'Документы',
+  },
+} as const;
+
+type FileCategory = keyof typeof ALLOWED_FILE_TYPES;
+
+const MAX_DOCUMENT_SIZE_MB = 50;
+const MAX_DOCUMENT_SIZE_BYTES = MAX_DOCUMENT_SIZE_MB * 1024 * 1024;
+
+function getFileExtension(filename: string): string {
+  const match = filename.match(/\.([^.]+)$/);
+  return match ? `.${match[1].toLowerCase()}` : '';
+}
+
+function getFileCategory(file: File): FileCategory | null {
+  const ext = getFileExtension(file.name);
+  const mimeType = file.type;
+  
+  for (const [category, config] of Object.entries(ALLOWED_FILE_TYPES)) {
+    if (config.extensions.includes(ext as any)) return category as FileCategory;
+    if (config.mimeTypes.includes(mimeType as any)) return category as FileCategory;
+  }
+  
+  return null;
+}
+
+function validateChatFile(file: File): { 
+  valid: boolean; 
+  category?: FileCategory; 
+  error?: string;
+} {
+  // Определение категории
+  const category = getFileCategory(file);
+  if (!category) {
+    const ext = getFileExtension(file.name);
+    const allowedExts = [
+      ...ALLOWED_FILE_TYPES.audio.extensions,
+      ...ALLOWED_FILE_TYPES.document.extensions,
+    ].join(', ');
+    return { 
+      valid: false, 
+      error: `Неподдерживаемый формат: ${ext || 'неизвестный'}. Поддерживаются: ${allowedExts}` 
+    };
+  }
+  
+  // Проверка размера для документов
+  if (category === 'document' && file.size > MAX_DOCUMENT_SIZE_BYTES) {
+    return { 
+      valid: false, 
+      error: `Файл слишком большой. Максимум для документов: ${MAX_DOCUMENT_SIZE_MB} MB` 
+    };
+  }
+  
+  // Проверка размера для аудио
+  if (category === 'audio' && file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+    return { 
+      valid: false, 
+      error: `Файл слишком большой. Максимум для аудио: ${MAX_FILE_SIZE_MB} MB` 
+    };
+  }
+  
+  return { valid: true, category };
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
 function EqualizerIcon() {
   return (
     <div className="flex items-center justify-center gap-1">
@@ -79,6 +166,10 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   const [isSending, setIsSending] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [pendingDocument, setPendingDocument] = useState<{
+    file: File;
+    category: FileCategory;
+  } | null>(null);
   const [pendingTranscribe, setPendingTranscribe] = useState<TranscribePayload | null>(null);
   // Pre-uploaded file info (uploaded to S3, waiting for user to press Send)
   const [preUploadedFile, setPreUploadedFile] = useState<{
@@ -150,6 +241,65 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     }
     return null;
   }, [chatId, onEnsureChat]);
+
+  const handleUploadDocument = useCallback(
+    async (): Promise<boolean> => {
+      if (!pendingDocument) return false;
+      
+      const targetChatId = await ensureChatId();
+      if (!targetChatId) {
+        toast({
+          title: "Нужен чат",
+          description: "Сначала выберите или создайте чат, чтобы прикрепить файл.",
+          variant: "destructive",
+        });
+        return false;
+      }
+
+      setIsUploadingFile(true);
+      try {
+        const formData = new FormData();
+        formData.append("file", pendingDocument.file);
+
+        const response = await fetch(`/api/chat/sessions/${targetChatId}/messages/attachment`, {
+          method: "POST",
+          body: formData,
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.message || 'Ошибка загрузки файла');
+        }
+
+        const data = await response.json();
+
+        // Успешно - очистить pending document
+        setPendingDocument(null);
+
+        // Toast с информацией (минималистичный)
+        if (pendingDocument.category === 'document') {
+          toast({
+            title: "Документ загружен",
+            description: "Файл готов к использованию в чате",
+          });
+        }
+
+        return true;
+      } catch (error) {
+        const friendlyMessage = formatApiErrorMessage(error);
+        toast({
+          title: "Ошибка загрузки",
+          description: friendlyMessage,
+          variant: "destructive",
+        });
+        return false;
+      } finally {
+        setIsUploadingFile(false);
+      }
+    },
+    [pendingDocument, ensureChatId, toast],
+  );
 
   const handleUploadAudio = useCallback(
     async (file: File): Promise<TranscribePayload | null> => {
@@ -501,6 +651,18 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     }
     setIsSending(true);
 
+    // Handle document upload
+    if (pendingDocument) {
+      const uploaded = await handleUploadDocument();
+      if (uploaded && value.trim()) {
+        // If user typed a message along with the document, send it
+        await onSend(value);
+        setValue("");
+      }
+      setIsSending(false);
+      return;
+    }
+
     if (attachedFile && disableAudioTranscription) {
       if (onSendFile) {
         await onSendFile(attachedFile);
@@ -512,6 +674,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     }
 
     // If we have an attached audio file, start transcription now (on Send)
+    if (attachedFile && !disableAudioTranscription) {
     if (attachedFile && !disableAudioTranscription) {
       console.log("[ChatInput] handleSend - starting transcription for attached file", {
         hasPreUploadedFile: !!preUploadedFile,
@@ -559,7 +722,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     } finally {
       setIsSending(false);
     }
-  }, [attachedFile, disabled, disableAudioTranscription, handleUploadAudio, handleStartTranscription, onSend, onSendFile, onTranscribe, preUploadedFile, readOnlyHint, toast, value]);
+  }, [attachedFile, pendingDocument, handleUploadDocument, disabled, disableAudioTranscription, handleUploadAudio, handleStartTranscription, onSend, onSendFile, onTranscribe, preUploadedFile, readOnlyHint, toast, value]);
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -607,25 +770,46 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     (file: File) => {
       if (disabled) return;
       
-      // Check if it's an audio file
-      if (file.type?.startsWith("audio/")) {
-        if (validateAudioFile(file)) {
-          if (!disableAudioTranscription) {
-            // Pre-upload file to S3 immediately when attached
-            void handlePreUploadAudio(file);
-          } else if (onSendFile) {
-            void onSendFile(file);
-          }
+      // Validate and categorize file
+      const validation = validateChatFile(file);
+      
+      if (!validation.valid) {
+        toast({
+          title: "Ошибка загрузки",
+          description: validation.error,
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      const category = validation.category!;
+      
+      // Handle audio files
+      if (category === 'audio') {
+        if (!disableAudioTranscription) {
+          // Pre-upload file to S3 immediately when attached
+          void handlePreUploadAudio(file);
+        } else if (onSendFile) {
+          void onSendFile(file);
         }
         return;
       }
       
-      // For non-audio files, use the file upload handler
+      // Handle document files
+      if (category === 'document') {
+        setPendingDocument({
+          file,
+          category,
+        });
+        return;
+      }
+      
+      // For other files, use the file upload handler
       if (onSendFile) {
         void handleSendFile(file);
       }
     },
-    [disabled, validateAudioFile, disableAudioTranscription, handlePreUploadAudio, onSendFile, handleSendFile],
+    [disabled, validateChatFile, disableAudioTranscription, handlePreUploadAudio, onSendFile, handleSendFile, toast],
   );
 
   // Expose handleFileDrop and focus methods via ref for parent components
@@ -642,9 +826,10 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     disabled ||
     isUploading ||
     isSending ||
-    (value.trim().length === 0 && !attachedFile);
+    isUploadingFile ||
+    (value.trim().length === 0 && !attachedFile && !pendingDocument);
   const isAttachDisabled =
-    disabled || isUploading || isUploadingFile || fileUploadState?.status === "uploading" || !!attachedFile;
+    disabled || isUploading || isUploadingFile || fileUploadState?.status === "uploading" || !!attachedFile || !!pendingDocument;
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -679,6 +864,32 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
           </Button>
         </div>
       )}
+      
+      {pendingDocument && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg bg-muted p-3">
+          <div className="flex-shrink-0 rounded bg-background p-2">
+            <Paperclip className="h-5 w-5 text-muted-foreground" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{pendingDocument.file.name}</p>
+            <p className="text-xs text-muted-foreground">
+              {ALLOWED_FILE_TYPES[pendingDocument.category].label} • {formatBytes(pendingDocument.file.size)}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={() => setPendingDocument(null)}
+            disabled={isUploadingFile}
+            aria-label="Удалить файл"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+      
       {fileUploadState && (
         <div className="mb-2 flex items-center gap-2 rounded-lg bg-blue-50 p-3 dark:bg-blue-950/30">
           {fileUploadState.status === "uploading" ? (
@@ -729,24 +940,53 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               <input
                 ref={attachInputRef}
                 type="file"
+                accept={[
+                  ...ALLOWED_FILE_TYPES.audio.extensions,
+                  ...ALLOWED_FILE_TYPES.document.extensions,
+                ].join(',')}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   event.target.value = "";
                   if (!file) return;
-                if (showAudioAttach && file.type?.startsWith("audio/")) {
-                  if (validateAudioFile(file)) {
-                    if (!disableAudioTranscription) {
-                      // Pre-upload file to S3 immediately when attached
-                      void handlePreUploadAudio(file);
-                    }
+                  
+                  const validation = validateChatFile(file);
+                  
+                  if (!validation.valid) {
+                    toast({
+                      title: "Ошибка загрузки",
+                      description: validation.error,
+                      variant: "destructive",
+                    });
+                    return;
                   }
-                  return;
-                }
+                  
+                  const category = validation.category!;
+                  
+                  // Handle audio
+                  if (category === 'audio' && showAudioAttach) {
+                    if (!disableAudioTranscription) {
+                      void handlePreUploadAudio(file);
+                    } else {
+                      void handleSendFile(file);
+                    }
+                    return;
+                  }
+                  
+                  // Handle document
+                  if (category === 'document') {
+                    setPendingDocument({
+                      file,
+                      category,
+                    });
+                    return;
+                  }
+                  
+                  // Fallback
                   void handleSendFile(file);
                 }}
-            className="hidden"
-            data-testid="input-chat-file"
-          />
+                className="hidden"
+                data-testid="input-chat-file"
+              />
               {disabledTooltip ? (
                 <Tooltip>
                   <TooltipTrigger asChild>

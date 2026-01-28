@@ -7,6 +7,7 @@ import type { AssistantActionState, ChatMessage } from "@/types/chat";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChatCitations } from "./ChatCitations";
+import { DocumentAttachment } from "./DocumentAttachment";
 // TODO: Epic 8, US-5 - Накопленные источники диалога
 // import { ChatSourcesPanel } from "./ChatSourcesPanel";
 import type { RagChunk } from "@/types/search";
@@ -434,6 +435,27 @@ function ChatBubble({
     return `${mb.toFixed(1)} МБ`;
   };
 
+  const renderDocumentAttachment = () => {
+    const meta = message.metadata as any;
+    
+    if (meta?.type !== 'document') return null;
+    
+    // Критическая ошибка: файл пустой или вообще не удалось обработать
+    const hasCriticalError = Boolean(meta.extractionError) && 
+                              (meta.extractedTextLength ?? 0) === 0;
+    
+    return (
+      <DocumentAttachment
+        filename={meta.fileName}
+        mimeType={meta.mimeType}
+        sizeBytes={meta.sizeBytes}
+        hasCriticalError={hasCriticalError}
+        errorMessage={hasCriticalError ? meta.extractionError : undefined}
+        className="mt-2"
+      />
+    );
+  };
+
   const renderFileBubble = () => {
     const name = fileMeta?.filename || message.content || "Файл";
     const sizeLabel = formatSize(fileMeta?.sizeBytes ?? null);
@@ -499,7 +521,14 @@ function ChatBubble({
         <div className="max-w-[70%]">
           {isFileMessage ? (
             <div className="rounded-2xl bg-primary px-3 py-2.5 text-primary-foreground">
-              {renderFileBubble()}
+              {metadata?.type === 'document' ? (
+                <>
+                  {message.content && <p className="text-sm mb-2">{message.content}</p>}
+                  {renderDocumentAttachment()}
+                </>
+              ) : (
+                renderFileBubble()
+              )}
               <div className="mt-2 flex items-center justify-end gap-1 text-xs text-primary-foreground/70">
                 <span>{timestamp}</span>
               </div>
@@ -554,7 +583,21 @@ function ChatBubble({
                 }}
               />
           ) : isFileMessage ? (
-            renderFileBubble()
+            <>
+              {metadata?.type === 'document' ? (
+                <>
+                  {message.content && (
+                    <MarkdownRenderer
+                      markdown={message.content}
+                      className="text-sm text-foreground break-words mb-2"
+                    />
+                  )}
+                  {renderDocumentAttachment()}
+                </>
+              ) : (
+                renderFileBubble()
+              )}
+            </>
           ) : (
             <>
               <MarkdownRenderer
