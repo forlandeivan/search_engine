@@ -174,7 +174,7 @@ export async function deleteObject(workspaceId: string, key: string): Promise<vo
   }
 }
 
-const ALLOWED_PREFIXES = ["icons/", "files/", "attachments/", "json-imports/"] as const;
+const ALLOWED_PREFIXES = ["icons/", "files/", "attachments/", "chat-attachments/", "json-imports/"] as const;
 type AllowedPrefix = (typeof ALLOWED_PREFIXES)[number];
 
 function ensureAllowedPrefix(relativePath: string): void {
