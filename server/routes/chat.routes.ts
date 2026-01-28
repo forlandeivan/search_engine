@@ -1148,6 +1148,234 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
 // File Upload for No-Code Mode
 // ============================================================================
 
+// ============================================================================
+// File Attachments
+// ============================================================================
+
+const chatAttachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50 MB (from chat-file-utils)
+    files: 1,
+  },
+});
+
+/**
+ * POST /sessions/:chatId/messages/attachment
+ * Upload file attachment to chat (documents or audio)
+ * 
+ * Universal endpoint for attaching files to chat messages.
+ * - Documents (PDF, DOCX, DOC, TXT): text extraction + indexing
+ * - Audio (MP3, WAV, OGG): stored with metadata (transcription handled separately)
+ */
+chatRouter.post('/sessions/:chatId/messages/attachment', chatAttachmentUpload.single('file'), asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { chatId } = req.params;
+  const file = req.file;
+  
+  if (!file) {
+    return res.status(400).json({ message: 'Файл не предоставлен' });
+  }
+
+  // Dynamic imports
+  const { 
+    getFileCategory, 
+    validateChatFile, 
+    MAX_EXTRACTED_TEXT_CHARS 
+  } = await import('../chat-file-utils');
+  const { extractTextFromBuffer, TextExtractionError } = await import('../text-extraction');
+  const { uploadWorkspaceFile } = await import('../workspace-storage-service');
+
+  // 1. Get chat and verify access
+  const chat = await storage.getChatSessionById(chatId);
+  if (!chat) {
+    return res.status(404).json({ message: 'Чат не найден' });
+  }
+
+  const workspaceId = chat.workspaceId;
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+  if (!membership) {
+    return res.status(403).json({ message: 'Нет доступа к рабочему пространству' });
+  }
+
+  // 2. Get skill
+  const skill = chat.skillId ? await getSkillById(workspaceId, chat.skillId) : null;
+  if (!skill) {
+    return res.status(400).json({ message: 'Навык не найден' });
+  }
+
+  // 3. Validate file
+  const filename = file.originalname || 'file';
+  const mimeType = file.mimetype || null;
+  const validation = validateChatFile({
+    size: file.size,
+    mimeType,
+    filename,
+  });
+
+  if (!validation.valid) {
+    return res.status(400).json({ message: validation.error });
+  }
+
+  const category = validation.category!;
+
+  // 4. Route by file type
+  if (category === 'audio') {
+    // Audio files: store with metadata (transcription handled separately)
+    try {
+      const storageKey = `chat-attachments/${chat.id}/${randomUUID()}-${filename}`;
+      
+      await uploadWorkspaceFile(workspaceId, storageKey, file.buffer, mimeType || 'audio/mpeg', file.size);
+
+      const attachment = await storage.createChatAttachment({
+        workspaceId,
+        chatId: chat.id,
+        uploaderUserId: user.id,
+        filename,
+        mimeType,
+        sizeBytes: file.size,
+        storageKey,
+      });
+
+      const message = await storage.createChatMessage({
+        chatId: chat.id,
+        role: 'user',
+        messageType: 'file',
+        content: `[Загружено аудио: ${filename}]`,
+        metadata: {
+          type: 'audio',
+          fileName: filename,
+          mimeType,
+          sizeBytes: file.size,
+          attachmentId: attachment.id,
+          transcriptionStatus: 'pending',
+        },
+      });
+
+      logger.info({ chatId: chat.id, attachmentId: attachment.id, category: 'audio' }, 'Audio file uploaded');
+
+      return res.status(201).json({
+        message: mapMessage(message),
+        attachment: {
+          id: attachment.id,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+        },
+      });
+    } catch (error) {
+      logger.error({ err: error, chatId: chat.id }, 'Failed to upload audio file');
+      return res.status(500).json({ message: 'Не удалось загрузить аудио файл' });
+    }
+  }
+
+  if (category === 'document') {
+    // Document files: extract text + create ingestion job
+    try {
+      // 1. Extract text from file
+      let extractedText: string;
+      let extractionError: string | null = null;
+      
+      try {
+        const result = await extractTextFromBuffer({
+          buffer: file.buffer,
+          filename,
+          mimeType,
+        });
+        extractedText = result.text;
+      } catch (error) {
+        if (error instanceof TextExtractionError) {
+          extractionError = error.message;
+          extractedText = '';
+        } else {
+          throw error;
+        }
+      }
+
+      // 2. Truncate text to limit
+      const truncatedText = extractedText.slice(0, MAX_EXTRACTED_TEXT_CHARS);
+      const isTruncated = extractedText.length > MAX_EXTRACTED_TEXT_CHARS;
+
+      // 3. Save file to storage
+      const storageKey = `chat-attachments/${chat.id}/${randomUUID()}-${filename}`;
+      await uploadWorkspaceFile(workspaceId, storageKey, file.buffer, mimeType || 'application/octet-stream', file.size);
+
+      // 4. Create attachment record
+      const attachment = await storage.createChatAttachment({
+        workspaceId,
+        chatId: chat.id,
+        uploaderUserId: user.id,
+        filename,
+        mimeType,
+        sizeBytes: file.size,
+        storageKey,
+      });
+
+      // 5. Create message with extracted text
+      const message = await storage.createChatMessage({
+        chatId: chat.id,
+        role: 'user',
+        messageType: 'file',
+        content: `[Загружен документ: ${filename}]`,
+        metadata: {
+          type: 'document',
+          fileName: filename,
+          mimeType,
+          sizeBytes: file.size,
+          attachmentId: attachment.id,
+          extractedText: truncatedText,
+          extractedTextLength: extractedText.length,
+          isTruncated,
+          extractionError,
+          isIndexed: false, // Will be set to true after ingestion
+        },
+      });
+
+      // 6. Create ingestion job for background indexing (if text extracted)
+      if (extractedText.length > 0) {
+        await storage.createChatFileIngestionJob({
+          workspaceId,
+          skillId: skill.id,
+          chatId: chat.id,
+          attachmentId: attachment.id,
+          fileVersion: 1,
+        });
+      }
+
+      logger.info({ 
+        chatId: chat.id, 
+        attachmentId: attachment.id, 
+        category: 'document',
+        textLength: extractedText.length,
+        hasError: !!extractionError,
+      }, 'Document file uploaded');
+
+      return res.status(201).json({
+        message: mapMessage(message),
+        attachment: {
+          id: attachment.id,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+        },
+        extraction: {
+          success: !extractionError,
+          textLength: extractedText.length,
+          isTruncated,
+          error: extractionError,
+        },
+      });
+    } catch (error) {
+      logger.error({ err: error, chatId: chat.id }, 'Failed to upload document file');
+      return res.status(500).json({ message: 'Не удалось обработать документ' });
+    }
+  }
+
+  return res.status(400).json({ message: 'Неподдерживаемый тип файла' });
+}));
+
 const fileUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 512 * 1024 * 1024 }, // 512MB
