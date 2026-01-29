@@ -44,9 +44,14 @@ function formatDate(value: string | Date): string {
     return "Нет данных";
   }
 
-  return new Intl.DateTimeFormat("ru-RU", {
+  const formatted = new Intl.DateTimeFormat("ru-RU", {
     dateStyle: "medium",
   }).format(date);
+
+  // В ru-RU форматтер часто добавляет "г." (год) отдельным токеном,
+  // из-за чего "г." может переноситься на новую строку в узких колонках.
+  // Делаем пробел перед "г." неразрывным: "2026 г."
+  return formatted.replace(/(\d{4})[\s\u00A0\u202F]*г\.$/u, "$1\u00A0г.");
 }
 
 // ============================================================================
@@ -297,7 +302,7 @@ export default function WorkspaceMembersPage() {
             <TableHead className="w-[280px]">Имя</TableHead>
             <TableHead>Email</TableHead>
             <TableHead className="w-[180px]">Роль</TableHead>
-            <TableHead className="w-[120px]">Добавлен</TableHead>
+            <TableHead className="w-[140px]">Добавлен</TableHead>
             <TableHead className="text-right w-[80px]">Действия</TableHead>
           </TableRow>
         </TableHeader>
@@ -337,7 +342,7 @@ export default function WorkspaceMembersPage() {
                   </Select>
                 </TableCell>
                 <TableCell>
-                  <div className="text-sm text-muted-foreground">
+                  <div className="whitespace-nowrap text-sm text-muted-foreground">
                     {formatDate(member.joinedAt)}
                   </div>
                 </TableCell>
