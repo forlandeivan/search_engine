@@ -97,7 +97,7 @@ export function performAutoReload(): void {
  * const MyPage = lazyWithRetry(() => import("./pages/MyPage"));
  * ```
  */
-export function lazyWithRetry<T extends ComponentType<unknown>>(
+export function lazyWithRetry<T extends ComponentType<any>>(
   importFn: () => Promise<{ default: T }>
 ): React.LazyExoticComponent<T> {
   return lazy(async () => {

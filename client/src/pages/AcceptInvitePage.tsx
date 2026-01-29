@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type SubmitErrorHandler } from "react-hook-form";
 import { zodResolver } from "@/lib/zod-resolver";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useParams } from "wouter";
@@ -67,7 +67,7 @@ const registerSchema = z.object({
       (p) => /[A-Za-z]/.test(p) && /[0-9]/.test(p),
       "Должен содержать буквы и цифры",
     ),
-  confirmPassword: z.string(),
+  confirmPassword: z.string().min(1, "Подтвердите пароль"),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Пароли не совпадают",
   path: ["confirmPassword"],
@@ -155,11 +155,18 @@ export default function AcceptInvitePage() {
   // Complete registration via invitation
   const registerForm = useForm<RegisterFormValues>({
     resolver: zodResolver(registerSchema),
+    mode: "onChange",
     defaultValues: { fullName: "", password: "", confirmPassword: "" },
   });
 
   const registerMutation = useMutation({
     mutationFn: async (values: RegisterFormValues) => {
+      // Дополнительная проверка на клиенте перед отправкой
+      const result = registerSchema.safeParse(values);
+      if (!result.success) {
+        throw new Error("Заполните все обязательные поля корректно");
+      }
+
       const res = await apiRequest("POST", "/api/auth/complete-invite", {
         token,
         password: values.password,
@@ -216,6 +223,16 @@ export default function AcceptInvitePage() {
       });
     },
   });
+
+  const focusFirstRegisterError: SubmitErrorHandler<RegisterFormValues> = (errors) => {
+    const order: (keyof RegisterFormValues)[] = ["fullName", "password", "confirmPassword"];
+    for (const key of order) {
+      if (errors[key]) {
+        registerForm.setFocus(key);
+        break;
+      }
+    }
+  };
 
   // ============================================================================
   // Render States
@@ -363,9 +380,10 @@ export default function AcceptInvitePage() {
                   type="password"
                   {...loginForm.register("password")}
                   disabled={loginMutation.isPending}
+                aria-invalid={loginForm.formState.errors.password ? "true" : "false"}
                 />
                 {loginForm.formState.errors.password && (
-                  <p className="text-sm text-destructive">
+                <p className="text-sm text-destructive" role="alert">
                     {loginForm.formState.errors.password.message}
                   </p>
                 )}
@@ -388,6 +406,10 @@ export default function AcceptInvitePage() {
   }
 
   // New user - registration form
+  const showRegisterSummary =
+    registerForm.formState.submitCount > 0 &&
+    Object.keys(registerForm.formState.errors).length > 0;
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
@@ -398,8 +420,18 @@ export default function AcceptInvitePage() {
           <p className="text-sm text-muted-foreground text-center">
             Создайте аккаунт, чтобы присоединиться к рабочему пространству.
           </p>
+          {showRegisterSummary ? (
+            <Alert>
+              <AlertDescription>
+                Заполните обязательные поля и исправьте ошибки ниже.
+              </AlertDescription>
+            </Alert>
+          ) : null}
           <form
-            onSubmit={registerForm.handleSubmit((v) => registerMutation.mutate(v))}
+            onSubmit={registerForm.handleSubmit(
+              (v) => registerMutation.mutate(v),
+              focusFirstRegisterError,
+            )}
             className="space-y-4"
           >
             <div className="space-y-2">
@@ -417,9 +449,10 @@ export default function AcceptInvitePage() {
                 {...registerForm.register("fullName")}
                 placeholder="Иван Иванов"
                 disabled={registerMutation.isPending}
+                aria-invalid={registerForm.formState.errors.fullName ? "true" : "false"}
               />
               {registerForm.formState.errors.fullName && (
-                <p className="text-sm text-destructive">
+                <p className="text-sm text-destructive" role="alert">
                   {registerForm.formState.errors.fullName.message}
                 </p>
               )}
@@ -432,9 +465,10 @@ export default function AcceptInvitePage() {
                 {...registerForm.register("password")}
                 placeholder="Минимум 8 символов"
                 disabled={registerMutation.isPending}
+                aria-invalid={registerForm.formState.errors.password ? "true" : "false"}
               />
               {registerForm.formState.errors.password && (
-                <p className="text-sm text-destructive">
+                <p className="text-sm text-destructive" role="alert">
                   {registerForm.formState.errors.password.message}
                 </p>
               )}
@@ -446,9 +480,10 @@ export default function AcceptInvitePage() {
                 type="password"
                 {...registerForm.register("confirmPassword")}
                 disabled={registerMutation.isPending}
+                aria-invalid={registerForm.formState.errors.confirmPassword ? "true" : "false"}
               />
               {registerForm.formState.errors.confirmPassword && (
-                <p className="text-sm text-destructive">
+                <p className="text-sm text-destructive" role="alert">
                   {registerForm.formState.errors.confirmPassword.message}
                 </p>
               )}
