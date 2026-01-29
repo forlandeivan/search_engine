@@ -689,7 +689,8 @@ export function TranscriptCanvas({
               const { document } = await createCanvasDocument({
                 chatId,
                 transcriptId,
-                type: "text",
+                // Use a valid canvas document type. This is a manually created empty document.
+                type: "custom",
                 title: "Новый документ",
                 content: "",
               });
