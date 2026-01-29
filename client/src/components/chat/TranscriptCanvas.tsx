@@ -653,37 +653,43 @@ export function TranscriptCanvas({
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-border px-6">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTabId(tab.id)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
-            }}
-            className={cn(
-              "relative flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors",
-              activeTabId === tab.id
-                ? "text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-            data-testid={`tab-${tab.id}`}
-          >
-            {tab.title}
-            {tab.hasChanges && (
-              <Circle className="h-2 w-2 fill-amber-400 text-amber-400" />
-            )}
-            {tab.isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
-            {activeTabId === tab.id && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-            )}
-          </button>
-        ))}
+      <div className="flex items-center gap-2 border-b border-border px-6">
+        <div className="flex flex-1 min-w-0 items-center gap-1 overflow-x-auto">
+          {tabs.map((tab) => (
+            <Tooltip key={tab.id}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setActiveTabId(tab.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
+                  }}
+                  className={cn(
+                    "relative flex shrink-0 items-center gap-2 px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap",
+                    activeTabId === tab.id
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                  data-testid={`tab-${tab.id}`}
+                >
+                  <span className="block max-w-[180px] truncate">{tab.title}</span>
+                  {tab.hasChanges && (
+                    <Circle className="h-2 w-2 fill-amber-400 text-amber-400" />
+                  )}
+                  {tab.isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+                  {activeTabId === tab.id && (
+                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{tab.title}</TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
         <Button
           variant="ghost"
           size="icon"
-          className="ml-auto h-8 w-8"
+          className="h-8 w-8 shrink-0"
           onClick={async () => {
             try {
               const { document } = await createCanvasDocument({
