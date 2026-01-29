@@ -24,19 +24,13 @@ export const adminUsersRouter = Router();
 // ============================================================================
 
 function toPublicUser(user: User): PublicUser {
+  const { passwordHash, personalApiTokenHash, personalApiTokenLastFour, ...safe } = user;
   return {
-    id: user.id,
-    email: user.email,
-    fullName: user.fullName,
-    firstName: user.firstName,
-    lastName: user.lastName,
-    phone: user.phone,
-    role: user.role,
-    status: user.status,
-    isEmailConfirmed: user.isEmailConfirmed,
-    avatarUrl: user.avatarUrl,
-    createdAt: user.createdAt,
-    lastActivityAt: user.lastActivityAt,
+    ...safe,
+    // Keep naming consistent with shared schema and frontend expectations.
+    lastActiveAt: user.lastActiveAt,
+    personalApiTokenLastFour: personalApiTokenLastFour ?? null,
+    hasPersonalApiToken: Boolean(personalApiTokenHash && personalApiTokenHash.length > 0),
   };
 }
 
