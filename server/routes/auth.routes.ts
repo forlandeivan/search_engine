@@ -20,13 +20,12 @@ import { emailConfirmationTokenService, EmailConfirmationTokenError } from '../e
 import { registrationEmailService } from '../email-sender-registry';
 import { SmtpSendError } from '../smtp-email-sender';
 import { EmailValidationError } from '../email';
-import type { PublicUser, User } from '@shared/schema';
+import type { PublicUser, User, WorkspaceMember } from '@shared/schema';
 import { ensureWorkspaceContext, buildSessionResponse as buildAuthSessionResponse } from '../auth';
 import {
   getInvitationByToken,
   validateInvitation,
   acceptInvitation,
-  acceptInvitationForNewUser,
   InvitationError,
 } from '../workspace-invitation-service';
 
@@ -487,19 +486,32 @@ authRouter.post('/complete-invite', asyncHandler(async (req, res, next) => {
   const firstName = parts[0] || '';
   const lastName = parts.slice(1).join(' ') || '';
 
-  let newUser: User;
+  let result: { user: User; membership: WorkspaceMember };
   try {
-    newUser = await storage.createUser({
+    // Use enterprise method: atomic creation + membership + invitation acceptance
+    result = await storage.createUserFromInvitation({
       email: invitation.email,
       fullName,
       firstName,
       lastName,
       phone: '',
       passwordHash,
+      workspaceId: invitation.workspaceId,
+      role: invitation.role,
+      invitationId: invitation.id,
     });
-    authLogger.info({ userId: newUser.id, email: invitation.email }, 'User created via invitation');
+    
+    authLogger.info(
+      { 
+        userId: result.user.id, 
+        email: invitation.email, 
+        workspaceId: invitation.workspaceId,
+        invitationId: invitation.id,
+      }, 
+      'User created from invitation successfully',
+    );
   } catch (createError) {
-    authLogger.error({ error: createError, email: invitation.email }, 'Error creating user via invitation');
+    authLogger.error({ error: createError, email: invitation.email }, 'Error creating user from invitation');
     
     // Check if user was created by race condition
     const existing = await storage.getUserByEmail(invitation.email);
@@ -513,24 +525,7 @@ authRouter.post('/complete-invite', asyncHandler(async (req, res, next) => {
     throw createError;
   }
 
-  // Confirm email (invitation confirms email ownership)
-  const confirmedUser = await storage.confirmUserEmail(newUser.id);
-  if (!confirmedUser) {
-    authLogger.error({ userId: newUser.id }, 'Failed to confirm user email after creation');
-    return res.status(500).json({
-      message: 'Не удалось подтвердить email',
-      code: 'EMAIL_CONFIRMATION_FAILED',
-    });
-  }
-  authLogger.info({ userId: newUser.id, email: invitation.email }, 'User email confirmed via invitation');
-
-  // Accept invitation
-  try {
-    await acceptInvitationForNewUser(payload.token, newUser.id);
-  } catch (error) {
-    authLogger.error({ error, userId: newUser.id }, 'Failed to accept invitation for new user');
-    // Don't fail - user is already created
-  }
+  const newUser = result.user;
 
   // Log in user
   const safeUser = toPublicUser(newUser);

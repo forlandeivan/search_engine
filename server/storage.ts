@@ -9617,22 +9617,96 @@ export class DatabaseStorage implements IStorage {
     if (!newUser) {
       throw new Error("Не удалось создать пользователя");
     }
-    try {
-      await this.ensurePersonalWorkspace(newUser);
-    } catch (workspaceError) {
-      // Логируем ошибку создания workspace, но не прерываем процесс
-      // Пользователь уже создан, и это важнее для регистрации
-      console.error("[storage] user created but workspace creation failed", {
-        userId: newUser.id,
-        email: newUser.email,
-        error: workspaceError instanceof Error ? workspaceError.message : String(workspaceError),
-        stack: workspaceError instanceof Error ? workspaceError.stack : undefined,
-        note: "User created successfully. Workspace creation will be retried on next login.",
-      });
-      // НЕ пробрасываем ошибку — пользователь уже создан
-      // Workspace создастся при следующем логине через ensureWorkspaceContext
-    }
+    
+    // For regular registration, personal workspace is critical - fail-fast if it fails
+    await this.ensurePersonalWorkspace(newUser);
+    
     return newUser;
+  }
+
+  /**
+   * Create user from workspace invitation (Enterprise method)
+   * 
+   * Creates user and adds them to the invited workspace in a single transaction.
+   * Email is automatically confirmed (invitation = email ownership proof).
+   * Personal workspace is NOT created (will be created lazily on first login).
+   * 
+   * @param params - User data and invitation details
+   * @returns Created user and workspace membership
+   */
+  async createUserFromInvitation(params: {
+    email: string;
+    fullName: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    passwordHash: string;
+    workspaceId: string;
+    role: WorkspaceMember["role"];
+    invitationId: string;
+  }): Promise<{ user: User; membership: WorkspaceMember }> {
+    await this.ensureUserAuthColumns();
+    await ensureWorkspaceMembersTable();
+
+    return await this.db.transaction(async (tx) => {
+      // 1. Create user with confirmed email (invitation = email confirmation)
+      const [user] = await tx
+        .insert(users)
+        .values({
+          email: params.email,
+          fullName: params.fullName,
+          firstName: params.firstName,
+          lastName: params.lastName,
+          phone: params.phone,
+          passwordHash: params.passwordHash,
+          isEmailConfirmed: true,
+          status: "active",
+          emailConfirmedAt: sql`CURRENT_TIMESTAMP`,
+        })
+        .returning();
+
+      if (!user) {
+        throw new Error("Не удалось создать пользователя");
+      }
+
+      logger.info(
+        { userId: user.id, email: user.email, workspaceId: params.workspaceId },
+        "[createUserFromInvitation] User created",
+      );
+
+      // 2. Add user to workspace
+      const normalizedRole = workspaceMemberRoles.includes(params.role) ? params.role : "user";
+      const [membership] = await tx
+        .insert(workspaceMembers)
+        .values({
+          workspaceId: params.workspaceId,
+          userId: user.id,
+          role: normalizedRole,
+        })
+        .returning();
+
+      if (!membership) {
+        throw new Error("Не удалось добавить пользователя в рабочее пространство");
+      }
+
+      logger.info(
+        { userId: user.id, workspaceId: params.workspaceId, role: normalizedRole },
+        "[createUserFromInvitation] User added to workspace",
+      );
+
+      // 3. Mark invitation as accepted
+      await tx
+        .update(workspaceInvitations)
+        .set({ acceptedAt: sql`CURRENT_TIMESTAMP` })
+        .where(eq(workspaceInvitations.id, params.invitationId));
+
+      logger.info(
+        { userId: user.id, invitationId: params.invitationId },
+        "[createUserFromInvitation] Invitation marked as accepted",
+      );
+
+      return { user, membership };
+    });
   }
 
   async upsertUserFromGoogle(payload: GoogleUserUpsertPayload): Promise<User> {
