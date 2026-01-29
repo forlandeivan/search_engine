@@ -374,7 +374,11 @@ export function TranscriptCanvas({
                     );
                   });
                   
-                  setActiveTabId(document.id);
+                  // Keep the running action tab selected after it becomes a saved document.
+                  // Do not force-switch if user navigated away while action was running.
+                  setActiveTabId((currentActiveId) =>
+                    currentActiveId === newTabId ? document.id : currentActiveId
+                  );
                   
                   toast({
                     title: "Готово",
@@ -523,11 +527,12 @@ export function TranscriptCanvas({
                 );
               });
               
-              // Only set active tab if it wasn't closed
-              setActiveTabId((currentActiveId) => {
-                const tabStillExists = tabs.some((t) => t.id === newTabId);
-                return tabStillExists ? document.id : currentActiveId;
-              });
+              // Keep the running action tab selected after it becomes a saved document.
+              // IMPORTANT: do not rely on `tabs` from closure here (it can be stale),
+              // otherwise we may fail to switch and UI will fall back to the first tab.
+              setActiveTabId((currentActiveId) =>
+                currentActiveId === newTabId ? document.id : currentActiveId
+              );
               
               toast({
                 title: "Готово",
