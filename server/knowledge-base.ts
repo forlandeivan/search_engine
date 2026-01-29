@@ -1213,7 +1213,7 @@ export async function startKnowledgeBaseIndexing(
           };
         } catch (error) {
           if (error instanceof z.ZodError) {
-            validationError = `Некорректная конфигурация индексации: ${error.issues.map((e: { path: (string | number)[]; message: string }) => `${e.path.join('.')}: ${e.message}`).join(', ')}`;
+            validationError = `Некорректная конфигурация индексации: ${error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`;
           } else {
             validationError = `Ошибка валидации конфигурации: ${error instanceof Error ? error.message : String(error)}`;
           }

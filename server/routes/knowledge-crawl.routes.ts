@@ -82,7 +82,7 @@ const crawlSelectorsSchema = z.object({
 }).partial();
 
 const crawlAuthSchema = z.object({
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
 }).partial();
 
 const crawlConfigSchema = z.object({

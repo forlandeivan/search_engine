@@ -2066,7 +2066,7 @@ const sparseVectorSchema = z.object({
 const pointVectorSchema = z.union([
   z.array(z.number()),
   z.array(z.array(z.number())),
-  z.record(z.any()),
+  z.record(z.string(), z.any()),
   sparseVectorSchema,
 ]);
 
@@ -2100,7 +2100,7 @@ const testEmbeddingCredentialsSchema = z.object({
   scope: z.string().trim().min(1, "Укажите OAuth scope"),
   model: z.string().trim().min(1, "Укажите модель эмбеддингов"),
   allowSelfSignedCertificate: z.boolean().default(false),
-  requestHeaders: z.record(z.string()).default({}),
+  requestHeaders: z.record(z.string(), z.string()).default({}),
 });
 
 const TEST_EMBEDDING_TEXT = "привет!";
@@ -3060,7 +3060,7 @@ const upsertPointsSchema = z.object({
   points: z.array(z.object({
     id: z.union([z.string(), z.number()]),
     vector: pointVectorSchema,
-    payload: z.record(z.any()).optional(),
+    payload: z.record(z.string(), z.any()).optional(),
   })).min(1),
 });
 
@@ -3229,7 +3229,7 @@ const knowledgeDocumentChunkItemSchema = z.object({
   tokenCount: z.coerce.number().int().min(0).optional(),
   pageNumber: z.coerce.number().int().min(0).optional().nullable(),
   sectionPath: z.array(z.string()).optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
   contentHash: z.string().trim().optional(),
   vectorRecordId: z.union([z.string(), z.number()]).optional(),
 });
@@ -7415,7 +7415,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       text: z.string().trim().max(20000).optional(),
       triggerMessageId: z.string().trim().max(200).optional(),
       correlationId: z.string().trim().max(200).optional(),
-      metadata: z.record(z.unknown()).optional(),
+      metadata: z.record(z.string(), z.unknown()).optional(),
       card: z
         .object({
           type: z.enum(chatCardTypes),
@@ -7491,7 +7491,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     chatId: z.string().trim().min(1, "Укажите идентификатор чата (chatId)"),
     actionType: botActionTypeSchema,
     displayText: displayTextSchema,
-    payload: z.record(z.any()).optional(),
+    payload: z.record(z.string(), z.any()).optional(),
   });
 
   const botActionUpdateSchema = z.object({
@@ -7504,7 +7504,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     actionType: botActionTypeSchema,
     status: botActionStatusSchema,
     displayText: displayTextSchema,
-    payload: z.record(z.any()).optional(),
+    payload: z.record(z.string(), z.any()).optional(),
   });
 
   const noCodeCallbackAssistantActionSchema = z.object({
@@ -7600,7 +7600,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   const crawlAuthSchema = z
     .object({
-      headers: z.record(z.string()).optional(),
+      headers: z.record(z.string(), z.string()).optional(),
     })
     .partial();
 

@@ -187,7 +187,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
     scope: z.string().trim().min(1, "Укажите OAuth scope"),
     model: z.string().trim().min(1, "Укажите модель эмбеддингов"),
     allowSelfSignedCertificate: z.boolean().default(false),
-    requestHeaders: z.record(z.string()).default({}),
+    requestHeaders: z.record(z.string(), z.string()).default({}),
   });
 
   const payload = testSchema.parse(req.body);

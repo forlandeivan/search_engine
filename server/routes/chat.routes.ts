@@ -517,7 +517,7 @@ const startBotActionSchema = z.object({
   actionId: z.string().trim().min(1),
   actionType: z.string().trim().min(1),
   displayText: z.string().trim().optional(),
-  payload: z.record(z.unknown()).optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
 });
 
 const updateBotActionSchema = z.object({
@@ -527,7 +527,7 @@ const updateBotActionSchema = z.object({
   actionType: z.string().trim().min(1),
   status: z.enum(['processing', 'done', 'error']),
   displayText: z.string().trim().optional(),
-  payload: z.record(z.unknown()).optional().nullable(),
+  payload: z.record(z.string(), z.unknown()).optional().nullable(),
 });
 
 // ============================================================================

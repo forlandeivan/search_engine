@@ -81,7 +81,7 @@ const noCodeCallbackCreateMessageSchema = z.object({
   text: z.string().optional(),
   triggerMessageId: z.string().optional(),
   correlationId: z.string().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   card: z.object({
     type: z.string(),
     title: z.string().optional(),
@@ -117,7 +117,7 @@ const botActionStartSchema = z.object({
   chatId: z.string().trim().min(1),
   actionType: z.string(),
   displayText: z.string().optional(),
-  payload: z.record(z.unknown()).optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
 });
 
 const botActionUpdateSchema = z.object({
@@ -127,7 +127,7 @@ const botActionUpdateSchema = z.object({
   actionType: z.string(),
   status: z.enum(['pending', 'processing', 'completed', 'failed', 'cancelled']),
   displayText: z.string().optional(),
-  payload: z.record(z.unknown()).optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
 });
 
 // ============================================================================

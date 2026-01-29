@@ -157,7 +157,7 @@ const sparseVectorSchema = z.object({
 const pointVectorSchema = z.union([
   z.array(z.number()),
   z.array(z.array(z.number())),
-  z.record(z.any()),
+  z.record(z.string(), z.any()),
   sparseVectorSchema,
 ]);
 
@@ -167,7 +167,7 @@ const upsertPointsSchema = z.object({
   points: z.array(z.object({
     id: z.union([z.string(), z.number()]),
     vector: pointVectorSchema,
-    payload: z.record(z.any()).optional(),
+    payload: z.record(z.string(), z.any()).optional(),
   })).min(1),
 });
 

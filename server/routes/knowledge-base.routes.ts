@@ -168,7 +168,7 @@ const createCrawledKnowledgeDocumentSchema = z.object({
   language: z.string().trim().min(1).optional(),
   version: z.string().trim().min(1).optional(),
   auth: z.object({
-    headers: z.record(z.string()).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
   }).partial().optional(),
   parentId: z.string().trim().min(1).nullable().optional(),
 });

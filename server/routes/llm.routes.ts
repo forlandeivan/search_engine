@@ -148,7 +148,7 @@ llmRouter.put('/providers/:providerId', asyncHandler(async (req, res) => {
 const testExpressionSchema = z.object({
   workspaceId: z.string().min(1),
   prompt: z.array(z.any()).min(1, "Промпт не может быть пустым"),
-  sampleRecord: z.record(z.unknown()),
+  sampleRecord: z.record(z.string(), z.unknown()),
   temperature: z.number().min(0).max(1).optional(),
 });
 
