@@ -6,7 +6,7 @@ import { createKnowledgeDocument, createKnowledgeFolder } from "../knowledge-bas
 import { getObject } from "../workspace-storage-service";
 import { db } from "../db";
 import { knowledgeNodes } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { ImportDeduplicator, extractDeduplicatorOptions } from "./deduplicator";
 import { createExpressionInterpreter } from "../services/expression-interpreter";
 
@@ -297,7 +297,7 @@ async function ensureFolder(
             eq(knowledgeNodes.workspaceId, workspaceId),
             eq(knowledgeNodes.type, "folder"),
             eq(knowledgeNodes.title, normalizedName),
-            parentId ? eq(knowledgeNodes.parentId, parentId) : eq(knowledgeNodes.parentId, null),
+            parentId ? eq(knowledgeNodes.parentId, parentId) : isNull(knowledgeNodes.parentId),
           ),
         )
         .limit(1);
@@ -329,7 +329,7 @@ async function ensureFolder(
             eq(knowledgeNodes.workspaceId, workspaceId),
             eq(knowledgeNodes.type, "folder"),
             eq(knowledgeNodes.title, normalizedName),
-            parentId ? eq(knowledgeNodes.parentId, parentId) : eq(knowledgeNodes.parentId, null),
+            parentId ? eq(knowledgeNodes.parentId, parentId) : isNull(knowledgeNodes.parentId),
           ),
         )
         .limit(1);

@@ -238,18 +238,18 @@ export const knowledgeBaseRepository = {
     await db.insert(knowledgeBaseAskAiRuns).values({
       workspaceId: entry.workspaceId,
       knowledgeBaseId: entry.knowledgeBaseId,
-      question: entry.question,
-      answer: entry.answer ?? null,
-      generatedAt: entry.generatedAt ?? null,
-      chunksCount: entry.chunksCount ?? null,
+      prompt: entry.question,
+      normalizedQuery: entry.question,
+      status: entry.errorMessage ? "error" : "success",
+      errorMessage: entry.errorMessage ?? null,
+      topK: entry.chunksCount ?? null,
       llmProviderId: entry.llmProviderId ?? null,
       llmModel: entry.llmModel ?? null,
-      inputTokens: entry.inputTokens ?? null,
-      outputTokens: entry.outputTokens ?? null,
-      chunkTokens: entry.chunkTokens ?? null,
-      errorMessage: entry.errorMessage ?? null,
-      durationMs: entry.durationMs ?? null,
-      pipelineStepsLog: entry.pipelineStepsLog ?? null,
+      llmTokens: (entry.inputTokens ?? 0) + (entry.outputTokens ?? 0),
+      totalTokens: (entry.inputTokens ?? 0) + (entry.outputTokens ?? 0) + (entry.chunkTokens ?? 0),
+      totalDurationMs: entry.durationMs ?? null,
+      startedAt: entry.generatedAt ?? null,
+      pipelineLog: entry.pipelineStepsLog as any ?? null,
     });
   },
 
@@ -316,7 +316,7 @@ export const knowledgeBaseRepository = {
 
     const [created] = await db
       .insert(knowledgeBaseIndexingPolicy)
-      .values(updates)
+      .values(updates as any)
       .returning();
     return created ?? null;
   },

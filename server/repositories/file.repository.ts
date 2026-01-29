@@ -73,7 +73,7 @@ export const fileRepository = {
       .insert(fileEventOutbox)
       .values({
         ...event,
-        status: 'pending',
+        status: 'queued',
         attempts: 0,
       })
       .returning();

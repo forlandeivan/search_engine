@@ -158,17 +158,17 @@ adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
     res.json(tariff);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      logger.error(`[PUT /:planId] Validation error:`, error.issues);
+      logger.error({ issues: error.issues }, `[PUT /:planId] Validation error`);
       return res.status(400).json({ message: 'Invalid data', details: error.issues });
     }
     if (error instanceof Error) {
-      logger.error(`[PUT /:planId] Error:`, error.message, error.stack);
+      logger.error({ error: error.message, stack: error.stack }, `[PUT /:planId] Error`);
       const httpError = error as Error & { status?: number };
       if (httpError.status !== undefined) {
         return res.status(httpError.status).json({ message: error.message });
       }
     }
-    logger.error(`[PUT /:planId] Unknown error:`, error);
+    logger.error({ error }, `[PUT /:planId] Unknown error`);
     throw error;
   }
 }));

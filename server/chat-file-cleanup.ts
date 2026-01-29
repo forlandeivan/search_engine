@@ -38,7 +38,7 @@ export async function cleanupChatAttachmentFiles(): Promise<CleanupStats> {
     skipped: 0,
   };
 
-  logger.info("Starting chat file cleanup cycle", { minAgeHours: MIN_AGE_HOURS, batchSize: BATCH_SIZE });
+  logger.info({ minAgeHours: MIN_AGE_HOURS, batchSize: BATCH_SIZE }, "Starting chat file cleanup cycle");
 
   try {
     // Получить attachments, готовые к очистке
@@ -54,7 +54,7 @@ export async function cleanupChatAttachmentFiles(): Promise<CleanupStats> {
 
       // Пропустить если storage_key уже пустой (двойная проверка)
       if (!att.storageKey || att.storageKey === "") {
-        logger.debug("Skipping attachment with empty storage_key", { attachmentId: att.id });
+        logger.debug({ attachmentId: att.id }, "Skipping attachment with empty storage_key");
         stats.skipped++;
         continue;
       }
@@ -63,23 +63,23 @@ export async function cleanupChatAttachmentFiles(): Promise<CleanupStats> {
         // 1. Удалить файл из MinIO
         await deleteWorkspaceFile(att.workspaceId, att.storageKey);
 
-        logger.debug("Deleted file from storage", {
+        logger.debug({
           attachmentId: att.id,
           workspaceId: att.workspaceId,
           storageKey: att.storageKey,
-        });
+        }, "Deleted file from storage");
 
         // 2. Обновить запись — помечаем как очищенную
         await storage.markChatAttachmentCleaned(att.id);
 
         stats.cleaned++;
       } catch (error) {
-        logger.error("Failed to clean attachment", {
+        logger.error({
           attachmentId: att.id,
           workspaceId: att.workspaceId,
           storageKey: att.storageKey,
           error: error instanceof Error ? error.message : String(error),
-        });
+        }, "Failed to clean attachment");
         stats.errors++;
       }
     }
@@ -136,13 +136,13 @@ export function startChatFileCleanupJob() {
     initialTimer.unref();
   }
 
-  logger.info("Chat file cleanup job started", {
+  logger.info({
     intervalMs: CLEANUP_INTERVAL_MS,
     jitterMs: jitter,
     initialDelayMs: INITIAL_DELAY_MS,
     minAgeHours: MIN_AGE_HOURS,
     batchSize: BATCH_SIZE,
-  });
+  }, "Chat file cleanup job started");
 
   return {
     stop() {
