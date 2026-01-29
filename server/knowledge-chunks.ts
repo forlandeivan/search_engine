@@ -322,7 +322,7 @@ const extractSentences = (html: string): { sentences: SentenceUnit[]; normalized
     }
 
     if (headingLevels[tag]) {
-      const text = sanitizeWhitespace($(node).text());
+      const text = sanitizeWhitespace($(node as any).text());
       if (text) {
         const anchorId = typeof (node as any).attribs?.id === "string" ? (node as any).attribs.id.trim() : null;
         pushHeading(headingLevels[tag], text, anchorId);
@@ -332,7 +332,7 @@ const extractSentences = (html: string): { sentences: SentenceUnit[]; normalized
     }
 
     if (blockTags.has(tag)) {
-      const text = sanitizeWhitespace($(node).text());
+      const text = sanitizeWhitespace($(node as any).text());
       if (text) {
         pushParagraph(text);
       }
@@ -340,7 +340,7 @@ const extractSentences = (html: string): { sentences: SentenceUnit[]; normalized
       return;
     }
 
-    $(node)
+    $(node as any)
       .contents()
       .each((_, child) => {
         traverse(child);

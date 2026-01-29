@@ -4019,7 +4019,7 @@ async function runKnowledgeBaseRagPipeline(options: {
     vectorCollection =
       vectorCollectionsToSearch.length > 0 ? vectorCollectionsToSearch.join(", ") : null;
 
-    if (normalizedSkillId && vectorCollectionsToSearch.length > 0) {
+    if (normalizedSkillId && workspaceId && vectorCollectionsToSearch.length > 0) {
       const expectedCollections = knowledgeBaseIds.map((kbId) =>
         buildKnowledgeCollectionNameFromIds(kbId, workspaceId),
       );

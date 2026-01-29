@@ -152,7 +152,9 @@ export function RecentChatsSection({
   const skillsMap = useMemo(() => {
     const map = new Map<string, string>();
     skills.forEach((skill) => {
-      map.set(skill.id, skill.name);
+      if (skill.name) {
+        map.set(skill.id, skill.name);
+      }
     });
     return map;
   }, [skills]);

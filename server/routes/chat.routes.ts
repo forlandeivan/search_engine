@@ -329,8 +329,9 @@ chatRouter.get('/sessions/:chatId/sources', asyncHandler(async (req, res) => {
       
       if (sourcesMap.has(key)) {
         const existing = sourcesMap.get(key)!;
-        if (!existing.usedInMessages.includes(message.id)) {
-          existing.usedInMessages.push(message.id);
+        const messageId = String(message.id);
+        if (!existing.usedInMessages.includes(messageId)) {
+          existing.usedInMessages.push(messageId);
         }
         existing.totalScore = Math.max(existing.totalScore, score);
       } else {
