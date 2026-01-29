@@ -489,7 +489,7 @@ export function CreateKnowledgeBaseDialog({
             : undefined,
           language: crawlConfig.language || undefined,
           version: crawlConfig.version || undefined,
-          authHeaders: crawlConfig.auth?.headers || undefined,
+          authHeaders: crawlConfig.authHeaders || undefined,
         };
       }
       

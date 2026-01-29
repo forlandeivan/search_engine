@@ -333,7 +333,10 @@ export const importKnowledgeArchive = async (file: File): Promise<ArchiveImportR
 
           try {
             // Проверка размера файла перед загрузкой
-            if (entry.uncompressedSize > MAX_FILE_SIZE) {
+            const uncompressedSize = "_data" in entry && typeof entry._data === "object" && entry._data && "uncompressedSize" in entry._data 
+              ? (entry._data.uncompressedSize as number) 
+              : 0;
+            if (uncompressedSize > MAX_FILE_SIZE) {
               errors.push(
                 buildError(
                   "unsupported_type",
