@@ -87,7 +87,7 @@ export async function getSkillsSummary(workspaceId: string) {
  */
 export async function getActionsSummary(workspaceId: string) {
   const actionsList = await storage.listWorkspaceActions(workspaceId, { includeSystem: true });
-  const activeCount = actionsList.filter(a => a.status === 'active').length;
+  const activeCount = actionsList.length; // Все возвращаемые действия активны (не удалены)
   
   return {
     count: actionsList.length,
@@ -99,7 +99,7 @@ export async function getActionsSummary(workspaceId: string) {
  * Get chats summary
  */
 export async function getChatsSummary(workspaceId: string, userId: string) {
-  const chatsList = await storage.listChatSessions(workspaceId, userId, { includeArchived: false });
+  const chatsList = await storage.listChatSessions(workspaceId, userId, undefined, { includeArchived: false });
   
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -117,7 +117,9 @@ export async function getChatsSummary(workspaceId: string, userId: string) {
   if (skillIds.length > 0) {
     const skillsList = await storage.listSkills(workspaceId);
     skillsList.forEach(skill => {
-      skillsMap.set(skill.id, skill.name);
+      if (skill.name) {
+        skillsMap.set(skill.id, skill.name);
+      }
     });
   }
   
@@ -139,7 +141,7 @@ export async function getChatsSummary(workspaceId: string, userId: string) {
  */
 export async function getKnowledgeBasesSummary(workspaceId: string) {
   const bases = await storage.listKnowledgeBases(workspaceId);
-  const indexingCount = bases.filter(b => b.indexingStatus === 'indexing' || b.indexingStatus === 'processing').length;
+  const indexingCount = bases.filter(b => b.indexStatus === 'indexing').length;
   
   return {
     count: bases.length,
@@ -198,14 +200,14 @@ export async function getUsageSummary(workspaceId: string) {
       getWorkspaceLlmUsageSummary(workspaceId).catch(() => ({ totalTokens: 0 })),
       getWorkspaceAsrUsageSummary(workspaceId).catch(() => ({ totalMinutes: 0, totalDuration: 0 })),
       getWorkspaceEmbeddingUsageSummary(workspaceId).catch(() => ({ totalTokens: 0 })),
-      getWorkspaceStorageUsageSummary(workspaceId).catch(() => ({ totalBytes: 0 })),
+      getWorkspaceStorageUsageSummary(workspaceId).catch(() => ({ storageBytes: 0 })),
     ]);
     
     return {
       llmTokens: llmUsage.totalTokens ?? 0,
-      asrMinutes: asrUsage.totalMinutes ?? asrUsage.totalDuration ?? 0,
+      asrMinutes: asrUsage.totalMinutes ?? 0,
       embeddingsTokens: embeddingsUsage.totalTokens ?? 0,
-      storageBytes: storageUsage.totalBytes ?? 0,
+      storageBytes: storageUsage.storageBytes ?? 0,
     };
   } catch (error) {
     console.error('[dashboard-service] Failed to get usage summary:', error);
@@ -231,11 +233,12 @@ export async function getSystemStatus(workspaceId: string) {
     let llmErrorsCount = 0;
     try {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const executions = await storage.listLlmExecutions?.({
+      const executions = await storage.listLlmExecutions({
         workspaceId,
         status: 'error',
         since,
-        limit: 1,
+        page: 1,
+        pageSize: 1,
       });
       llmErrorsCount = executions?.pagination?.total ?? 0;
     } catch {

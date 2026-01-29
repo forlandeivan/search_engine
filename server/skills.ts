@@ -522,6 +522,7 @@ function mapSkillRow(
     status: (row.status as SkillStatus) ?? "active",
     mode: effectiveMode,
     icon: row.icon ?? null,
+    sharedChatFiles: Boolean(row.sharedChatFiles),
     noCodeConnection: {
       endpointUrl: row.noCodeEndpointUrl ?? null,
       fileEventsUrl: row.noCodeFileEventsUrl ?? null,

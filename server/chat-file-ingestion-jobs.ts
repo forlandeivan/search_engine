@@ -140,9 +140,9 @@ async function processJob(job: ChatFileIngestionJob): Promise<void> {
 
     const rules = await indexingRulesService.getRulesForWorkspace(attachment.workspaceId);
     const chunkingConfig = {
-      maxChunkSizeChars: rules?.chunkSizeChars ?? 1500,
-      chunkOverlapChars: rules?.chunkOverlapChars ?? 200,
-      minChunkSizeChars: rules?.minChunkSizeChars ?? 100,
+      maxChunkSizeChars: rules?.chunkSize ?? 1500,
+      chunkOverlapChars: rules?.chunkOverlap ?? 200,
+      minChunkSizeChars: 100,
       maxChunksPerDocument: MAX_CHUNKS_PER_FILE,
     };
 
@@ -172,18 +172,16 @@ async function processJob(job: ChatFileIngestionJob): Promise<void> {
     logger.info({ jobId: job.id, attachmentId: attachment.id, chunkCount: chunks.length }, "Text chunked");
 
     // Embed chunks
-    const embeddingInput = chunks.map((chunk) => chunk.text);
     let embeddings: number[][];
     let totalTokens = 0;
 
     try {
       const result = await embedSkillFileChunks({
         provider: embeddingProvider,
-        workspaceId: attachment.workspaceId,
-        texts: embeddingInput,
+        chunks: chunks,
       });
-      embeddings = result.embeddings;
-      totalTokens = result.totalTokens ?? 0;
+      embeddings = result.map(r => r.vector);
+      totalTokens = result.reduce((sum, r) => sum + (r.usageTokens ?? 0), 0);
     } catch (error) {
       if (error instanceof EmbeddingError) {
         const message = `Создание эмбеддингов: ${error.message}`;

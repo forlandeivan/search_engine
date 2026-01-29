@@ -309,13 +309,13 @@ const extractSentences = (html: string): { sentences: SentenceUnit[]; normalized
       return;
     }
 
-    const tag = typeof node.name === "string" ? node.name.toLowerCase() : "";
+    const tag = typeof (node as any).name === "string" ? (node as any).name.toLowerCase() : "";
     if (!tag || tag === "script" || tag === "style") {
       return;
     }
 
     const previousPage = currentPage;
-    const pageAttr = node.attribs?.["data-page-number"] ?? node.attribs?.["data-page"] ?? node.attribs?.["data-page_index"];
+    const pageAttr = (node as any).attribs?.["data-page-number"] ?? (node as any).attribs?.["data-page"] ?? (node as any).attribs?.["data-page_index"];
     const parsedPage = parseNumber(pageAttr);
     if (parsedPage !== null) {
       currentPage = parsedPage;
@@ -324,7 +324,7 @@ const extractSentences = (html: string): { sentences: SentenceUnit[]; normalized
     if (headingLevels[tag]) {
       const text = sanitizeWhitespace($(node).text());
       if (text) {
-        const anchorId = typeof node.attribs?.id === "string" ? node.attribs.id.trim() : null;
+        const anchorId = typeof (node as any).attribs?.id === "string" ? (node as any).attribs.id.trim() : null;
         pushHeading(headingLevels[tag], text, anchorId);
       }
       currentPage = previousPage;

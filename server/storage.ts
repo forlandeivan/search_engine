@@ -147,7 +147,9 @@ import type {
   KnowledgeBaseAskAiRunDetail,
   KnowledgeBaseAskAiRunSummary,
   KnowledgeBaseRagConfig,
+  KnowledgeBaseSummary,
 } from "@shared/knowledge-base";
+import type { SkillDto, ActionDto } from "@shared/skills";
 import { getQdrantClient } from "./qdrant";
 import { createLogger } from "./lib/logger";
 
@@ -1091,11 +1093,20 @@ export interface IStorage {
   ): Promise<UnicaChatConfig>;
 
   // LLM executions (admin monitoring)
-  listLlmExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }>;
+  listLlmExecutions(opts: { 
+    page: number; 
+    pageSize: number; 
+    workspaceId?: string;
+    status?: "success" | "error";
+    since?: Date;
+  }): Promise<{ 
+    executions: any[]; 
+    pagination: { total: number; page: number; pageSize: number } 
+  }>;
   getLlmExecution(id: string): Promise<any | null>;
 
   // ASR executions (admin monitoring)
-  listAsrExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }>;
+  listAsrExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; pagination: { total: number; page: number; pageSize: number } }>;
   getAsrExecution(id: string): Promise<any | null>;
 
   // Monitoring (admin)
@@ -1152,6 +1163,7 @@ export interface IStorage {
     workspaceId: string,
     userId: string,
     searchQuery?: string,
+    options?: { includeArchived?: boolean },
   ): Promise<Array<ChatSession & { skillName: string | null; skillIsSystem: boolean }>>;
   getChatSessionById(
     chatId: string,
@@ -1385,6 +1397,11 @@ export interface IStorage {
     actionCreatedAt: Date,
     actionUpdatedAt: Date,
   ): Promise<Array<KnowledgeBaseIndexingJob & { documentTitle: string | null }>>;
+
+  // Skills and actions
+  listSkills(workspaceId: string, options?: { includeArchived?: boolean }): Promise<SkillDto[]>;
+  listWorkspaceActions(workspaceId: string, options?: { includeSystem?: boolean }): Promise<ActionDto[]>;
+  listKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSummary[]>;
 }
 
 let usersTableEnsured = false;
@@ -9386,24 +9403,48 @@ export class DatabaseStorage implements IStorage {
     console.warn(`[storage] setOAuthConfig called for ${provider}, but config is read from environment variables. Restart server with updated .env to apply changes.`);
   }
 
-  async listLlmExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }> {
+  async listLlmExecutions(opts: { 
+    page: number; 
+    pageSize: number; 
+    workspaceId?: string;
+    status?: "success" | "error";
+    since?: Date;
+  }): Promise<{ 
+    executions: any[]; 
+    pagination: { total: number; page: number; pageSize: number } 
+  }> {
     const offset = (opts.page - 1) * opts.pageSize;
     
+    let condition = opts.workspaceId ? eq(workspaceLlmUsageLedger.workspaceId, opts.workspaceId) : undefined;
+    if (opts.status) {
+      const statusCondition = eq(workspaceLlmUsageLedger.status, opts.status);
+      condition = condition ? and(condition, statusCondition) : statusCondition;
+    }
+    if (opts.since) {
+      const sinceCondition = gt(workspaceLlmUsageLedger.occurredAt, opts.since);
+      condition = condition ? and(condition, sinceCondition) : sinceCondition;
+    }
+
     // Get total count
     const [countResult] = await this.db
       .select({ count: sql<number>`count(*)` })
-      .from(workspaceLlmUsageLedger);
+      .from(workspaceLlmUsageLedger)
+      .where(condition);
     const total = Number(countResult?.count ?? 0);
     
     // Get paginated data
     const executions = await this.db
       .select()
       .from(workspaceLlmUsageLedger)
+      .where(condition)
       .orderBy(desc(workspaceLlmUsageLedger.occurredAt))
       .limit(opts.pageSize)
       .offset(offset);
     
-    return { executions, total, page: opts.page, pageSize: opts.pageSize };
+    return { 
+      executions, 
+      pagination: { total, page: opts.page, pageSize: opts.pageSize } 
+    };
   }
 
   async getLlmExecution(id: string): Promise<any | null> {
@@ -9415,7 +9456,7 @@ export class DatabaseStorage implements IStorage {
     return execution ?? null;
   }
 
-  async listAsrExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }> {
+  async listAsrExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; pagination: { total: number; page: number; pageSize: number } }> {
     const offset = (opts.page - 1) * opts.pageSize;
     
     // Get total count
@@ -9439,7 +9480,10 @@ export class DatabaseStorage implements IStorage {
       durationMs: exec.durationMs ? Number(exec.durationMs) : null,
     }));
     
-    return { executions, total, page: opts.page, pageSize: opts.pageSize };
+    return { 
+      executions, 
+      pagination: { total, page: opts.page, pageSize: opts.pageSize } 
+    };
   }
 
   async getAsrExecution(id: string): Promise<any | null> {
@@ -11000,6 +11044,20 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  async listSkills(workspaceId: string, options: { includeArchived?: boolean } = {}): Promise<SkillDto[]> {
+    const { listSkills } = await import("./skills");
+    return await listSkills(workspaceId, options);
+  }
+
+  async listWorkspaceActions(workspaceId: string, options: { includeSystem?: boolean } = {}): Promise<ActionDto[]> {
+    const { actionsRepository } = await import("./actions");
+    return await actionsRepository.listForWorkspace(workspaceId, options);
+  }
+
+  async listKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSummary[]> {
+    const { listKnowledgeBases } = await import("./knowledge-base");
+    return await listKnowledgeBases(workspaceId);
+  }
 }
 
 export const storage = new DatabaseStorage();

@@ -149,6 +149,7 @@ export type SkillDto = {
   onTranscriptionAutoActionId: string | null;
   icon?: string | null;
   noCodeConnection: SkillNoCodeConnection;
+  sharedChatFiles: boolean;
   contextInputLimit: number | null;
   createdAt: string;
   updatedAt: string;

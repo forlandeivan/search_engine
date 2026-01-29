@@ -270,6 +270,10 @@ export class IndexingRulesService {
     return mapToDto(existing);
   }
 
+  async getRulesForWorkspace(_workspaceId: string): Promise<IndexingRulesDto> {
+    return await this.getIndexingRules();
+  }
+
   async updateIndexingRules(
     patch: UpdateIndexingRulesDto,
     actorAdminId?: string | null,

@@ -647,7 +647,7 @@ async function tryAcquireDocumentIndexingLock(
     const result = await client.query(
       "SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked",
       [workspaceId, documentId],
-    );
+    ) as any;
     const locked = Boolean((result?.rows ?? [])[0]?.locked);
     if (!locked) {
       client.release();

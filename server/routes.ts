@@ -4730,7 +4730,8 @@ async function runKnowledgeBaseRagPipeline(options: {
     for (const { collection, record } of aggregatedVectorResults) {
       const kbId = collectionToKnowledgeBaseId.get(collection);
       if (kbId) {
-        const chunkId = typeof record.payload?.chunk_id === "string" ? record.payload.chunk_id : null;
+        const payload = record.payload as any;
+        const chunkId = typeof payload?.chunk_id === "string" ? payload.chunk_id : null;
         if (chunkId) {
           chunkToKnowledgeBaseId.set(chunkId, kbId);
         }

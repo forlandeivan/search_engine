@@ -1474,7 +1474,7 @@ export async function checkLlmProviderHealth(
             } | {
               cancel?: () => Promise<void>;
             } | null;
-            const reader = typeof body.getReader === "function" ? body.getReader() : null;
+            const reader = body && "getReader" in body && typeof body.getReader === "function" ? body.getReader() : null;
             if (reader) {
               const chunk = await Promise.race([
                 reader.read(),
