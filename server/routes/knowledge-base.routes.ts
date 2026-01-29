@@ -263,7 +263,7 @@ knowledgeBaseRouter.delete('/bases/:baseId', asyncHandler(async (req, res) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ 
-        message: error.errors[0]?.message ?? "Неверные данные запроса",
+        message: error.issues[0]?.message ?? "Неверные данные запроса",
       });
     }
     throw error;

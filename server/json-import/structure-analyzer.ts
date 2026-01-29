@@ -6,13 +6,8 @@ import { minioClient } from "../minio-client";
 
 export type FileFormat = "json_array" | "jsonl";
 
-export interface FieldInfo {
-  key: string;
-  path: string; // для вложенных: "metadata.author"
-  type: "string" | "number" | "boolean" | "array" | "object" | "null" | "mixed";
-  frequency: number; // процент записей с этим полем (0-100)
-  sampleValues: string[]; // примеры значений (до 3)
-}
+// Re-export from shared
+export type { FieldInfo } from "@shared/json-import";
 
 export interface StructureAnalysis {
   format: FileFormat;

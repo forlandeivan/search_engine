@@ -293,8 +293,8 @@ vectorRouter.get('/collections', asyncHandler(async (req, res) => {
             name,
             status: info.status,
             optimizerStatus: info.optimizer_status,
-            pointsCount: info.points_count ?? info.vectors_count ?? 0,
-            vectorsCount: info.vectors_count ?? null,
+            pointsCount: info.points_count ?? 0,
+            vectorsCount: info.indexed_vectors_count ?? null,
             vectorSize: vectorsConfig?.size ?? null,
             distance: vectorsConfig?.distance ?? null,
             segmentsCount: info.segments_count,
@@ -376,8 +376,8 @@ vectorRouter.get('/collections/:name', asyncHandler(async (req, res) => {
       name: req.params.name,
       status: info.status,
       optimizerStatus: info.optimizer_status,
-      pointsCount: info.points_count ?? info.vectors_count ?? 0,
-      vectorsCount: info.vectors_count ?? null,
+      pointsCount: info.points_count ?? 0,
+      vectorsCount: info.indexed_vectors_count ?? null,
       segmentsCount: info.segments_count,
       vectorSize: vectorsConfig?.size ?? null,
       distance: vectorsConfig?.distance ?? null,
@@ -642,7 +642,7 @@ vectorRouter.post('/collections/:name/points', asyncHandler(async (req, res) => 
     if (error instanceof z.ZodError) {
       return res.status(400).json({
         error: 'Некорректные данные точек',
-        details: error.errors,
+        details: error.issues,
       });
     }
     
@@ -737,7 +737,7 @@ vectorRouter.post('/collections/:name/search', asyncHandler(async (req, res) => 
     if (error instanceof z.ZodError) {
       return res.status(400).json({
         error: 'Некорректные параметры поиска',
-        details: error.errors,
+        details: error.issues,
       });
     }
 
@@ -876,7 +876,7 @@ vectorRouter.post('/collections/:name/search/text', asyncHandler(async (req, res
     if (error instanceof z.ZodError) {
       return res.status(400).json({
         error: 'Некорректные параметры поиска',
-        details: error.errors,
+        details: error.issues,
       });
     }
 
@@ -1681,8 +1681,8 @@ vectorRouter.post('/documents/vectorize', asyncHandler(async (req, res) => {
 
     if (error instanceof z.ZodError) {
       markJobFailed('Некорректные данные запроса');
-      if (responseSent) { logger.warn({ errors: error.errors }, 'Некорректные данные запроса для фоновой векторизации'); return; }
-      return res.status(400).json({ error: 'Некорректные данные запроса', details: error.errors });
+      if (responseSent) { logger.warn({ errors: error.issues }, 'Некорректные данные запроса для фоновой векторизации'); return; }
+      return res.status(400).json({ error: 'Некорректные данные запроса', details: error.issues });
     }
 
     if (error instanceof QdrantConfigurationError) {

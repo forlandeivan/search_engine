@@ -1,4 +1,4 @@
-import type { FieldMapping, MappingConfig } from "@shared/json-import";
+import type { FieldMapping, MappingConfigV1 } from "@shared/json-import";
 import type { FieldInfo } from "./structure-analyzer";
 
 const TITLE_PATTERNS = [
@@ -37,7 +37,7 @@ const MARKDOWN_PATTERNS = ["markdown", "md", "content_md", "body_md", "md_conten
 /**
  * Предложить автоматический маппинг на основе имён полей
  */
-export function suggestMapping(fields: FieldInfo[]): MappingConfig {
+export function suggestMapping(fields: FieldInfo[]): MappingConfigV1 {
   const suggestions: FieldMapping[] = [];
   let contentPriority = 1;
 
@@ -72,7 +72,7 @@ export function suggestMapping(fields: FieldInfo[]): MappingConfig {
 /**
  * Валидировать маппинг
  */
-export function validateMapping(mappingConfig: MappingConfig): {
+export function validateMapping(mappingConfig: MappingConfigV1): {
   valid: boolean;
   errors: Array<{ field: string; code: string; message: string }>;
   warnings: Array<{ field: string; code: string; message: string }>;

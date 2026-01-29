@@ -6031,10 +6031,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (error instanceof z.ZodError) {
-        console.log(`[PUBLIC VECTOR SEARCH] Zod validation error: ${JSON.stringify(error.errors)}`);
+        console.log(`[PUBLIC VECTOR SEARCH] Zod validation error: ${JSON.stringify(error.issues)}`);
         return res.status(400).json({
           error: "Некорректные параметры поиска",
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -6179,7 +6179,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error instanceof z.ZodError) {
         return res.status(400).json({
           error: "Некорректные параметры векторизации",
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -7031,7 +7031,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error instanceof z.ZodError) {
         return res.status(400).json({
           error: "Некорректные параметры генеративного поиска",
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -7284,7 +7284,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   const switchWorkspaceSchema = z.object({
     workspaceId: z
-      .string({ required_error: "workspaceId is required" })
+      .string({ message: "workspaceId is required" })
       .trim()
       .min(1, "workspaceId is required"),
   });
@@ -7482,9 +7482,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   const botActionTypeSchema = z.string().trim().min(1, "Укажите тип действия (actionType)");
   const botActionStatusSchema = z.enum(botActionStatuses, {
-    errorMap: () => ({
-      message: `Статус (status) должен быть одним из: ${botActionStatuses.join(", ")}`,
-    }),
+    error: `Статус (status) должен быть одним из: ${botActionStatuses.join(", ")}`,
   });
 
   const botActionStartSchema = z.object({
@@ -7857,7 +7855,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
 
         if (error instanceof z.ZodError) {
-          return res.status(400).json({ error: "Некорректные данные", details: error.errors });
+          return res.status(400).json({ error: "Некорректные данные", details: error.issues });
         }
 
         console.error("Не удалось сохранить настройки поиска базы знаний:", error);

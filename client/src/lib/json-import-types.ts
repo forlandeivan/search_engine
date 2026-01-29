@@ -1,15 +1,12 @@
 // Re-export types from shared/json-import for client use
 // This file helps with type imports in client components
 
+import type { FieldInfo } from "@shared/json-import";
+
 export type FileFormat = "json_array" | "jsonl";
 
-export interface FieldInfo {
-  key: string;
-  path: string; // для вложенных: "metadata.author"
-  type: "string" | "number" | "boolean" | "array" | "object" | "null" | "mixed";
-  frequency: number; // процент записей с этим полем (0-100)
-  sampleValues: string[]; // примеры значений (до 3)
-}
+// Re-export FieldInfo from shared
+export type { FieldInfo };
 
 export interface StructureAnalysis {
   format: FileFormat;

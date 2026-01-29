@@ -17,12 +17,12 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Sparkles, AlertTriangle, CheckCircle2 } from "lucide-react";
 import type { FieldInfo, StructureAnalysis } from "@/lib/json-import-types";
-import type { FieldMapping, MappingConfig, FieldRole } from "@shared/json-import";
+import type { FieldMapping, MappingConfigV1, FieldRole } from "@shared/json-import";
 
 interface FieldMappingEditorProps {
   analysis: StructureAnalysis;
-  initialMapping?: MappingConfig;
-  onMappingChange: (mapping: MappingConfig) => void;
+  initialMapping?: MappingConfigV1;
+  onMappingChange: (mapping: MappingConfigV1) => void;
   onValidationChange?: (isValid: boolean) => void;
   showValidationErrors?: boolean;
 }
@@ -40,7 +40,7 @@ const FIELD_ROLES: Array<{ value: FieldRole; label: string; description: string 
 /**
  * Автоматическое предложение маппинга на основе имён полей
  */
-function suggestMapping(fields: FieldInfo[]): MappingConfig {
+function suggestMapping(fields: FieldInfo[]): MappingConfigV1 {
   const TITLE_PATTERNS = ["title", "name", "header", "subject", "heading", "название", "заголовок"];
   const CONTENT_PATTERNS = ["content", "text", "body", "description", "article", "контент", "текст"];
   const ID_PATTERNS = ["id", "_id", "uuid", "key", "identifier"];
@@ -73,7 +73,7 @@ function suggestMapping(fields: FieldInfo[]): MappingConfig {
 /**
  * Валидация маппинга
  */
-function validateMapping(mappingConfig: MappingConfig): {
+function validateMapping(mappingConfig: MappingConfigV1): {
   valid: boolean;
   errors: string[];
   warnings: string[];
@@ -112,7 +112,7 @@ function validateMapping(mappingConfig: MappingConfig): {
 /**
  * Применить маппинг к примеру записи для предпросмотра
  */
-function applyMappingToRecord(record: Record<string, unknown>, mapping: MappingConfig): {
+function applyMappingToRecord(record: Record<string, unknown>, mapping: MappingConfigV1): {
   id?: string;
   title: string;
   content: string;
@@ -214,7 +214,7 @@ export function FieldMappingEditor({
     };
   }, [initialMapping, analysis.fields]);
 
-  const [mapping, setMapping] = useState<MappingConfig>(initialMappingValue);
+  const [mapping, setMapping] = useState<MappingConfigV1>(initialMappingValue);
 
   // Обновляем mapping при изменении initialMapping
   useEffect(() => {

@@ -75,7 +75,7 @@ webhookRouter.post('/send-json', async (req, res) => {
     if (error instanceof z.ZodError) {
       return res.status(400).json({
         error: 'Некорректные данные запроса',
-        details: error.errors,
+        details: error.issues,
       });
     }
 

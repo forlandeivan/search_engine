@@ -15,13 +15,16 @@ export interface FieldMapping {
   priority?: number; // для контента: порядок объединения
 }
 
-export interface MappingConfig {
-  fields: FieldMapping[];
-  contentJoinSeparator?: string; // разделитель при объединении контента (default: "\n\n")
-  titleFallback?: "first_line" | "content_excerpt" | "filename";
-  deduplication?: {
-    mode: "skip" | "allow_all";
-  };
+/**
+ * Информация о поле в JSON (используется для анализа структуры)
+ */
+export interface FieldInfo {
+  key: string;
+  path: string; // для вложенных: "metadata.author"
+  type: "string" | "number" | "boolean" | "array" | "object" | "null" | "mixed";
+  frequency?: number; // процент записей с этим полем (0-100)
+  sampleValues?: string[]; // примеры значений (до 3)
+  description?: string; // описание поля (для template variables)
 }
 
 export type EmptyValueStrategy =

@@ -40,7 +40,7 @@ export async function reconcileWorkspaceQdrantUsage(workspaceId: string): Promis
     for (const name of collections) {
       try {
         const info = await client.getCollection(name);
-        const pointsCount = Number(info?.points_count ?? info?.vectors_count ?? 0);
+        const pointsCount = Number(info?.points_count ?? 0);
         const diskSize = Number(("disk_data_size" in info && typeof info.disk_data_size === "number" ? info.disk_data_size : null) ?? 0);
         pointsTotal += Number.isFinite(pointsCount) ? pointsCount : 0;
         storageBytesTotal += Number.isFinite(diskSize) && diskSize > 0 ? diskSize : 0;
