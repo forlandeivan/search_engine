@@ -105,7 +105,7 @@ function toPublicUser(user: User): PublicUser {
     isEmailConfirmed: user.isEmailConfirmed,
     avatarUrl: user.avatarUrl,
     createdAt: user.createdAt,
-    lastActivityAt: user.lastActivityAt,
+    lastActivityAt: user.lastActiveAt,
   };
 }
 

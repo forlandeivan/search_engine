@@ -12,6 +12,9 @@ import {
   type Model,
 } from "@shared/schema";
 import { and, eq, sql } from "drizzle-orm";
+
+// Re-export types for external use
+export type { ModelType };
 import { sanitizeLlmModelOptions } from "./llm-utils";
 import { getCache, cacheKeys } from "./cache";
 

@@ -422,7 +422,7 @@ async function processBatch(
       await createKnowledgeDocument(context.baseId, context.workspaceId, {
         title: mapped.title,
         content: mapped.contentHtml || mapped.content,
-        contentMarkdown: mapped.contentMd || mapped.contentMarkdown,
+        contentMarkdown: mapped.contentMarkdown,
         contentPlainText: mapped.content,
         parentId,
         sourceType: "json_import",

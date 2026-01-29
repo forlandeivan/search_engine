@@ -18,6 +18,10 @@ import {
   type KnowledgeBaseCrawlAuthConfig,
   type KnowledgeBaseDocumentDetail,
 } from "@shared/knowledge-base";
+
+// Re-export types for external use
+export type { KnowledgeBaseCrawlConfig, KnowledgeBaseCrawlJobStatus };
+
 import { db } from "./db";
 import {
   createKnowledgeDocument,

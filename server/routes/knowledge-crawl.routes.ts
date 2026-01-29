@@ -15,12 +15,12 @@ import {
   listKnowledgeBases,
   createKnowledgeBase,
   KnowledgeBaseError,
-  type KnowledgeBaseCrawlConfig,
 } from '../knowledge-base';
 import { 
   crawlKnowledgeDocumentPage, 
   getKnowledgeBaseCrawlJobStateForBase,
   startKnowledgeBaseCrawl,
+  type KnowledgeBaseCrawlConfig,
 } from '../kb-crawler';
 import { storage } from '../storage';
 import type { PublicUser } from '@shared/schema';
