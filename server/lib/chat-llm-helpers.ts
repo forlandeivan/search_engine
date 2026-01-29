@@ -203,13 +203,15 @@ export function sanitizeHeadersForLog(headers: Headers): Record<string, string> 
  * Resolves operation ID from request headers
  */
 export function resolveOperationId(req: { headers?: Record<string, string | string[] | undefined> } | { headers?: { [key: string]: string | string[] | undefined } }): string | null {
+  if (!req.headers) return null;
+  const headers = req.headers;
   const headerKey =
-    typeof req.headers['idempotency-key'] === 'string'
-      ? req.headers['idempotency-key']
-      : typeof req.headers['Idempotency-Key'] === 'string'
-        ? req.headers['Idempotency-Key']
-        : typeof req.headers['x-operation-id'] === 'string'
-          ? req.headers['x-operation-id']
+    typeof headers['idempotency-key'] === 'string'
+      ? headers['idempotency-key']
+      : typeof headers['Idempotency-Key'] === 'string'
+        ? headers['Idempotency-Key']
+        : typeof headers['x-operation-id'] === 'string'
+          ? headers['x-operation-id']
           : null;
   return headerKey && headerKey.trim().length > 0 ? headerKey.trim() : null;
 }

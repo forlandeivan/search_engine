@@ -1,7 +1,7 @@
 import type { ComponentType } from "react";
-import type { KnowledgeBaseSourceType } from "@shared/schema";
 
-export type ImportMode = KnowledgeBaseSourceType;
+// Типы импорта для базы знаний
+export type ImportMode = "blank" | "archive" | "crawler" | "json_import";
 
 export type ImportModeOption = {
   value: ImportMode;

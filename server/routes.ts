@@ -292,16 +292,17 @@ function formatZodValidationError(error: z.ZodError, endpoint?: string): {
         message = `Поле "${field}" имеет неверный тип. Получено: ${receivedValue}, ожидается: ${issue.expected}`;
         expected = issue.expected;
       }
-    } else if (issue.code === "invalid_enum_value") {
+    } else if (issue.code === "invalid_value") {
       message = `Поле "${field}" содержит недопустимое значение. Получено: "${receivedValue}"`;
-      if (issue.options && issue.options.length > 0) {
-        expected = `Одно из: ${issue.options.map((opt) => `'${opt}'`).join(", ")}`;
-        example = `"${issue.options[0]}"`;
+      const values = "values" in issue ? issue.values : [];
+      if (Array.isArray(values) && values.length > 0) {
+        expected = `Одно из: ${values.map((opt: unknown) => `'${opt}'`).join(", ")}`;
+        example = `"${values[0]}"`;
       }
-    } else if (issue.code === "too_small" && issue.type === "string") {
-      message = `Поле "${field}" слишком короткое. Минимальная длина: ${issue.minimum}`;
-    } else if (issue.code === "too_big" && issue.type === "string") {
-      message = `Поле "${field}" слишком длинное. Максимальная длина: ${issue.maximum}`;
+    } else if (issue.code === "too_small") {
+      message = `Поле "${field}" слишком короткое. Минимальная длина: ${(issue as { minimum?: unknown }).minimum}`;
+    } else if (issue.code === "too_big") {
+      message = `Поле "${field}" слишком длинное. Максимальная длина: ${(issue as { maximum?: unknown }).maximum}`;
     }
 
     return {

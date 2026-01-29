@@ -3,11 +3,12 @@ import { createInterface } from "readline";
 import { getObject, ensureWorkspaceBucketExists } from "../workspace-storage-service";
 import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { minioClient } from "../minio-client";
+import type { FieldInfo } from "@shared/json-import";
 
 export type FileFormat = "json_array" | "jsonl";
 
 // Re-export from shared
-export type { FieldInfo } from "@shared/json-import";
+export type { FieldInfo };
 
 export interface StructureAnalysis {
   format: FileFormat;

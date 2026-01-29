@@ -48,8 +48,8 @@ import {
   ChevronRight,
   X,
   AlertTriangle,
-  type ComponentType,
 } from "lucide-react";
+import type { ComponentType } from "react";
 import { FileImportPanel, type FileImportMode } from "./import/FileImportPanel";
 import { CrawlImportPanel, type CrawlMode, type CrawlConfig } from "./import/CrawlImportPanel";
 import { ImportModeSelector } from "./import/ImportModeSelector";

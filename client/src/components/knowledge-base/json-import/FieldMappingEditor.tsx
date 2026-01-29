@@ -357,7 +357,7 @@ export function FieldMappingEditor({
                         </Select>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground max-w-[250px]">
-                        {field.sampleValues.length > 0 ? (
+                        {field.sampleValues && field.sampleValues.length > 0 ? (
                           <div className="break-words overflow-hidden line-clamp-2">
                             {String(field.sampleValues[0])}
                           </div>

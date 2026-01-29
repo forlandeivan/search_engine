@@ -104,9 +104,9 @@ export function StructurePreview({ analysis, isLoading }: StructurePreviewProps)
                       </TableCell>
                       <TableCell>{field.frequency}%</TableCell>
                       <TableCell className="text-sm text-muted-foreground max-w-[300px]">
-                        {field.sampleValues.length > 0 ? (
+                        {field.sampleValues && field.sampleValues.length > 0 ? (
                           <div className="space-y-1">
-                            {field.sampleValues.map((value, idx) => (
+                            {field.sampleValues.map((value: string, idx: number) => (
                               <div key={idx} className="break-words overflow-hidden line-clamp-2">
                                 {String(value)}
                               </div>

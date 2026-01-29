@@ -92,6 +92,7 @@ function buildHierarchyPreview(
   
   // Подсчитываем общее количество документов в sampleRecords с непустыми значениями
   const sampleRecordsWithValue = analysis.sampleRecords.filter((record) => {
+    if (!config.groupByField) return false;
     const parts = config.groupByField.split(".");
     let value: unknown = record;
     for (const part of parts) {

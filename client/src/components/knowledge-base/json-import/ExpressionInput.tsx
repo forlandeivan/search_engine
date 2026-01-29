@@ -272,8 +272,9 @@ export function ExpressionInput({
           const range = document.createRange();
           range.selectNodeContents(editorRef.current);
           range.collapse(false);
-          selection.removeAllRanges();
-          selection.addRange(range);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
           editorRef.current.focus();
         }
       }, 0);

@@ -11,6 +11,9 @@ import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronUp, FileText, Globe, HelpCircle } from "lucide-react";
 import type { CrawlMode, CrawlConfig } from "./types";
 
+// Re-export types for convenience
+export type { CrawlMode, CrawlConfig };
+
 type FieldLabelWithTooltipProps = {
   label: string;
   tooltip: string;

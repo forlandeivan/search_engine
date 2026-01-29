@@ -118,7 +118,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
 const isSourceType = (value: unknown): value is KnowledgeBaseSourceType =>
-  value === "blank" || value === "archive" || value === "crawler" || value === "unknown";
+  value === "blank" || value === "archive" || value === "crawler" || value === "json_import" || value === "unknown";
 
 const parseNumber = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -461,6 +461,7 @@ export const KNOWLEDGE_BASE_SOURCE_LABELS: Record<KnowledgeBaseSourceType, strin
   blank: "Пустая база",
   archive: "Импорт из архива",
   crawler: "Краулинг сайта",
+  json_import: "Импорт из JSON",
   unknown: "Неизвестный источник",
 };
 
@@ -468,6 +469,7 @@ export const KNOWLEDGE_BASE_SOURCE_ICONS: Record<KnowledgeBaseSourceType, string
   blank: "🗂️",
   archive: "🗜️",
   crawler: "🌐",
+  json_import: "📋",
   unknown: "ℹ️",
 };
 

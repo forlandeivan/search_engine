@@ -140,19 +140,28 @@ function extractRewrittenQuery(llmResponse: unknown): string | null {
   if (
     typeof llmResponse === "object" &&
     llmResponse !== null &&
-    "choices" in llmResponse &&
-    Array.isArray((llmResponse as { choices?: unknown[] }).choices) &&
-    (llmResponse as { choices?: unknown[] }).choices?.[0] &&
-    typeof (llmResponse as { choices?: unknown[] }).choices[0] === "object" &&
-    (llmResponse as { choices?: unknown[] }).choices[0] !== null &&
-    "message" in (llmResponse as { choices?: unknown[] }).choices[0] &&
-    typeof ((llmResponse as { choices?: unknown[] }).choices[0] as { message?: unknown }).message === "object" &&
-    ((llmResponse as { choices?: unknown[] }).choices[0] as { message?: unknown }).message !== null &&
-    "content" in ((llmResponse as { choices?: unknown[] }).choices[0] as { message?: unknown }).message
+    "choices" in llmResponse
   ) {
-    const content = ((llmResponse as { choices?: unknown[] }).choices[0] as { message?: { content?: unknown } }).message?.content;
-    if (typeof content === "string") {
-      return content;
+    const choices = (llmResponse as { choices?: unknown[] }).choices;
+    if (Array.isArray(choices) && choices.length > 0) {
+      const firstChoice = choices[0];
+      if (
+        typeof firstChoice === "object" &&
+        firstChoice !== null &&
+        "message" in firstChoice
+      ) {
+        const message = (firstChoice as { message?: unknown }).message;
+        if (
+          typeof message === "object" &&
+          message !== null &&
+          "content" in message
+        ) {
+          const content = (message as { content?: unknown }).content;
+          if (typeof content === "string") {
+            return content;
+          }
+        }
+      }
     }
   }
   
