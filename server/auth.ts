@@ -352,7 +352,7 @@ export async function configureAuth(app: Express): Promise<void> {
 
   if (pool) {
     sessionOptions.store = new PgSession({
-      pool,
+      pool: pool as any,
       createTableIfMissing: true,
     });
   } else {

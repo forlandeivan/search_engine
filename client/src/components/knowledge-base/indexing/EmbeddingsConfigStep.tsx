@@ -184,8 +184,8 @@ export function EmbeddingsConfigStep({
                   <span>Неактивен</span>
                 </>
               )}
-              {"vectorSize" in selectedProviderData && selectedProviderData.vectorSize && (
-                <span className="text-muted-foreground">| Размерность: {selectedProviderData.vectorSize}</span>
+              {"vectorSize" in (selectedProviderData as any) && (selectedProviderData as any).vectorSize && (
+                <span className="text-muted-foreground">| Размерность: {(selectedProviderData as any).vectorSize}</span>
               )}
             </div>
           )}

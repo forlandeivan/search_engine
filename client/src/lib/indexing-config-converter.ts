@@ -56,7 +56,7 @@ export function convertRulesToWizardConfig(rules: IndexingRulesDto): IndexingWiz
     embeddingsModel: rules.embeddingsModel,
     topK: rules.topK,
     relevanceThreshold: rules.relevanceThreshold,
-    maxContextTokens: rules.maxContextTokens,
+    maxContextTokens: rules.maxContextTokens ?? 3000,
     citationsEnabled: rules.citationsEnabled,
     schemaFields: DEFAULT_SCHEMA_FIELDS, // Дефолтная схема
   };

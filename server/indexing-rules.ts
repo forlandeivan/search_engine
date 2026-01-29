@@ -337,12 +337,12 @@ export class IndexingRulesService {
     }
 
     const chunkSize = normalizeInteger("chunkSize", patch.chunkSize, { gt: 0 });
-    if (chunkSize !== undefined) {
+    if (chunkSize !== undefined && chunkSize !== null) {
       sanitizedPatch.chunkSize = chunkSize;
     }
 
     const chunkOverlap = normalizeInteger("chunkOverlap", patch.chunkOverlap, { min: 0 });
-    if (chunkOverlap !== undefined) {
+    if (chunkOverlap !== undefined && chunkOverlap !== null) {
       sanitizedPatch.chunkOverlap = chunkOverlap;
     }
 
@@ -356,7 +356,9 @@ export class IndexingRulesService {
       }
       try {
         const topK = normalizeInteger("topK", patch.topK, { min: MIN_TOP_K, max: MAX_TOP_K });
-        sanitizedPatch.topK = topK;
+        if (topK !== undefined && topK !== null) {
+          sanitizedPatch.topK = topK;
+        }
       } catch (error) {
         if (error instanceof IndexingRulesError) {
           throw new IndexingRulesDomainError(
@@ -391,7 +393,9 @@ export class IndexingRulesService {
     if (patch.maxContextTokens !== undefined) {
       try {
         const maxContextTokens = normalizeInteger("maxContextTokens", patch.maxContextTokens, { min: MIN_MAX_CONTEXT_TOKENS, max: MAX_MAX_CONTEXT_TOKENS });
-        sanitizedPatch.maxContextTokens = maxContextTokens;
+        if (maxContextTokens !== undefined) {
+          sanitizedPatch.maxContextTokens = maxContextTokens;
+        }
       } catch (error) {
         if (error instanceof IndexingRulesError) {
           throw new IndexingRulesDomainError(
@@ -407,7 +411,9 @@ export class IndexingRulesService {
     if (patch.contextInputLimit !== undefined) {
       try {
         const contextInputLimit = normalizeInteger("contextInputLimit", patch.contextInputLimit, { min: MIN_CONTEXT_INPUT_LIMIT, max: MAX_CONTEXT_INPUT_LIMIT });
-        sanitizedPatch.contextInputLimit = contextInputLimit;
+        if (contextInputLimit !== undefined) {
+          sanitizedPatch.contextInputLimit = contextInputLimit;
+        }
       } catch (error) {
         if (error instanceof IndexingRulesError) {
           throw new IndexingRulesDomainError(
@@ -423,7 +429,9 @@ export class IndexingRulesService {
     if (patch.llmMaxTokens !== undefined) {
       try {
         const llmMaxTokens = normalizeInteger("llmMaxTokens", patch.llmMaxTokens, { min: MIN_LLM_MAX_TOKENS, max: MAX_LLM_MAX_TOKENS });
-        sanitizedPatch.llmMaxTokens = llmMaxTokens;
+        if (llmMaxTokens !== undefined) {
+          sanitizedPatch.llmMaxTokens = llmMaxTokens;
+        }
       } catch (error) {
         if (error instanceof IndexingRulesError) {
           throw new IndexingRulesDomainError(

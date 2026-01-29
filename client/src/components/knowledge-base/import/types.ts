@@ -1,7 +1,7 @@
 import type { ComponentType } from "react";
 
 // Типы импорта для базы знаний
-export type ImportMode = "blank" | "archive" | "crawler" | "json_import";
+export type ImportMode = "blank" | "archive" | "crawler" | "json_import" | "unknown";
 
 export type ImportModeOption = {
   value: ImportMode;
