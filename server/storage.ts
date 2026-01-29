@@ -9627,11 +9627,10 @@ export class DatabaseStorage implements IStorage {
         email: newUser.email,
         error: workspaceError instanceof Error ? workspaceError.message : String(workspaceError),
         stack: workspaceError instanceof Error ? workspaceError.stack : undefined,
-        note: "User will be created, but workspace creation will be retried later or user can use resend-confirmation",
+        note: "User created successfully. Workspace creation will be retried on next login.",
       });
-      // Пробрасываем ошибку дальше, чтобы endpoint мог обработать её
-      // и продолжить процесс отправки письма
-      throw workspaceError;
+      // НЕ пробрасываем ошибку — пользователь уже создан
+      // Workspace создастся при следующем логине через ensureWorkspaceContext
     }
     return newUser;
   }

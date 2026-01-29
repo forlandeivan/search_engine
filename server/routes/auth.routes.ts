@@ -497,7 +497,10 @@ authRouter.post('/complete-invite', asyncHandler(async (req, res, next) => {
       phone: '',
       passwordHash,
     });
+    authLogger.info({ userId: newUser.id, email: invitation.email }, 'User created via invitation');
   } catch (createError) {
+    authLogger.error({ error: createError, email: invitation.email }, 'Error creating user via invitation');
+    
     // Check if user was created by race condition
     const existing = await storage.getUserByEmail(invitation.email);
     if (existing) {
@@ -506,11 +509,20 @@ authRouter.post('/complete-invite', asyncHandler(async (req, res, next) => {
         code: 'USER_EXISTS',
       });
     }
+    
     throw createError;
   }
 
   // Confirm email (invitation confirms email ownership)
-  await storage.confirmUserEmail(newUser.id);
+  const confirmedUser = await storage.confirmUserEmail(newUser.id);
+  if (!confirmedUser) {
+    authLogger.error({ userId: newUser.id }, 'Failed to confirm user email after creation');
+    return res.status(500).json({
+      message: 'Не удалось подтвердить email',
+      code: 'EMAIL_CONFIRMATION_FAILED',
+    });
+  }
+  authLogger.info({ userId: newUser.id, email: invitation.email }, 'User email confirmed via invitation');
 
   // Accept invitation
   try {
