@@ -1257,7 +1257,7 @@ export const insertUserSchema = createInsertSchema(users).omit({
   yandexEmailVerified: true,
 });
 
-export const embeddingProviderTypes = ["gigachat", "custom"] as const;
+export const embeddingProviderTypes = ["gigachat", "custom", "unica"] as const;
 export type EmbeddingProviderType = (typeof embeddingProviderTypes)[number];
 
 export const llmProviderTypes = ["gigachat", "custom", "aitunnel", "unica"] as const;
@@ -1364,6 +1364,21 @@ export const DEFAULT_EMBEDDING_RESPONSE_CONFIG: EmbeddingResponseConfig = {
 export const DEFAULT_QDRANT_CONFIG: QdrantIntegrationConfig = {
   payloadFields: {},
   upsertMode: "replace",
+};
+
+export const UNICA_EMBEDDING_REQUEST_CONFIG: EmbeddingRequestConfig = {
+  inputField: "input",
+  modelField: "model",
+  additionalBodyFields: {
+    workSpaceId: "GENERAL",
+    truncate: true,
+  },
+};
+
+export const UNICA_EMBEDDING_RESPONSE_CONFIG: EmbeddingResponseConfig = {
+  vectorPath: "vectors[0]",
+  usageTokensPath: "meta.metrics.inputTokens",
+  rawVectorType: "float32",
 };
 
 export const DEFAULT_LLM_REQUEST_CONFIG = {
@@ -2315,7 +2330,8 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
     tokenUrl: z
       .string()
       .trim()
-      .url("Некорректный URL для получения Access Token"),
+      .url("Некорректный URL для получения Access Token")
+      .or(z.literal("")),
     embeddingsUrl: z
       .string()
       .trim()
@@ -2343,7 +2359,31 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
       .any()
       .optional()
       .transform(() => ({ ...DEFAULT_QDRANT_CONFIG } as QdrantIntegrationConfig)),
-  });
+  })
+  .refine(
+    (data) => {
+      if (data.providerType === "unica") {
+        return true;
+      }
+      return data.tokenUrl && data.tokenUrl.trim().length > 0;
+    },
+    {
+      message: "Укажите URL для получения токена",
+      path: ["tokenUrl"],
+    },
+  )
+  .refine(
+    (data) => {
+      if (data.providerType === "unica") {
+        return true;
+      }
+      return data.scope && data.scope.trim().length > 0;
+    },
+    {
+      message: "Укажите OAuth scope",
+      path: ["scope"],
+    },
+  );
 
 export const updateEmbeddingProviderSchema = z
   .object({

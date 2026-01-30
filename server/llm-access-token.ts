@@ -24,9 +24,14 @@ const OAUTH_TOKEN_EXPIRY_SAFETY_MS = 10_000;
  * Определяет, требуется ли аутентификация для провайдера.
  * Проверяет тип провайдера и наличие валидного tokenUrl.
  */
-function requiresAuthentication(provider: OAuthProviderConfig & Partial<LlmProvider>): boolean {
+function requiresAuthentication(provider: OAuthProviderConfig & Partial<LlmProvider | EmbeddingProvider>): boolean {
   // AITunnel использует API-ключ без OAuth
   if (provider.providerType === "aitunnel") {
+    return false;
+  }
+
+  // Unica AI (эмбеддинги) использует API-ключ без OAuth
+  if ((provider as Partial<EmbeddingProvider>).providerType === "unica") {
     return false;
   }
 
@@ -62,6 +67,11 @@ function buildOAuthCacheKey(provider: OAuthProviderConfig): string {
 export async function fetchAccessToken(provider: OAuthProviderConfig): Promise<string> {
   // AITunnel использует API-ключ без OAuth.
   if ((provider as Partial<LlmProvider>).providerType === "aitunnel") {
+    return provider.authorizationKey.trim();
+  }
+
+  // Unica AI (эмбеддинги) использует API-ключ без OAuth.
+  if ((provider as Partial<EmbeddingProvider>).providerType === "unica") {
     return provider.authorizationKey.trim();
   }
 
@@ -226,8 +236,9 @@ export function clearAccessTokenCache() {
  * Используется при ошибках аутентификации для принудительного обновления токена
  */
 export function clearProviderAccessTokenCache(provider: OAuthProviderConfig): void {
-  // AITunnel использует API-ключ без OAuth, кеш не нужен
-  if ((provider as Partial<LlmProvider>).providerType === "aitunnel") {
+  // AITunnel и Unica используют API-ключ без OAuth, кеш не нужен
+  const providerType = (provider as Partial<LlmProvider | EmbeddingProvider>).providerType;
+  if (providerType === "aitunnel" || providerType === "unica") {
     return;
   }
 

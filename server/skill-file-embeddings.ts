@@ -19,6 +19,48 @@ function createEmbeddingRequestBody(model: string, sampleText: string): Record<s
   };
 }
 
+function createUnicaEmbeddingRequestBody(
+  model: string,
+  input: string | string[],
+  options?: {
+    workSpaceId?: string;
+    truncate?: boolean;
+    dimensions?: number;
+  },
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    workSpaceId: options?.workSpaceId ?? "GENERAL",
+    model,
+    input: Array.isArray(input) ? input : [input],
+  };
+
+  if (options?.truncate !== undefined) {
+    body.truncate = options.truncate;
+  }
+
+  if (options?.dimensions !== undefined && options.dimensions > 0) {
+    body.dimensions = options.dimensions;
+  }
+
+  return body;
+}
+
+function ensureNumberArray(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const numbers: number[] = [];
+  for (const item of value) {
+    const n = typeof item === "string" ? parseFloat(item) : item;
+    if (typeof n === "number" && !isNaN(n)) {
+      numbers.push(n);
+    }
+  }
+
+  return numbers.length > 0 ? numbers : undefined;
+}
+
 class EmbeddingError extends Error {
   constructor(message: string, public retryable: boolean) {
     super(message);
@@ -43,7 +85,14 @@ async function callEmbedding(
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const body = createEmbeddingRequestBody(provider.model, text);
+  const body =
+    provider.providerType === "unica"
+      ? createUnicaEmbeddingRequestBody(provider.model, text, {
+          workSpaceId: provider.requestConfig?.additionalBodyFields?.workSpaceId as string,
+          truncate: provider.requestConfig?.additionalBodyFields?.truncate as boolean,
+          dimensions: provider.requestConfig?.additionalBodyFields?.dimensions as number,
+        })
+      : createEmbeddingRequestBody(provider.model, text);
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= EMBEDDING_MAX_RETRIES; attempt++) {
@@ -108,6 +157,27 @@ async function callEmbedding(
       }
 
       throw new EmbeddingError(message, retryable);
+    }
+
+    if (provider.providerType === "unica") {
+      const vectors = (parsed as any)?.vectors;
+      if (!Array.isArray(vectors) || vectors.length === 0) {
+        throw new EmbeddingError("Сервис Unica AI не вернул векторы", false);
+      }
+
+      const vector = ensureNumberArray(vectors[0]);
+      if (!vector) {
+        throw new EmbeddingError("Сервис Unica AI вернул пустой вектор", false);
+      }
+
+      const meta = (parsed as any)?.meta;
+      const metrics = meta?.metrics;
+      const usageTokens = typeof metrics?.inputTokens === "number" ? metrics.inputTokens : null;
+
+      return {
+        vector,
+        usageTokens,
+      };
     }
 
     const data = parsed?.data;

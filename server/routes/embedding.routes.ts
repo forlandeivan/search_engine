@@ -16,7 +16,8 @@ import { asyncHandler } from '../middleware/async-handler';
 import { fetchAccessToken } from '../llm-access-token';
 import { listModels } from '../model-service';
 import { storage } from '../storage';
-import type { PublicUser, EmbeddingProvider, PublicEmbeddingProvider } from '@shared/schema';
+import type { PublicUser, EmbeddingProvider, PublicEmbeddingProvider, EmbeddingProviderType } from '@shared/schema';
+import { embeddingProviderTypes } from '@shared/schema';
 
 const logger = createLogger('embedding');
 
@@ -181,14 +182,34 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
   if (!user) return;
 
   const testSchema = z.object({
-    tokenUrl: z.string().trim().url("Некорректный URL для получения токена"),
+    providerType: z.enum(embeddingProviderTypes).default("gigachat"),
+    tokenUrl: z.string().trim().url("Некорректный URL для получения токена").or(z.literal("")),
     embeddingsUrl: z.string().trim().url("Некорректный URL сервиса эмбеддингов"),
     authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
-    scope: z.string().trim().min(1, "Укажите OAuth scope"),
+    scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")),
     model: z.string().trim().min(1, "Укажите модель эмбеддингов"),
     allowSelfSignedCertificate: z.boolean().default(false),
     requestHeaders: z.record(z.string(), z.string()).default({}),
-  });
+    workSpaceId: z.string().trim().optional(),
+    truncate: z.boolean().optional(),
+    dimensions: z.number().int().positive().optional(),
+  }).refine(
+    (data) => {
+      if (data.providerType === "unica") {
+        return true;
+      }
+      return data.tokenUrl && data.tokenUrl.trim().length > 0;
+    },
+    { message: "Укажите URL для получения токена", path: ["tokenUrl"] }
+  ).refine(
+    (data) => {
+      if (data.providerType === "unica") {
+        return true;
+      }
+      return data.scope && data.scope.trim().length > 0;
+    },
+    { message: "Укажите OAuth scope", path: ["scope"] }
+  );
 
   const payload = testSchema.parse(req.body);
   const TEST_EMBEDDING_TEXT = "привет!";
@@ -201,39 +222,54 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
 
   try {
     // Step 1: Fetch access token
-    steps.push({ stage: 'token-request', status: 'success' });
-    const provider: EmbeddingProvider = {
-      id: 'test',
-      name: 'Test Provider',
-      providerType: 'custom',
-      tokenUrl: payload.tokenUrl,
-      embeddingsUrl: payload.embeddingsUrl,
-      authorizationKey: payload.authorizationKey,
-      scope: payload.scope,
-      model: payload.model,
-      allowSelfSignedCertificate: payload.allowSelfSignedCertificate,
-      requestHeaders: payload.requestHeaders,
-      isActive: true,
-      workspaceId: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
     let accessToken: string;
-    try {
-      accessToken = await fetchAccessToken(provider);
-      steps.push({ stage: 'token-received', status: 'success' });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      steps.push({ stage: 'token-received', status: 'error', detail: message });
-      return res.status(400).json({
-        message: 'Не удалось получить токен доступа',
-        steps,
+
+    if (payload.providerType === "unica") {
+      accessToken = payload.authorizationKey;
+      steps.push({
+        stage: "token-request",
+        status: "success",
+        detail: "API-ключ используется напрямую (без OAuth)",
       });
+      steps.push({
+        stage: "token-received",
+        status: "success",
+        detail: "OAuth не требуется для Unica AI",
+      });
+    } else {
+      steps.push({ stage: "token-request", status: "success" });
+      const provider: EmbeddingProvider = {
+        id: "test",
+        name: "Test Provider",
+        providerType: payload.providerType as EmbeddingProviderType,
+        tokenUrl: payload.tokenUrl,
+        embeddingsUrl: payload.embeddingsUrl,
+        authorizationKey: payload.authorizationKey,
+        scope: payload.scope,
+        model: payload.model,
+        allowSelfSignedCertificate: payload.allowSelfSignedCertificate,
+        requestHeaders: payload.requestHeaders,
+        isActive: true,
+        workspaceId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      try {
+        accessToken = await fetchAccessToken(provider);
+        steps.push({ stage: "token-received", status: "success" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        steps.push({ stage: "token-received", status: "error", detail: message });
+        return res.status(400).json({
+          message: "Не удалось получить токен доступа",
+          steps,
+        });
+      }
     }
 
     // Step 2: Test embedding request
-    steps.push({ stage: 'embedding-request', status: 'success' });
+    steps.push({ stage: "embedding-request", status: "success" });
     const embeddingHeaders = new Headers();
     embeddingHeaders.set("Content-Type", "application/json");
     embeddingHeaders.set("Accept", "application/json");
@@ -246,11 +282,20 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
       embeddingHeaders.set("Authorization", `Bearer ${accessToken}`);
     }
 
-    const embeddingBody = {
-      model: payload.model,
-      input: [TEST_EMBEDDING_TEXT],
-      encoding_format: "float",
-    };
+    const embeddingBody =
+      payload.providerType === "unica"
+        ? {
+            workSpaceId: payload.workSpaceId ?? "GENERAL",
+            model: payload.model,
+            input: [TEST_EMBEDDING_TEXT],
+            truncate: payload.truncate ?? true,
+            ...(payload.dimensions ? { dimensions: payload.dimensions } : {}),
+          }
+        : {
+            model: payload.model,
+            input: [TEST_EMBEDDING_TEXT],
+            encoding_format: "float",
+          };
 
     try {
       const fetchOptions: RequestInit = {
@@ -277,44 +322,78 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
             message = body.message;
           }
         }
-        steps.push({ stage: 'embedding-received', status: 'error', detail: message });
+        steps.push({ stage: "embedding-received", status: "error", detail: message });
         return res.status(400).json({
-          message: 'Не удалось получить вектор эмбеддингов',
+          message: "Не удалось получить вектор эмбеддингов",
           steps,
         });
       }
 
-      const data = parsedBody.data;
-      if (!Array.isArray(data) || data.length === 0) {
-        steps.push({ stage: 'embedding-received', status: 'error', detail: 'Сервис не вернул данные' });
-        return res.status(400).json({
-          message: 'Сервис эмбеддингов не вернул данные',
-          steps,
-        });
+      let vector: number[] | undefined;
+      let usageTokens: number | undefined;
+
+      if (payload.providerType === "unica") {
+        const vectors = (parsedBody as any)?.vectors;
+        if (!Array.isArray(vectors) || vectors.length === 0) {
+          steps.push({
+            stage: "embedding-received",
+            status: "error",
+            detail: "Сервис Unica AI не вернул векторы",
+          });
+          return res.status(400).json({
+            message: "Сервис Unica AI не вернул векторы",
+            steps,
+          });
+        }
+        vector = vectors[0];
+        const meta = (parsedBody as any)?.meta;
+        const metrics = meta?.metrics;
+        if (typeof metrics?.inputTokens === "number") {
+          usageTokens = metrics.inputTokens;
+        }
+      } else {
+        const data = parsedBody.data;
+        if (!Array.isArray(data) || data.length === 0) {
+          steps.push({ stage: "embedding-received", status: "error", detail: "Сервис не вернул данные" });
+          return res.status(400).json({
+            message: "Сервис эмбеддингов не вернул данные",
+            steps,
+          });
+        }
+
+        const firstEntry = data[0];
+        const entryRecord = firstEntry as Record<string, unknown>;
+        vector = (entryRecord.embedding ?? entryRecord.vector) as number[];
+
+        const usage = parsedBody.usage as Record<string, unknown> | undefined;
+        if (typeof usage?.total_tokens === "number") {
+          usageTokens = usage.total_tokens;
+        }
       }
 
-      const firstEntry = data[0];
-      const entryRecord = firstEntry as Record<string, unknown>;
-      const vector = entryRecord.embedding ?? entryRecord.vector;
-      
       if (!Array.isArray(vector) || vector.length === 0) {
-        steps.push({ stage: 'embedding-received', status: 'error', detail: 'Сервис не вернул числовой вектор' });
+        steps.push({
+          stage: "embedding-received",
+          status: "error",
+          detail: "Сервис не вернул числовой вектор",
+        });
         return res.status(400).json({
-          message: 'Сервис эмбеддингов не вернул числовой вектор',
+          message: "Сервис эмбеддингов не вернул числовой вектор",
           steps,
         });
       }
 
       steps.push({
-        stage: 'embedding-received',
-        status: 'success',
-        detail: `Получен вектор размерностью ${vector.length}`,
+        stage: "embedding-received",
+        status: "success",
+        detail: `Получен вектор размерностью ${vector.length}${usageTokens ? `, токенов: ${usageTokens}` : ""}`,
       });
 
       res.json({
-        message: 'Авторизация подтверждена',
+        message: "Авторизация подтверждена",
         steps,
         vectorSize: vector.length,
+        usageTokens,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

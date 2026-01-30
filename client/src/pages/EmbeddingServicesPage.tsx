@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Copy,
   Trash2,
+  Info,
 } from "lucide-react";
 
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -46,6 +47,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import {
   embeddingProviderTypes,
@@ -166,6 +168,18 @@ const embeddingTemplates: Record<EmbeddingProviderType, Partial<FormValues>> = {
     isActive: true,
     isGlobal: true,
   },
+  unica: {
+    providerType: "unica",
+    name: "Unica AI Embeddings",
+    description: "Эмбеддинги через Unica AI API (модель bge-m3)",
+    isActive: true,
+    isGlobal: true,
+    tokenUrl: "",
+    embeddingsUrl: "",
+    scope: "",
+    model: "bge-m3",
+    maxTokensPerVectorization: "4096",
+  },
 };
 
 const buildTemplateValues = (type: EmbeddingProviderType = "gigachat"): FormValues => {
@@ -254,6 +268,7 @@ export default function EmbeddingServicesPage() {
   const [activeTab, setActiveTab] = useState<"settings" | "docs">("settings");
   const watchedProviderType = form.watch("providerType");
   const isGigachatProvider = watchedProviderType === "gigachat";
+  const isUnicaProvider = watchedProviderType === "unica";
   const isCreating = selectedProviderId === "new";
 
   const providersQuery = useQuery<ProvidersResponse>({
@@ -547,6 +562,12 @@ export default function EmbeddingServicesPage() {
     > &
       UpdateEmbeddingProvider;
 
+    // Для unica провайдера tokenUrl и scope могут быть пустыми
+    if (values.providerType === "unica") {
+      if (!payloadBase.tokenUrl) payloadBase.tokenUrl = "";
+      if (!payloadBase.scope) payloadBase.scope = "";
+    }
+
     const formattedRequestHeaders = formatJson(requestHeaders);
 
     if (mode === "create") {
@@ -636,13 +657,14 @@ export default function EmbeddingServicesPage() {
       form.clearErrors();
 
       const values = form.getValues();
+      const providerType = values.providerType;
       const tokenUrl = values.tokenUrl.trim();
       const embeddingsUrl = values.embeddingsUrl.trim();
       const authorizationKey = values.authorizationKey.trim();
       const scope = values.scope.trim();
       const model = values.model.trim();
 
-      if (!tokenUrl) {
+      if (providerType !== "unica" && !tokenUrl) {
         const message = "Укажите endpoint для получения токена";
         form.setError("tokenUrl", { type: "manual", message });
         throw new Error(message);
@@ -655,12 +677,12 @@ export default function EmbeddingServicesPage() {
       }
 
       if (!authorizationKey) {
-        const message = "Укажите Authorization key";
+        const message = isUnicaProvider ? "Укажите API ключ" : "Укажите Authorization key";
         form.setError("authorizationKey", { type: "manual", message });
         throw new Error(message);
       }
 
-      if (!scope) {
+      if (providerType !== "unica" && !scope) {
         const message = "Укажите OAuth scope";
         form.setError("scope", { type: "manual", message });
         throw new Error(message);
@@ -695,6 +717,7 @@ export default function EmbeddingServicesPage() {
           },
           credentials: "include",
           body: JSON.stringify({
+            providerType,
             tokenUrl,
             embeddingsUrl,
             authorizationKey,
@@ -819,7 +842,7 @@ export default function EmbeddingServicesPage() {
                   <SelectContent>
                     {embeddingProviderTypes.map((type) => (
                       <SelectItem key={type} value={type}>
-                        {type === "gigachat" ? "GigaChat" : type}
+                        {type === "gigachat" ? "GigaChat" : type === "unica" ? "Unica AI" : type}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -899,24 +922,26 @@ export default function EmbeddingServicesPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <FormField
-          control={form.control}
-          name="tokenUrl"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Endpoint для Access Token</FormLabel>
-              <FormControl>
-                <Input {...field} placeholder="https://ngw.devices.sberbank.ru:9443/api/v2/oauth" required />
-              </FormControl>
-              <FormDescription>
-                {isGigachatProvider
-                  ? "Сервис GigaChat требует предварительный запрос для получения токена доступа."
-                  : "Введите endpoint OAuth-сервера, который возвращает access token."}
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        {!isUnicaProvider && (
+          <FormField
+            control={form.control}
+            name="tokenUrl"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Endpoint для Access Token</FormLabel>
+                <FormControl>
+                  <Input {...field} placeholder="https://ngw.devices.sberbank.ru:9443/api/v2/oauth" required />
+                </FormControl>
+                <FormDescription>
+                  {isGigachatProvider
+                    ? "Сервис GigaChat требует предварительный запрос для получения токена доступа."
+                    : "Введите endpoint OAuth-сервера, который возвращает access token."}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
 
         <FormField
           control={form.control}
@@ -939,13 +964,13 @@ export default function EmbeddingServicesPage() {
         name="authorizationKey"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Authorization key</FormLabel>
+            <FormLabel>{isUnicaProvider ? "API ключ" : "Authorization key"}</FormLabel>
             <FormControl>
               <div className="relative">
                 <Input
                   {...field}
                   type={isAuthorizationVisible ? "text" : "password"}
-                  placeholder="Значение заголовка Authorization"
+                  placeholder={isUnicaProvider ? "Введите API ключ Unica AI" : "Значение заголовка Authorization"}
                   autoComplete="new-password"
                   className="pr-10"
                 />
@@ -955,14 +980,16 @@ export default function EmbeddingServicesPage() {
                   variant="ghost"
                   className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
                   onClick={() => setIsAuthorizationVisible((previous) => !previous)}
-                  aria-label={isAuthorizationVisible ? "Скрыть Authorization key" : "Показать Authorization key"}
+                  aria-label={isAuthorizationVisible ? (isUnicaProvider ? "Скрыть API ключ" : "Скрыть Authorization key") : (isUnicaProvider ? "Показать API ключ" : "Показать Authorization key")}
                 >
                   {isAuthorizationVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
             </FormControl>
             <FormDescription>
-              {isGigachatProvider ? (
+              {isUnicaProvider ? (
+                "API ключ для авторизации запросов к Unica AI."
+              ) : isGigachatProvider ? (
                 <>
                   Скопируйте готовый ключ из личного кабинета GigaChat (формат <code>Basic &lt;token&gt;</code>).
                 </>
@@ -1345,6 +1372,17 @@ export default function EmbeddingServicesPage() {
           </CardHeader>
           <CardContent>
             <Form {...form}>
+              {isUnicaProvider && (
+                <Alert className="mb-6">
+                  <Info className="h-4 w-4" />
+                  <AlertTitle>Unica AI Embeddings</AlertTitle>
+                  <AlertDescription>
+                    Unica AI использует API-ключ для авторизации (без OAuth). 
+                    Укажите URL эндпоинта эмбеддингов и API-ключ.
+                    Модель по умолчанию: <code className="text-sm">bge-m3</code>.
+                  </AlertDescription>
+                </Alert>
+              )}
               {isCreating ? (
                 settingsFormContent
               ) : !selectedProvider ? (

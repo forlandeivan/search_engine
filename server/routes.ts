@@ -2115,6 +2115,32 @@ function createEmbeddingRequestBody(model: string, sampleText: string): Record<s
   };
 }
 
+function createUnicaEmbeddingRequestBody(
+  model: string,
+  input: string | string[],
+  options?: {
+    workSpaceId?: string;
+    truncate?: boolean;
+    dimensions?: number;
+  },
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    workSpaceId: options?.workSpaceId ?? "GENERAL",
+    model,
+    input: Array.isArray(input) ? input : [input],
+  };
+
+  if (options?.truncate !== undefined) {
+    body.truncate = options.truncate;
+  }
+
+  if (options?.dimensions !== undefined && options.dimensions > 0) {
+    body.dimensions = options.dimensions;
+  }
+
+  return body;
+}
+
 function parsePositiveInteger(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     if (value <= 0) {
@@ -2399,6 +2425,63 @@ function extractEmbeddingResponse(parsedBody: unknown) {
   return { vector, usageTokens, embeddingId };
 }
 
+function extractUnicaEmbeddingResponse(parsedBody: unknown): {
+  vector: number[];
+  vectors: number[][];
+  usageTokens?: number;
+  dimensions?: number;
+} {
+  if (!parsedBody || typeof parsedBody !== "object") {
+    throw new Error("Не удалось разобрать ответ сервиса Unica AI");
+  }
+
+  const body = parsedBody as Record<string, unknown>;
+  const vectors = body.vectors;
+
+  if (!Array.isArray(vectors) || vectors.length === 0) {
+    throw new Error("Сервис Unica AI не вернул векторы (поле 'vectors' пустое или отсутствует)");
+  }
+
+  const firstVector = vectors[0];
+  const vector = ensureNumberArray(firstVector);
+
+  if (!vector || vector.length === 0) {
+    throw new Error("Сервис Unica AI не вернул числовой вектор");
+  }
+
+  // Парсинг токенов из meta.metrics.inputTokens
+  let usageTokens: number | undefined;
+  let dimensions: number | undefined;
+
+  const meta = body.meta as Record<string, unknown> | undefined;
+  if (meta) {
+    // Размерность вектора
+    if (typeof meta.dimensions === "number" && Number.isFinite(meta.dimensions)) {
+      dimensions = meta.dimensions;
+    }
+
+    // Токены использования
+    const metrics = meta.metrics as Record<string, unknown> | undefined;
+    if (metrics) {
+      const inputTokens = metrics.inputTokens;
+      if (typeof inputTokens === "number" && Number.isFinite(inputTokens)) {
+        usageTokens = inputTokens;
+      }
+    }
+  }
+
+  // Преобразуем все векторы в массивы чисел
+  const allVectors = vectors.map((v, index) => {
+    const arr = ensureNumberArray(v);
+    if (!arr || arr.length === 0) {
+      throw new Error(`Вектор #${index + 1} не является массивом чисел`);
+    }
+    return arr;
+  });
+
+  return { vector, vectors: allVectors, usageTokens, dimensions };
+}
+
 function sanitizeCollectionName(source: string): string {
   const normalized = source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
   return normalized.length > 0 ? normalized.slice(0, 60) : "default";
@@ -2596,7 +2679,14 @@ async function fetchEmbeddingVector(
     embeddingHeaders.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const embeddingBody = createEmbeddingRequestBody(provider.model, text);
+  const embeddingBody =
+    provider.providerType === "unica"
+      ? createUnicaEmbeddingRequestBody(provider.model, text, {
+          workSpaceId: provider.requestConfig?.additionalBodyFields?.workSpaceId as string,
+          truncate: provider.requestConfig?.additionalBodyFields?.truncate as boolean,
+          dimensions: provider.requestConfig?.additionalBodyFields?.dimensions as number,
+        })
+      : createEmbeddingRequestBody(provider.model, text);
   const sanitizedHeaders = sanitizeHeadersForLog(embeddingHeaders);
 
   options?.onBeforeRequest?.({
@@ -2659,7 +2749,13 @@ async function fetchEmbeddingVector(
       throw new Error(`Ошибка на этапе получения вектора: ${message}`);
     }
 
-    const { vector, usageTokens, embeddingId } = extractEmbeddingResponse(parsedBody);
+    const extracted =
+      provider.providerType === "unica"
+        ? extractUnicaEmbeddingResponse(parsedBody)
+        : extractEmbeddingResponse(parsedBody);
+
+    const { vector, usageTokens } = extracted;
+    const embeddingId = "embeddingId" in extracted ? (extracted as any).embeddingId : undefined;
 
     return {
       vector,
