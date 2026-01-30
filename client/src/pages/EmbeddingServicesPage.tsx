@@ -1,5 +1,5 @@
 import { MouseEvent, useEffect, useMemo, useState } from "react";
-import { useForm, type FieldPath } from "react-hook-form";
+import { useForm, useFieldArray, type FieldPath } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -134,6 +134,7 @@ type FormValues = {
   authorizationKey: string;
   scope: string;
   model: string;
+  availableModels: { label: string; value: string }[];
   maxTokensPerVectorization: string;
   allowSelfSignedCertificate: boolean;
   requestHeaders: string;
@@ -150,10 +151,15 @@ const emptyFormValues: FormValues = {
   authorizationKey: "",
   scope: "",
   model: "",
+  availableModels: [],
   maxTokensPerVectorization: "",
   allowSelfSignedCertificate: false,
   requestHeaders: formatJson(defaultRequestHeaders),
 };
+
+const gigachatModelOptions = [
+  { label: "GigaChat Embeddings", value: "embeddings" }
+];
 
 const embeddingTemplates: Record<EmbeddingProviderType, Partial<FormValues>> = {
   gigachat: {
@@ -166,11 +172,13 @@ const embeddingTemplates: Record<EmbeddingProviderType, Partial<FormValues>> = {
     embeddingsUrl: "https://gigachat.devices.sberbank.ru/api/v1/embeddings",
     scope: "GIGACHAT_API_PERS",
     model: "embeddings",
+    availableModels: [...gigachatModelOptions],
   },
   custom: {
     providerType: "custom",
     isActive: true,
     isGlobal: true,
+    availableModels: [],
   },
   unica: {
     providerType: "unica",
@@ -183,6 +191,7 @@ const embeddingTemplates: Record<EmbeddingProviderType, Partial<FormValues>> = {
     scope: "",
     model: "bge-m3",
     maxTokensPerVectorization: "4096",
+    availableModels: [{ label: "BGE-M3", value: "bge-m3" }],
   },
 };
 
@@ -245,27 +254,34 @@ const buildDebugSteps = (
   });
 };
 
-const mapProviderToFormValues = (provider: PublicEmbeddingProvider): FormValues => ({
-  providerType: provider.providerType,
-  name: provider.name,
-  description: provider.description ?? "",
-  isActive: provider.isActive,
-  isGlobal: provider.isGlobal ?? false,
-  tokenUrl: provider.tokenUrl,
-  embeddingsUrl: provider.embeddingsUrl,
-  authorizationKey: "",
-  scope: provider.scope,
-  model: provider.model,
-  maxTokensPerVectorization: provider.maxTokensPerVectorization
-    ? String(provider.maxTokensPerVectorization)
-    : "",
-  allowSelfSignedCertificate: provider.allowSelfSignedCertificate ?? false,
-  requestHeaders: formatJson(provider.requestHeaders ?? defaultRequestHeaders),
-});
+const mapProviderToFormValues = (provider: PublicEmbeddingProvider): FormValues => {
+  const availableModels =
+    Array.isArray(provider.availableModels) && provider.availableModels.length >= 0
+      ? provider.availableModels
+      : [];
+
+  return {
+    providerType: provider.providerType,
+    name: provider.name,
+    description: provider.description ?? "",
+    isActive: provider.isActive,
+    isGlobal: provider.isGlobal ?? false,
+    tokenUrl: provider.tokenUrl,
+    embeddingsUrl: provider.embeddingsUrl,
+    authorizationKey: "",
+    scope: provider.scope,
+    model: provider.model,
+    availableModels,
+    maxTokensPerVectorization: provider.maxTokensPerVectorization ? String(provider.maxTokensPerVectorization) : "",
+    allowSelfSignedCertificate: provider.allowSelfSignedCertificate ?? false,
+    requestHeaders: formatJson(provider.requestHeaders ?? defaultRequestHeaders),
+  };
+};
 
 export default function EmbeddingServicesPage() {
   const { toast } = useToast();
   const form = useForm<FormValues>({ defaultValues: emptyFormValues });
+  const modelsArray = useFieldArray({ control: form.control, name: "availableModels" });
   const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState<string | "new" | null>(null);
   const [debugSteps, setDebugSteps] = useState<DebugStep[]>(() => buildDebugSteps());
@@ -286,6 +302,16 @@ export default function EmbeddingServicesPage() {
   const catalogEmbModels = catalogQuery.data ?? [];
   const catalogByKey = useMemo(() => new Map(catalogEmbModels.map((m) => [m.key, m])), [catalogEmbModels]);
 
+  const providerCatalogOptions = useMemo(() => {
+    if (!selectedProviderId || selectedProviderId === "new") return [];
+    return catalogEmbModels
+      .filter((m) => m.providerId === selectedProviderId)
+      .map((m) => ({
+        label: m.displayName,
+        value: m.key,
+      }));
+  }, [catalogEmbModels, selectedProviderId]);
+
   const selectedProvider = useMemo(
     () =>
       selectedProviderId && selectedProviderId !== "new"
@@ -303,7 +329,9 @@ export default function EmbeddingServicesPage() {
     if (providers.length === 0) {
       if (selectedProviderId !== "new") {
         setSelectedProviderId("new");
-        form.reset(buildTemplateValues());
+        const templateValues = buildTemplateValues();
+        form.reset(templateValues);
+        modelsArray.replace(templateValues.availableModels ?? []);
       }
       return;
     }
@@ -321,7 +349,9 @@ export default function EmbeddingServicesPage() {
 
   useEffect(() => {
     if (selectedProvider) {
-      form.reset(mapProviderToFormValues(selectedProvider));
+      const values = mapProviderToFormValues(selectedProvider);
+      form.reset(values);
+      modelsArray.replace(values.availableModels ?? []);
       setIsAuthorizationVisible(false);
       setDebugSteps(buildDebugSteps());
       setActiveTab("settings");
@@ -336,10 +366,11 @@ export default function EmbeddingServicesPage() {
     }
 
     form.reset(emptyFormValues);
+    modelsArray.replace([]);
     setIsAuthorizationVisible(false);
     setDebugSteps(buildDebugSteps());
     setActiveTab("settings");
-  }, [selectedProvider, form, isCreating]);
+  }, [selectedProvider, form, isCreating, modelsArray]);
 
   const updateProviderMutation = useMutation<
     { provider: PublicEmbeddingProvider },
@@ -356,6 +387,7 @@ export default function EmbeddingServicesPage() {
     },
     onSuccess: ({ provider }, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/embedding/services"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/models"] });
       toast({
         title: "Изменения сохранены",
         description: "Настройки сервиса эмбеддингов обновлены.",
@@ -367,6 +399,7 @@ export default function EmbeddingServicesPage() {
       } satisfies FormValues;
 
       form.reset(updatedValues);
+      modelsArray.replace(updatedValues.availableModels ?? []);
       setIsAuthorizationVisible(false);
     },
     onError: (error) => {
@@ -399,6 +432,7 @@ export default function EmbeddingServicesPage() {
     },
     onSuccess: ({ provider }, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/embedding/services"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/models"] });
       queryClient.setQueryData<ProvidersResponse>(["/api/embedding/services"], (previous) => {
         if (!previous) {
           return { providers: [provider] } satisfies ProvidersResponse;
@@ -424,6 +458,7 @@ export default function EmbeddingServicesPage() {
 
       setSelectedProviderId(provider.id);
       form.reset(updatedValues);
+      modelsArray.replace(updatedValues.availableModels ?? []);
       setIsAuthorizationVisible(false);
     },
     onError: (error) => {
@@ -523,13 +558,16 @@ export default function EmbeddingServicesPage() {
     const trimmedModel = values.model.trim();
 
     if (!trimmedModel) {
-      const message = "Укажите модель из каталога (ключ)";
+      const message = "Укажите модель";
       form.setError("model", { type: "manual", message });
       throw new Error(message);
     }
 
-    if (!catalogByKey.has(trimmedModel)) {
-      const message = "Модель не найдена в каталоге";
+    const isInCatalog = catalogByKey.has(trimmedModel);
+    const isInAvailable = values.availableModels?.some((m) => m.value === trimmedModel);
+
+    if (!isInCatalog && !isInAvailable) {
+      const message = "Модель не найдена в каталоге и списке доступных моделей";
       form.setError("model", { type: "manual", message });
       throw new Error(message);
     }
@@ -558,6 +596,10 @@ export default function EmbeddingServicesPage() {
       embeddingsUrl: values.embeddingsUrl.trim(),
       scope: values.scope.trim(),
       model: trimmedModel,
+      availableModels: (values.availableModels ?? []).map((m) => ({
+        label: m.label.trim(),
+        value: m.value.trim(),
+      })),
       maxTokensPerVectorization: parsedMaxTokens,
       allowSelfSignedCertificate: values.allowSelfSignedCertificate,
       requestHeaders,
@@ -808,6 +850,7 @@ export default function EmbeddingServicesPage() {
 
     setSelectedProviderId("new");
     form.reset(templateValues);
+    modelsArray.replace(templateValues.availableModels ?? []);
     setIsAuthorizationVisible(false);
     setDebugSteps(buildDebugSteps());
     setActiveTab("settings");
@@ -820,6 +863,7 @@ export default function EmbeddingServicesPage() {
     if (isCreating) {
       const templateValues = buildTemplateValues(type);
       form.reset(templateValues);
+      modelsArray.replace(templateValues.availableModels ?? []);
     }
   };
 
@@ -1177,15 +1221,108 @@ export default function EmbeddingServicesPage() {
           name="model"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Модель эмбеддингов</FormLabel>
+              <FormLabel>Модель по умолчанию</FormLabel>
               <FormControl>
-                <Input {...field} placeholder="embeddings" required />
+                {providerCatalogOptions.length > 0 || modelsArray.fields.length > 0 ? (
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите модель" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {providerCatalogOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                      {/* Также показываем модели из локального списка, которых нет в каталоге */}
+                      {modelsArray.fields
+                        .filter((m) => !providerCatalogOptions.some((opt) => opt.value === m.value))
+                        .map((m, index) => (
+                          <SelectItem key={m.value || index} value={m.value}>
+                            {m.label || m.value} (не в каталоге)
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="flex gap-2">
+                    <Input {...field} placeholder="Например, bge-m3" required />
+                  </div>
+                )}
               </FormControl>
-              <FormDescription>Посмотрите актуальные названия моделей в документации провайдера.</FormDescription>
+              <FormDescription>
+                {providerCatalogOptions.length > 0
+                  ? "Выберите модель из каталога для этого провайдера."
+                  : "Введите идентификатор модели. Рекомендуется сперва добавить модели в список ниже."}
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
         />
+
+        <div className="md:col-span-2 space-y-3 mt-4">
+          <div className="flex items-center justify-between">
+            <FormLabel>Список доступных моделей</FormLabel>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-2"
+              onClick={() => modelsArray.append({ label: "", value: "" })}
+            >
+              <Sparkles className="h-3.5 w-3.5" /> Добавить модель
+            </Button>
+          </div>
+          <FormDescription>
+            Эти модели будут автоматически добавлены в общий каталог и привязаны к этому провайдеру.
+          </FormDescription>
+          <div className="space-y-3">
+            {modelsArray.fields.map((modelField, index) => (
+              <div key={modelField.id} className="grid gap-2 md:grid-cols-[minmax(0,1.fr)_minmax(0,1fr)_auto] items-start">
+                <FormField
+                  control={form.control}
+                  name={`availableModels.${index}.label`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-[10px] uppercase text-muted-foreground">Название (для UI)</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Например, BGE-M3" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name={`availableModels.${index}.value`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-[10px] uppercase text-muted-foreground">Ключ (ID модели)</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Например, bge-m3" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="mt-7 h-9 w-9 text-muted-foreground hover:text-destructive"
+                  onClick={() => modelsArray.remove(index)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            {modelsArray.fields.length === 0 && (
+              <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                Список моделей пуст. Добавьте хотя бы одну модель для корректной работы.
+              </div>
+            )}
+          </div>
+        </div>
 
         <FormField
           control={form.control}
@@ -1386,6 +1523,24 @@ export default function EmbeddingServicesPage() {
                           OAuth: {provider.tokenUrl}
                         </Badge>
                       </div>
+                      {provider.availableModels && provider.availableModels.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {provider.availableModels.slice(0, 4).map((model: { label: string; value: string }) => (
+                            <Badge
+                              key={`${provider.id}-${model.value}`}
+                              variant="secondary"
+                              className="text-[11px] font-normal"
+                            >
+                              {model.label}
+                            </Badge>
+                          ))}
+                          {provider.availableModels.length > 4 && (
+                            <Badge variant="secondary" className="text-[11px] font-normal">
+                              +{provider.availableModels.length - 4}
+                            </Badge>
+                          )}
+                        </div>
+                      )}
                       <div className="mt-3 flex flex-wrap gap-1.5">
                         <Badge
                           variant="outline"

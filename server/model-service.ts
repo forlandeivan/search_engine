@@ -446,23 +446,54 @@ export async function syncModelsWithLlmProvider(
 }
 
 export async function syncModelsWithEmbeddingProvider(
-  provider: Pick<EmbeddingProvider, "id" | "providerType" | "model" | "name" | "isActive">,
+  provider: Pick<EmbeddingProvider, "id" | "providerType" | "availableModels" | "model" | "name" | "isActive">,
 ) {
-  const key = provider.model?.trim();
-  if (!key) {
-    console.warn(`[ModelSync] У провайдера эмбеддингов ${provider.name} (${provider.id}) не указана модель`);
+  const availableModels: LlmModelOption[] = sanitizeLlmModelOptions(provider.availableModels);
+  const modelsToSync = new Map<string, string>();
+
+  for (const option of availableModels) {
+    const key = option.value.trim();
+    if (!key) continue;
+    modelsToSync.set(key, option.label?.trim() || key);
+  }
+
+  const defaultModel = provider.model?.trim();
+  if (defaultModel && !modelsToSync.has(defaultModel)) {
+    modelsToSync.set(defaultModel, defaultModel);
+  }
+
+  if (modelsToSync.size === 0) {
+    console.warn(
+      `[ModelSync] У провайдера эмбеддингов ${provider.name} (${provider.id}) нет моделей для синхронизации. Добавьте availableModels или model.`,
+    );
     return;
   }
 
-  await upsertProviderModel({
-    providerId: provider.id,
-    providerType: provider.providerType?.toUpperCase() ?? provider.providerType,
-    modelKey: key,
-    displayName: key,
-    modelType: "EMBEDDINGS",
-    consumptionUnit: "TOKENS_1K",
-    providerIsActive: provider.isActive,
-  });
+  const syncedKeys = new Set<string>();
+  for (const [modelKey, displayName] of modelsToSync.entries()) {
+    await upsertProviderModel({
+      providerId: provider.id,
+      providerType: provider.providerType?.toUpperCase() ?? provider.providerType,
+      modelKey,
+      displayName,
+      modelType: "EMBEDDINGS",
+      consumptionUnit: "TOKENS_1K",
+      providerIsActive: provider.isActive,
+    });
+    syncedKeys.add(modelKey);
+  }
+
+  const existingProviderModels = await db.select().from(models).where(eq(models.providerId, provider.id));
+  for (const existing of existingProviderModels) {
+    const key = existing.providerModelKey ?? "";
+    if (!key) continue;
+    if (!syncedKeys.has(key) && existing.isActive) {
+      await db
+        .update(models)
+        .set({ isActive: false, deletedAt: sql`CURRENT_TIMESTAMP`, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(eq(models.id, existing.id));
+    }
+  }
 }
 
 export async function syncModelsWithSpeechProvider(opts: {

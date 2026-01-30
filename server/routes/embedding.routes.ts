@@ -103,6 +103,10 @@ embeddingRouter.post('/services', asyncHandler(async (req, res) => {
 
   try {
     const provider = await storage.createEmbeddingProvider(req.body);
+    
+    // Sync models with catalog
+    await syncModelsWithEmbeddingProvider(provider);
+    
     res.status(201).json({ provider });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -126,6 +130,9 @@ embeddingRouter.put('/services/:id', asyncHandler(async (req, res) => {
   if (!provider) {
     return res.status(404).json({ message: 'Provider not found' });
   }
+  
+  // Sync models with catalog
+  await syncModelsWithEmbeddingProvider(provider);
   
   res.json({ provider });
 }));

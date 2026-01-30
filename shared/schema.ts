@@ -1470,6 +1470,9 @@ export const embeddingProviders = pgTable("embedding_providers", {
   authorizationKey: text("authorization_key").notNull(),
   scope: text("scope").notNull(),
   model: text("model").notNull(),
+  availableModels: jsonb("available_models")
+    .$type<LlmModelOption[] | null>()
+    .default(sql`'[]'::jsonb`),
   maxTokensPerVectorization: integer("max_tokens_per_vectorization"),
   allowSelfSignedCertificate: boolean("allow_self_signed_certificate").notNull().default(false),
   requestHeaders: jsonb("request_headers").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
@@ -2339,6 +2342,10 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
     authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
     scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")),
     model: z.string().trim().min(1, "Укажите модель"),
+    availableModels: z.array(z.object({
+      label: z.string().trim(),
+      value: z.string().trim(),
+    })).optional().default([]),
     allowSelfSignedCertificate: z.boolean().default(false),
     maxTokensPerVectorization: z
       .number({ error: "Введите максимальное количество токенов" })
@@ -2410,6 +2417,10 @@ export const updateEmbeddingProviderSchema = z
     authorizationKey: z.string().trim().min(1, "Укажите Authorization key").optional(),
     scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")).optional(),
     model: z.string().trim().min(1, "Укажите модель").optional(),
+    availableModels: z.array(z.object({
+      label: z.string().trim(),
+      value: z.string().trim(),
+    })).optional(),
     allowSelfSignedCertificate: z.boolean().optional(),
     maxTokensPerVectorization: z
       .number({ error: "Введите максимальное количество токенов" })
@@ -2855,8 +2866,9 @@ export type EmbeddingProviderInsert = typeof embeddingProviders.$inferInsert;
 export type InsertEmbeddingProvider = z.infer<typeof insertEmbeddingProviderSchema>;
 export type UpdateEmbeddingProvider = z.infer<typeof updateEmbeddingProviderSchema>;
 export type UpsertAuthProvider = z.infer<typeof upsertAuthProviderSchema>;
-export type PublicEmbeddingProvider = Omit<EmbeddingProvider, "authorizationKey"> & {
+export type PublicEmbeddingProvider = Omit<EmbeddingProvider, "authorizationKey" | "availableModels"> & {
   hasAuthorizationKey: boolean;
+  availableModels: LlmModelOption[];
 };
 export type SpeechProvider = typeof speechProviders.$inferSelect;
 export type SpeechProviderInsert = typeof speechProviders.$inferInsert;
