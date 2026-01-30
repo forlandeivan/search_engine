@@ -1972,7 +1972,7 @@ async function loadTokensAndSyncUser(userId: string): Promise<{
 }
 
 function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbeddingProvider {
-  const { authorizationKey, ...rest } = provider;
+  const { authorizationKey, availableModels, ...rest } = provider;
   let qdrantConfig =
     rest.qdrantConfig && typeof rest.qdrantConfig === "object"
       ? { ...rest.qdrantConfig }
@@ -1992,6 +1992,7 @@ function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbedding
     ...rest,
     qdrantConfig: qdrantConfig ?? rest.qdrantConfig,
     hasAuthorizationKey: Boolean(authorizationKey && authorizationKey.length > 0),
+    availableModels: Array.isArray(availableModels) ? availableModels : [],
   };
 }
 
@@ -2682,7 +2683,7 @@ async function fetchEmbeddingVector(
   const embeddingBody =
     provider.providerType === "unica"
       ? createUnicaEmbeddingRequestBody(provider.model, text, {
-          workSpaceId: provider.requestConfig?.additionalBodyFields?.workSpaceId as string,
+          workSpaceId: provider.unicaWorkspaceId ?? provider.requestConfig?.additionalBodyFields?.workSpaceId as string ?? "GENERAL",
           truncate: provider.requestConfig?.additionalBodyFields?.truncate as boolean,
           dimensions: provider.requestConfig?.additionalBodyFields?.dimensions as number,
         })

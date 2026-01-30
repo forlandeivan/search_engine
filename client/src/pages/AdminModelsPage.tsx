@@ -362,11 +362,9 @@ export default function AdminModelsPage() {
 
   const onSubmit = useCallback(
     (values: ModelFormValues) => {
-      let providerType: string | undefined;
       if (values.providerId) {
         const selectedProvider = providerOptions.find((p) => p.id === values.providerId);
         const isUnicaProvider = selectedProvider?.providerType === "unica";
-        providerType = selectedProvider?.providerType ?? undefined;
         
         if (!values.providerModelKey?.trim()) {
           const errorMessage = isUnicaProvider
@@ -379,13 +377,11 @@ export default function AdminModelsPage() {
       if (values.id) {
         updateMutation.mutate({ 
           ...values, 
-          providerType,
           creditsPerUnit: values.creditsPerUnit <= 0 ? 0 : values.creditsPerUnit 
         });
       } else {
         createMutation.mutate({ 
           ...values, 
-          providerType,
           creditsPerUnit: values.creditsPerUnit <= 0 ? 0 : values.creditsPerUnit 
         });
       }

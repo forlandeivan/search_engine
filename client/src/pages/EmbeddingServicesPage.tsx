@@ -138,6 +138,7 @@ type FormValues = {
   maxTokensPerVectorization: string;
   allowSelfSignedCertificate: boolean;
   requestHeaders: string;
+  unicaWorkspaceId: string;
 };
 
 const emptyFormValues: FormValues = {
@@ -155,6 +156,7 @@ const emptyFormValues: FormValues = {
   maxTokensPerVectorization: "",
   allowSelfSignedCertificate: false,
   requestHeaders: formatJson(defaultRequestHeaders),
+  unicaWorkspaceId: "",
 };
 
 const gigachatModelOptions = [
@@ -192,6 +194,7 @@ const embeddingTemplates: Record<EmbeddingProviderType, Partial<FormValues>> = {
     model: "",
     maxTokensPerVectorization: "",
     availableModels: [],
+    unicaWorkspaceId: "GENERAL",
   },
 };
 
@@ -275,6 +278,7 @@ const mapProviderToFormValues = (provider: PublicEmbeddingProvider): FormValues 
     maxTokensPerVectorization: provider.maxTokensPerVectorization ? String(provider.maxTokensPerVectorization) : "",
     allowSelfSignedCertificate: provider.allowSelfSignedCertificate ?? false,
     requestHeaders: formatJson(provider.requestHeaders ?? defaultRequestHeaders),
+    unicaWorkspaceId: provider.unicaWorkspaceId ?? "",
   };
 };
 
@@ -630,6 +634,7 @@ export default function EmbeddingServicesPage() {
       maxTokensPerVectorization: parsedMaxTokens,
       allowSelfSignedCertificate: values.allowSelfSignedCertificate,
       requestHeaders,
+      unicaWorkspaceId: values.unicaWorkspaceId.trim() || undefined,
     } satisfies Omit<
       InsertEmbeddingProvider,
       "authorizationKey" | "workspaceId" | "requestConfig" | "responseConfig" | "qdrantConfig"
@@ -799,6 +804,7 @@ export default function EmbeddingServicesPage() {
             model,
             allowSelfSignedCertificate: values.allowSelfSignedCertificate,
             requestHeaders,
+            unicaWorkspaceId: values.unicaWorkspaceId.trim() || undefined,
             testText: testEmbeddingText.trim() || undefined,
           }),
         });
@@ -1102,6 +1108,30 @@ export default function EmbeddingServicesPage() {
             </FormItem>
           )}
         />
+
+        {isUnicaProvider && (
+          <FormField
+            control={form.control}
+            name="unicaWorkspaceId"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>WorkSpace ID (Unica AI)</FormLabel>
+                <FormControl>
+                  <Input
+                    {...field}
+                    placeholder="GENERAL"
+                    required
+                    disabled={isViewMode}
+                  />
+                </FormControl>
+                <FormDescription>
+                  Обязательный параметр для Unica AI. Определяет контекст пользователя и его права.
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
       </div>
 
       <FormField
@@ -1721,7 +1751,7 @@ export default function EmbeddingServicesPage() {
                   <AlertTitle>Unica AI Embeddings</AlertTitle>
                   <AlertDescription>
                     Unica AI использует API-ключ для авторизации (без OAuth). 
-                    Укажите URL эндпоинта эмбеддингов и API-ключ.
+                    Укажите URL эндпоинта эмбеддингов, API-ключ и обязательный параметр <strong>workSpaceId</strong>.
                     Модель по умолчанию: <code className="text-sm">bge-m3</code>.
                   </AlertDescription>
                 </Alert>

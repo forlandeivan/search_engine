@@ -58,13 +58,13 @@ function getRequestWorkspace(req: Request): string | undefined {
       ? headerWorkspaceRaw.trim()
       : undefined;
 
-  return req.workspaceId ||
+  return (req.workspaceId ||
     req.workspaceContext?.workspaceId ||
     headerWorkspaceId ||
-    req.params.workspaceId ||
-    req.query.workspaceId ||
+    (typeof req.params.workspaceId === 'string' ? req.params.workspaceId : undefined) ||
+    (typeof req.query.workspaceId === 'string' ? req.query.workspaceId : undefined) ||
     req.session?.workspaceId ||
-    req.session?.activeWorkspaceId;
+    req.session?.activeWorkspaceId) as string | undefined;
 }
 
 // ============================================================================
@@ -115,7 +115,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
     model: z.string().trim().optional().or(z.literal("")),
     allowSelfSignedCertificate: z.boolean().default(false),
     requestHeaders: z.record(z.string(), z.string()).default({}),
-    workSpaceId: z.string().trim().optional(),
+    unicaWorkspaceId: z.string().trim().optional(),
     truncate: z.boolean().optional(),
     dimensions: z.number().int().positive().optional(),
     testText: z.string().trim().min(1, "Введите текст для тестирования").max(1000, "Текст слишком длинный").optional(),
@@ -135,6 +135,14 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
       return data.scope && data.scope.trim().length > 0;
     },
     { message: "Укажите OAuth scope", path: ["scope"] }
+  ).refine(
+    (data) => {
+      if (data.providerType === "unica") {
+        return !!data.unicaWorkspaceId && data.unicaWorkspaceId.trim().length > 0;
+      }
+      return true;
+    },
+    { message: "Для Unica AI обязательно укажите workSpaceId", path: ["unicaWorkspaceId"] }
   );
 
   const payload = testSchema.parse(req.body);
@@ -195,6 +203,13 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
         allowSelfSignedCertificate: payload.allowSelfSignedCertificate,
         requestHeaders: payload.requestHeaders,
         isActive: true,
+        isGlobal: false,
+        availableModels: null,
+        maxTokensPerVectorization: null,
+        requestConfig: {},
+        responseConfig: {},
+        qdrantConfig: {},
+        unicaWorkspaceId: payload.unicaWorkspaceId ?? null,
         workspaceId: null,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -243,8 +258,11 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
     const embeddingBody =
       payload.providerType === "unica"
         ? {
+            workSpaceId: payload.unicaWorkspaceId ?? "GENERAL",
             input: [embeddingText],
             model: payload.model,
+            truncate: payload.truncate ?? true,
+            ...(payload.dimensions ? { dimensions: payload.dimensions } : {}),
           }
         : {
             model: payload.model,

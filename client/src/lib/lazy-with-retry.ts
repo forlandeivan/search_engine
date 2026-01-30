@@ -3,8 +3,10 @@ import { lazy, type ComponentType } from "react";
 // Ключ для предотвращения бесконечных перезагрузок
 const RELOAD_KEY = "chunk-reload-attempt";
 const RELOAD_COUNT_KEY = "chunk-reload-count";
-const RELOAD_TIMEOUT = 5000; // 5 секунд между попытками
 const MAX_RELOAD_ATTEMPTS = 2; // Максимум 2 автоматические попытки перезагрузки
+// Сбрасываем счетчик попыток, если ошибка произошла "давно".
+// Это нужно, чтобы не блокировать авто-рефреш навсегда в рамках одной sessionStorage-сессии.
+const RELOAD_RESET_AFTER_MS = 60_000; // 1 минута
 
 /**
  * Проверяет, является ли ошибка ошибкой загрузки чанка (dynamic import)
@@ -36,7 +38,10 @@ export function isChunkLoadError(error: unknown): boolean {
 export function canAutoReload(): boolean {
   try {
     const lastReload = sessionStorage.getItem(RELOAD_KEY);
-    const reloadCount = parseInt(sessionStorage.getItem(RELOAD_COUNT_KEY) || "0", 10);
+    let reloadCount = parseInt(sessionStorage.getItem(RELOAD_COUNT_KEY) || "0", 10);
+    if (!Number.isFinite(reloadCount) || reloadCount < 0) {
+      reloadCount = 0;
+    }
     
     // Если достигли максимума попыток - не перезагружаем
     if (reloadCount >= MAX_RELOAD_ATTEMPTS) {
@@ -51,17 +56,19 @@ export function canAutoReload(): boolean {
       return true;
     }
     
-    // Проверяем, прошло ли достаточно времени с последней попытки
+    // Если с последней попытки прошло достаточно времени — сбрасываем счетчик
     const now = Date.now();
-    const timeSinceLastReload = now - parseInt(lastReload, 10);
-    
-    if (timeSinceLastReload > RELOAD_TIMEOUT) {
-      // Если прошло достаточно времени - сбрасываем счетчик
+    const last = parseInt(lastReload, 10);
+    const timeSinceLastReload = Number.isFinite(last) ? now - last : Number.POSITIVE_INFINITY;
+
+    if (timeSinceLastReload > RELOAD_RESET_AFTER_MS) {
       sessionStorage.setItem(RELOAD_COUNT_KEY, "0");
-      return true;
     }
-    
-    return false;
+
+    // Важно: НЕ блокируем повторный reload по таймеру.
+    // В dev режиме (Vite) "Outdated Optimize Dep" может потребовать 1-2 быстрых перезагрузки,
+    // а лимит MAX_RELOAD_ATTEMPTS уже защищает от бесконечного цикла.
+    return true;
   } catch (error) {
     console.error("[canAutoReload] Error checking reload status:", error);
     return true; // В случае ошибки разрешаем перезагрузку

@@ -9,6 +9,17 @@ export default defineConfig({
   plugins: [
     react(),
   ],
+  // Явно фиксируем cacheDir в корне репозитория.
+  // В нашем проекте `root` = client, но node_modules живут в корне,
+  // и на Windows это помогает избежать "Outdated Optimize Dep" из-за
+  // рассинхронизации кеша оптимизированных зависимостей.
+  cacheDir: path.resolve(__dirname, "node_modules", ".vite"),
+  optimizeDeps: {
+    // Эти зависимости могут подтягиваться только в lazy-роутах (например, AdminModelsPage),
+    // что приводит к поздней оптимизации deps и 504 (Outdated Optimize Dep).
+    // Принудительно оптимизируем их на старте, чтобы не ломать динамический импорт.
+    include: ["@radix-ui/react-checkbox"],
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "client", "src"),

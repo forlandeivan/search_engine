@@ -88,7 +88,7 @@ async function callEmbedding(
   const body =
     provider.providerType === "unica"
       ? createUnicaEmbeddingRequestBody(provider.model, text, {
-          workSpaceId: provider.requestConfig?.additionalBodyFields?.workSpaceId as string,
+          workSpaceId: provider.unicaWorkspaceId ?? provider.requestConfig?.additionalBodyFields?.workSpaceId as string ?? "GENERAL",
           truncate: provider.requestConfig?.additionalBodyFields?.truncate as boolean,
           dimensions: provider.requestConfig?.additionalBodyFields?.dimensions as number,
         })

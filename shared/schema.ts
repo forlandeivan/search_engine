@@ -1479,6 +1479,7 @@ export const embeddingProviders = pgTable("embedding_providers", {
   requestConfig: jsonb("request_config").$type<EmbeddingRequestConfig>().notNull().default(sql`'{}'::jsonb`),
   responseConfig: jsonb("response_config").$type<EmbeddingResponseConfig>().notNull().default(sql`'{}'::jsonb`),
   qdrantConfig: jsonb("qdrant_config").$type<QdrantIntegrationConfig>().notNull().default(sql`'{}'::jsonb`),
+  unicaWorkspaceId: text("unica_workspace_id"),
   workspaceId: varchar("workspace_id")
     .references(() => workspaces.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -2364,6 +2365,12 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
       .any()
       .optional()
       .transform(() => ({ ...DEFAULT_QDRANT_CONFIG } as QdrantIntegrationConfig)),
+    unicaWorkspaceId: z
+      .string()
+      .trim()
+      .min(1, "Укажите workSpaceId для Unica AI")
+      .max(200, "Слишком длинное значение workSpaceId")
+      .optional(),
   })
   .refine(
     (data) => {
@@ -2387,6 +2394,19 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
     {
       message: "Укажите OAuth scope",
       path: ["scope"],
+    },
+  )
+  .refine(
+    (data) => {
+      if (data.providerType === "unica") {
+        // Для Unica AI workSpaceId обязателен
+        return !!data.unicaWorkspaceId && data.unicaWorkspaceId.trim().length > 0;
+      }
+      return true;
+    },
+    {
+      message: "Для провайдера Unica AI обязательно укажите workSpaceId",
+      path: ["unicaWorkspaceId"],
     },
   );
 
@@ -2429,6 +2449,12 @@ export const updateEmbeddingProviderSchema = z
       .optional(),
     requestHeaders: z.record(z.string(), z.string()).optional(),
     qdrantConfig: z.record(z.string(), z.any()).optional(),
+    unicaWorkspaceId: z
+      .string()
+      .trim()
+      .min(1, "Укажите workSpaceId для Unica AI")
+      .max(200, "Слишком длинное значение workSpaceId")
+      .optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Нет данных для обновления",
