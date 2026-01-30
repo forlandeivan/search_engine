@@ -271,7 +271,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
         : {
             model: payload.model,
             input: [embeddingText],
-            encoding_format: "float" as const,
+            encoding_format: "float",
           };
 
     logger.info('[test-credentials] Embedding request', {
@@ -279,8 +279,6 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
       providerId: payload.id,
       embeddingsUrl: payload.embeddingsUrl,
       model: payload.model,
-      bodyKeys: Object.keys(embeddingBody),
-      workSpaceId: payload.providerType === "unica" ? (embeddingBody as { workSpaceId: string }).workSpaceId : undefined,
     });
 
     let embeddingResponse: FetchResponse;
