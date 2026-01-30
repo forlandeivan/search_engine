@@ -287,6 +287,8 @@ export default function EmbeddingServicesPage() {
   const [debugSteps, setDebugSteps] = useState<DebugStep[]>(() => buildDebugSteps());
   const [activeTab, setActiveTab] = useState<"settings" | "docs">("settings");
   const [testEmbeddingText, setTestEmbeddingText] = useState("Hello world!");
+  const [isLoadingKey, setIsLoadingKey] = useState(false);
+  const [loadedAuthKey, setLoadedAuthKey] = useState<string>("");
   const watchedProviderType = form.watch("providerType");
   const isGigachatProvider = watchedProviderType === "gigachat";
   const isUnicaProvider = watchedProviderType === "unica";
@@ -353,6 +355,7 @@ export default function EmbeddingServicesPage() {
       form.reset(values);
       modelsArray.replace(values.availableModels ?? []);
       setIsAuthorizationVisible(false);
+      setLoadedAuthKey("");
       setDebugSteps(buildDebugSteps());
       setActiveTab("settings");
       return;
@@ -360,6 +363,7 @@ export default function EmbeddingServicesPage() {
 
     if (isCreating) {
       setIsAuthorizationVisible(false);
+      setLoadedAuthKey("");
       setDebugSteps(buildDebugSteps());
       setActiveTab("settings");
       return;
@@ -368,6 +372,7 @@ export default function EmbeddingServicesPage() {
     form.reset(emptyFormValues);
     modelsArray.replace([]);
     setIsAuthorizationVisible(false);
+    setLoadedAuthKey("");
     setDebugSteps(buildDebugSteps());
     setActiveTab("settings");
   }, [selectedProvider, form, isCreating, modelsArray]);
@@ -639,6 +644,7 @@ export default function EmbeddingServicesPage() {
       ...payloadBase,
     } satisfies UpdateEmbeddingProvider;
 
+    // Если ключ не пустой, обновляем его
     if (trimmedAuthorizationKey.length > 0) {
       payload.authorizationKey = trimmedAuthorizationKey;
     }
@@ -707,9 +713,31 @@ export default function EmbeddingServicesPage() {
       const providerType = values.providerType;
       const tokenUrl = values.tokenUrl.trim();
       const embeddingsUrl = values.embeddingsUrl.trim();
-      const authorizationKey = values.authorizationKey.trim();
+      let authorizationKey = values.authorizationKey.trim();
       const scope = values.scope.trim();
       const model = values.model.trim();
+
+      // Если поле пустое и есть сохранённый ключ, загружаем его
+      if (!authorizationKey && selectedProvider?.hasAuthorizationKey) {
+        if (!loadedAuthKey) {
+          // Загружаем ключ
+          try {
+            const response = await apiRequest("GET", `/api/embedding/services/${selectedProvider.id}/key`);
+            if (!response.ok) {
+              throw new Error("Не удалось загрузить ключ");
+            }
+            const data = (await response.json()) as { authorizationKey: string };
+            authorizationKey = data.authorizationKey;
+            setLoadedAuthKey(authorizationKey);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Не удалось загрузить ключ авторизации";
+            form.setError("authorizationKey", { type: "manual", message });
+            throw new Error(message);
+          }
+        } else {
+          authorizationKey = loadedAuthKey;
+        }
+      }
 
       if (providerType !== "unica" && !tokenUrl) {
         const message = "Укажите endpoint для получения токена";
@@ -879,6 +907,33 @@ export default function EmbeddingServicesPage() {
         variant: "destructive",
       });
     }
+  };
+
+  const handleToggleAuthorizationVisibility = async () => {
+    // Если показываем ключ и ещё не загружен
+    if (!isAuthorizationVisible && selectedProvider && !loadedAuthKey) {
+      setIsLoadingKey(true);
+      try {
+        const response = await apiRequest("GET", `/api/embedding/services/${selectedProvider.id}/key`);
+        if (!response.ok) {
+          throw new Error("Не удалось загрузить ключ");
+        }
+        const data = (await response.json()) as { authorizationKey: string };
+        setLoadedAuthKey(data.authorizationKey);
+        form.setValue("authorizationKey", data.authorizationKey);
+      } catch (error) {
+        toast({
+          title: "Ошибка загрузки ключа",
+          description: error instanceof Error ? error.message : "Не удалось загрузить ключ авторизации",
+          variant: "destructive",
+        });
+        setIsLoadingKey(false);
+        return;
+      }
+      setIsLoadingKey(false);
+    }
+    
+    setIsAuthorizationVisible((previous) => !previous);
   };
 
   const isSubmitPending = isCreating
@@ -1058,7 +1113,11 @@ export default function EmbeddingServicesPage() {
                 <Input
                   {...field}
                   type={isAuthorizationVisible ? "text" : "password"}
-                  placeholder={isUnicaProvider ? "Введите API ключ Unica AI" : "Значение заголовка Authorization"}
+                  placeholder={
+                    !isCreating && selectedProvider?.hasAuthorizationKey 
+                      ? (isUnicaProvider ? "Ключ сохранен. Оставьте пустым, чтобы не менять" : "Ключ сохранен. Оставьте пустым, чтобы не менять")
+                      : (isUnicaProvider ? "Введите API ключ Unica AI" : "Значение заголовка Authorization")
+                  }
                   autoComplete="new-password"
                   className="pr-10"
                 />
@@ -1067,10 +1126,17 @@ export default function EmbeddingServicesPage() {
                   size="icon"
                   variant="ghost"
                   className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
-                  onClick={() => setIsAuthorizationVisible((previous) => !previous)}
+                  onClick={handleToggleAuthorizationVisibility}
+                  disabled={isLoadingKey}
                   aria-label={isAuthorizationVisible ? (isUnicaProvider ? "Скрыть API ключ" : "Скрыть Authorization key") : (isUnicaProvider ? "Показать API ключ" : "Показать Authorization key")}
                 >
-                  {isAuthorizationVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {isLoadingKey ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : isAuthorizationVisible ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
                 </Button>
               </div>
             </FormControl>
@@ -1083,6 +1149,11 @@ export default function EmbeddingServicesPage() {
                 </>
               ) : (
                 "Вставьте значение заголовка Authorization, которое требуется для получения токена."
+              )}
+              {!isCreating && selectedProvider?.hasAuthorizationKey && (
+                <span className="block mt-1 text-emerald-600 text-xs">
+                  ✓ Ключ сохранен. Оставьте поле пустым, чтобы сохранить текущий ключ, или введите новый для обновления.
+                </span>
               )}
             </FormDescription>
             <div className="flex flex-col gap-3 pt-2">

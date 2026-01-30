@@ -95,95 +95,9 @@ embeddingRouter.get('/services', asyncHandler(async (req, res) => {
 }));
 
 /**
- * POST /services
- * Create embedding provider
- */
-embeddingRouter.post('/services', asyncHandler(async (req, res) => {
-  const user = getAuthorizedUser(req, res);
-  if (!user) return;
-
-  try {
-    const provider = await storage.createEmbeddingProvider(req.body);
-    
-    // Sync models with catalog
-    await syncModelsWithEmbeddingProvider(provider);
-    
-    res.status(201).json({ provider });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ message: 'Invalid provider data', details: error.issues });
-    }
-    throw error;
-  }
-}));
-
-/**
- * PUT /services/:id
- * Update embedding provider
- */
-embeddingRouter.put('/services/:id', asyncHandler(async (req, res) => {
-  const user = getAuthorizedUser(req, res);
-  if (!user) return;
-
-  const providerId = req.params.id;
-  const provider = await storage.updateEmbeddingProvider(providerId, req.body);
-  
-  if (!provider) {
-    return res.status(404).json({ message: 'Provider not found' });
-  }
-  
-  // Sync models with catalog
-  await syncModelsWithEmbeddingProvider(provider);
-  
-  res.json({ provider });
-}));
-
-/**
- * DELETE /services/:id
- * Delete embedding provider
- * Проверяет, что нет активных моделей, привязанных к провайдеру
- */
-embeddingRouter.delete('/services/:id', asyncHandler(async (req, res) => {
-  logger.info(`DELETE /services/:id called with id: ${req.params.id}, url: ${req.url}, originalUrl: ${req.originalUrl}`);
-  
-  const user = getAuthorizedUser(req, res);
-  if (!user) {
-    logger.warn('DELETE /services/:id - unauthorized');
-    return;
-  }
-
-  const providerId = req.params.id;
-  logger.info(`DELETE /services/:id - deleting provider: ${providerId}`);
-  
-  // Проверяем, есть ли активные модели для этого провайдера
-  const activeModels = await listModels({ 
-    providerId, 
-    type: 'EMBEDDINGS',
-    includeInactive: false 
-  });
-  
-  if (activeModels.length > 0) {
-    return res.status(409).json({ 
-      message: 'Невозможно удалить провайдер: существуют активные модели в каталоге',
-      details: {
-        activeModelsCount: activeModels.length,
-        models: activeModels.map(m => ({ key: m.modelKey, name: m.displayName }))
-      }
-    });
-  }
-  
-  const deleted = await storage.deleteEmbeddingProvider(providerId);
-  
-  if (!deleted) {
-    return res.status(404).json({ message: 'Provider not found' });
-  }
-  
-  res.status(204).send();
-}));
-
-/**
  * POST /services/test-credentials
  * Test embedding provider credentials
+ * NOTE: This must be before /services/:id routes to avoid route conflicts
  */
 embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res) => {
   const user = getAuthorizedUser(req, res);
@@ -294,11 +208,8 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
     const embeddingBody =
       payload.providerType === "unica"
         ? {
-            workSpaceId: payload.workSpaceId ?? "GENERAL",
-            model: payload.model,
             input: [embeddingText],
-            truncate: payload.truncate ?? true,
-            ...(payload.dimensions ? { dimensions: payload.dimensions } : {}),
+            model: payload.model,
           }
         : {
             model: payload.model,
@@ -306,121 +217,184 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
             encoding_format: "float",
           };
 
-    try {
-      const fetchOptions: RequestInit = {
-        method: "POST",
-        headers: embeddingHeaders,
-        body: JSON.stringify(embeddingBody),
-      };
+    const embeddingResponse = await fetch(payload.embeddingsUrl, {
+      method: "POST",
+      headers: embeddingHeaders,
+      body: JSON.stringify(embeddingBody),
+      ...(payload.allowSelfSignedCertificate ? { agent: undefined } : {}),
+    });
 
-      if (payload.allowSelfSignedCertificate) {
-        (fetchOptions as any).agent = undefined; // For Node.js fetch
-      }
-
-      const embeddingResponse = await fetch(payload.embeddingsUrl, fetchOptions);
-      const rawBody = await embeddingResponse.text();
-      const parsedBody = JSON.parse(rawBody);
-
-      if (!embeddingResponse.ok) {
-        let message = `Сервис вернул статус ${embeddingResponse.status}`;
-        if (parsedBody && typeof parsedBody === "object") {
-          const body = parsedBody as Record<string, unknown>;
-          if (typeof body.error_description === "string") {
-            message = body.error_description;
-          } else if (typeof body.message === "string") {
-            message = body.message;
-          }
-        }
-        steps.push({ stage: "embedding-received", status: "error", detail: message });
-        return res.status(400).json({
-          message: "Не удалось получить вектор эмбеддингов",
-          steps,
-        });
-      }
-
-      let vector: number[] | undefined;
-      let usageTokens: number | undefined;
-
-      if (payload.providerType === "unica") {
-        const vectors = (parsedBody as any)?.vectors;
-        if (!Array.isArray(vectors) || vectors.length === 0) {
-          steps.push({
-            stage: "embedding-received",
-            status: "error",
-            detail: "Сервис Unica AI не вернул векторы",
-          });
-          return res.status(400).json({
-            message: "Сервис Unica AI не вернул векторы",
-            steps,
-          });
-        }
-        vector = vectors[0];
-        const meta = (parsedBody as any)?.meta;
-        const metrics = meta?.metrics;
-        if (typeof metrics?.inputTokens === "number") {
-          usageTokens = metrics.inputTokens;
-        }
-      } else {
-        const data = parsedBody.data;
-        if (!Array.isArray(data) || data.length === 0) {
-          steps.push({ stage: "embedding-received", status: "error", detail: "Сервис не вернул данные" });
-          return res.status(400).json({
-            message: "Сервис эмбеддингов не вернул данные",
-            steps,
-          });
-        }
-
-        const firstEntry = data[0];
-        const entryRecord = firstEntry as Record<string, unknown>;
-        vector = (entryRecord.embedding ?? entryRecord.vector) as number[];
-
-        const usage = parsedBody.usage as Record<string, unknown> | undefined;
-        if (typeof usage?.total_tokens === "number") {
-          usageTokens = usage.total_tokens;
-        }
-      }
-
-      if (!Array.isArray(vector) || vector.length === 0) {
-        steps.push({
-          stage: "embedding-received",
-          status: "error",
-          detail: "Сервис не вернул числовой вектор",
-        });
-        return res.status(400).json({
-          message: "Сервис эмбеддингов не вернул числовой вектор",
-          steps,
-        });
-      }
-
+    if (!embeddingResponse.ok) {
+      const errorText = await embeddingResponse.text();
       steps.push({
-        stage: "embedding-received",
-        status: "success",
-        detail: `Получен вектор размерностью ${vector.length}${usageTokens ? `, токенов: ${usageTokens}` : ""}`,
+        stage: "embedding-response",
+        status: "error",
+        detail: `HTTP ${embeddingResponse.status}: ${errorText}`,
       });
-
-      res.json({
-        message: "Авторизация подтверждена",
-        steps,
-        testText: embeddingText,
-        vectorSize: vector.length,
-        vectorPreview: vector.slice(0, 10),
-        usageTokens,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      steps.push({ stage: 'embedding-received', status: 'error', detail: message });
       return res.status(400).json({
-        message: 'Не удалось получить вектор эмбеддингов',
+        message: "Сервис эмбеддингов вернул ошибку",
         steps,
       });
     }
+
+    const embeddingData = (await embeddingResponse.json()) as {
+      data?: Array<{ embedding: number[]; index?: number }>;
+      usage?: { total_tokens?: number };
+    };
+
+    if (!embeddingData.data || embeddingData.data.length === 0) {
+      steps.push({
+        stage: "embedding-response",
+        status: "error",
+        detail: "Пустой массив data в ответе",
+      });
+      return res.status(400).json({
+        message: "Сервис эмбеддингов вернул пустой результат",
+        steps,
+      });
+    }
+
+    const firstEmbedding = embeddingData.data[0].embedding;
+    const vectorSize = firstEmbedding.length;
+    const vectorPreview = firstEmbedding.slice(0, 10);
+    const usageTokens = embeddingData.usage?.total_tokens;
+
+    steps.push({
+      stage: "embedding-response",
+      status: "success",
+      detail: `Получен вектор размерностью ${vectorSize}`,
+    });
+
+    res.json({
+      message: "Авторизация подтверждена, эмбеддинги успешно получены",
+      steps,
+      testText: embeddingText,
+      vectorSize,
+      vectorPreview,
+      usageTokens,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error(`[embedding test] Unexpected error: ${message}`);
+    steps.push({
+      stage: "embedding-request",
+      status: "error",
+      detail: message,
+    });
+    res.status(500).json({
+      message: "Ошибка при проверке credentials",
+      steps,
+    });
+  }
+}));
+
+/**
+ * GET /services/:id/key
+ * Get authorization key for embedding provider (only for admins)
+ * NOTE: This must be before other /services/:id routes to avoid route conflicts
+ */
+embeddingRouter.get('/services/:id/key', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  // Проверка прав администратора
+  if (user.role !== 'admin') {
+    return res.status(403).json({ message: 'Недостаточно прав для просмотра ключей' });
+  }
+
+  const providerId = req.params.id;
+  const provider = await storage.getEmbeddingProvider(providerId);
+  
+  if (!provider) {
+    return res.status(404).json({ message: 'Provider not found' });
+  }
+  
+  res.json({ authorizationKey: provider.authorizationKey || '' });
+}));
+
+/**
+ * POST /services
+ * Create embedding provider
+ */
+embeddingRouter.post('/services', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  try {
+    const provider = await storage.createEmbeddingProvider(req.body);
+    
+    // Sync models with catalog
+    await syncModelsWithEmbeddingProvider(provider);
+    
+    res.status(201).json({ provider });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({
-        message: 'Некорректные данные',
-        details: error.issues,
-      });
+      return res.status(400).json({ message: 'Invalid provider data', details: error.issues });
     }
     throw error;
   }
+}));
+
+/**
+ * PUT /services/:id
+ * Update embedding provider
+ */
+embeddingRouter.put('/services/:id', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const providerId = req.params.id;
+  const provider = await storage.updateEmbeddingProvider(providerId, req.body);
+  
+  if (!provider) {
+    return res.status(404).json({ message: 'Provider not found' });
+  }
+  
+  // Sync models with catalog
+  await syncModelsWithEmbeddingProvider(provider);
+  
+  res.json({ provider });
+}));
+
+/**
+ * DELETE /services/:id
+ * Delete embedding provider
+ * Проверяет, что нет активных моделей, привязанных к провайдеру
+ */
+embeddingRouter.delete('/services/:id', asyncHandler(async (req, res) => {
+  logger.info(`DELETE /services/:id called with id: ${req.params.id}, url: ${req.url}, originalUrl: ${req.originalUrl}`);
+  
+  const user = getAuthorizedUser(req, res);
+  if (!user) {
+    logger.warn('DELETE /services/:id - unauthorized');
+    return;
+  }
+
+  const providerId = req.params.id;
+  logger.info(`DELETE /services/:id - deleting provider: ${providerId}`);
+  
+  // Проверяем, есть ли активные модели для этого провайдера
+  const activeModels = await listModels({ 
+    providerId, 
+    type: 'EMBEDDINGS',
+    includeInactive: false 
+  });
+  
+  if (activeModels.length > 0) {
+    return res.status(409).json({ 
+      message: 'Невозможно удалить провайдер: существуют активные модели в каталоге',
+      details: {
+        activeModelsCount: activeModels.length,
+        models: activeModels.map(m => ({ key: m.modelKey, name: m.displayName }))
+      }
+    });
+  }
+  
+  const deleted = await storage.deleteEmbeddingProvider(providerId);
+  
+  if (!deleted) {
+    return res.status(404).json({ message: 'Provider not found' });
+  }
+  
+  res.status(204).send();
 }));
