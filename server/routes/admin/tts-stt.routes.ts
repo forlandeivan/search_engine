@@ -212,4 +212,300 @@ adminTtsSttRouter.get('/asr-executions/:id', asyncHandler(async (req, res) => {
   res.json(execution);
 }));
 
+// ============================================================================
+// ASR Providers Management
+// ============================================================================
+
+/**
+ * GET /asr-providers
+ * List all ASR providers (STT providers)
+ */
+adminTtsSttRouter.get('/asr-providers', asyncHandler(async (req, res) => {
+  try {
+    const providers = await speechProviderService.list();
+    
+    // Filter only STT providers (ASR)
+    const asrProviders = providers.filter(p => p.providerType === 'stt');
+    
+    // Get unique admin IDs
+    const adminIds = [...new Set(asrProviders.map(p => p.updatedByAdminId).filter(Boolean))] as string[];
+    const admins = await Promise.all(
+      adminIds.map(async id => {
+        const user = await storage.getUser(id);
+        return user ? { id, email: user.email } : null;
+      })
+    );
+    const adminMap = new Map(admins.filter(Boolean).map(admin => [admin!.id, admin!.email]));
+    
+    // Get full provider details including config
+    const detailedProviders = await Promise.all(
+      asrProviders.map(async (p) => {
+        const detail = await speechProviderService.getById(p.id);
+        return {
+          id: p.id,
+          displayName: detail.provider.displayName,
+          asrProviderType: detail.provider.asrProviderType || 'yandex',
+          isEnabled: p.isEnabled,
+          status: p.status,
+          config: detail.config,
+          createdAt: detail.provider.createdAt,
+          updatedAt: p.updatedAt,
+          updatedByAdmin: p.updatedByAdminId ? { id: p.updatedByAdminId, email: adminMap.get(p.updatedByAdminId) || null } : null,
+        };
+      })
+    );
+    
+    res.json({ providers: detailedProviders });
+  } catch (error) {
+    if (error instanceof SpeechProviderServiceError) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    throw error;
+  }
+}));
+
+/**
+ * GET /asr-providers/:id
+ * Get specific ASR provider details
+ */
+adminTtsSttRouter.get('/asr-providers/:id', asyncHandler(async (req, res) => {
+  try {
+    const detail = await speechProviderService.getById(req.params.id);
+    if (!detail) {
+      return res.status(404).json({ message: 'Provider not found' });
+    }
+    
+    // Get admin info if available
+    let adminEmail: string | null = null;
+    if (detail.provider.updatedByAdminId) {
+      const admin = await storage.getUser(detail.provider.updatedByAdminId);
+      adminEmail = admin?.email || null;
+    }
+    
+    res.json({
+      id: detail.provider.id,
+      displayName: detail.provider.displayName,
+      asrProviderType: detail.provider.asrProviderType || 'yandex',
+      isEnabled: detail.provider.isEnabled,
+      status: detail.provider.status,
+      config: detail.config,
+      secrets: detail.secrets,
+      createdAt: detail.provider.createdAt,
+      updatedAt: detail.provider.updatedAt,
+      updatedByAdmin: detail.provider.updatedByAdminId ? { id: detail.provider.updatedByAdminId, email: adminEmail } : null,
+    });
+  } catch (error) {
+    if (error instanceof SpeechProviderServiceError) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    throw error;
+  }
+}));
+
+/**
+ * POST /asr-providers
+ * Create new Unica ASR provider
+ */
+const createUnicaAsrProviderSchema = z.object({
+  displayName: z.string().min(1, 'Укажите название'),
+  config: z.object({
+    baseUrl: z.string().url('Некорректный Base URL'),
+    workspaceId: z.string().min(1, 'Укажите Workspace ID'),
+    pollingIntervalMs: z.number().min(1000).max(60000).optional(),
+    timeoutMs: z.number().min(60000).max(7200000).optional(),
+  }),
+});
+
+adminTtsSttRouter.post('/asr-providers', asyncHandler(async (req, res) => {
+  const validation = createUnicaAsrProviderSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: 'Validation error',
+      details: validation.error.errors,
+    });
+  }
+
+  const { displayName, config } = validation.data;
+
+  try {
+    const provider = await speechProviderService.createUnicaProvider(displayName, config);
+    
+    return res.status(201).json({
+      id: provider.id,
+      displayName: provider.displayName,
+      asrProviderType: 'unica',
+      message: 'Provider created successfully',
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to create Unica ASR provider');
+    return res.status(500).json({
+      error: 'Failed to create provider',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+}));
+
+/**
+ * PATCH /asr-providers/:id
+ * Update ASR provider
+ */
+const updateAsrProviderSchema = z.object({
+  displayName: z.string().min(1).optional(),
+  isEnabled: z.boolean().optional(),
+  config: z.object({
+    baseUrl: z.string().url().optional(),
+    workspaceId: z.string().min(1).optional(),
+    pollingIntervalMs: z.number().min(1000).max(60000).optional(),
+    timeoutMs: z.number().min(60000).max(7200000).optional(),
+  }).optional(),
+});
+
+adminTtsSttRouter.patch('/asr-providers/:id', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  // Check provider exists
+  const existing = await speechProviderService.getById(id);
+  if (!existing) {
+    return res.status(404).json({ error: 'Provider not found' });
+  }
+
+  const validation = updateAsrProviderSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({
+      error: 'Validation error',
+      details: validation.error.errors,
+    });
+  }
+
+  try {
+    // Prepare update payload
+    const updatePayload: any = {};
+    
+    if (validation.data.isEnabled !== undefined) {
+      updatePayload.isEnabled = validation.data.isEnabled;
+    }
+    
+    if (validation.data.config) {
+      // Merge with existing config
+      updatePayload.config = {
+        ...existing.config,
+        ...validation.data.config,
+      };
+    }
+    
+    if (validation.data.displayName) {
+      // Update displayName through storage
+      await storage.updateSpeechProvider(id, {
+        displayName: validation.data.displayName,
+      });
+    }
+    
+    const updated = await speechProviderService.update(id, updatePayload);
+    
+    return res.json({
+      id: updated.provider.id,
+      displayName: updated.provider.displayName,
+      isEnabled: updated.provider.isEnabled,
+      message: 'Provider updated successfully',
+    });
+  } catch (error) {
+    logger.error({ error, providerId: id }, 'Failed to update ASR provider');
+    return res.status(500).json({
+      error: 'Failed to update provider',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+}));
+
+/**
+ * DELETE /asr-providers/:id
+ * Delete ASR provider (with usage check)
+ */
+adminTtsSttRouter.delete('/asr-providers/:id', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const existing = await speechProviderService.getById(id);
+  if (!existing) {
+    return res.status(404).json({ error: 'Provider not found' });
+  }
+
+  // Check if provider is used by any skills
+  const skillsUsingProvider = await storage.db.query.skills.findMany({
+    where: (skills, { eq }) => eq(skills.asrProviderId, id),
+  });
+
+  if (skillsUsingProvider.length > 0) {
+    return res.status(400).json({
+      error: 'Provider is used by skills',
+      message: `Провайдер используется в ${skillsUsingProvider.length} навыке(ах). Сначала измените настройки навыков.`,
+      skillIds: skillsUsingProvider.map(s => s.id),
+    });
+  }
+
+  try {
+    await storage.deleteSpeechProvider(id);
+    return res.json({ message: 'Provider deleted successfully' });
+  } catch (error) {
+    logger.error({ error, providerId: id }, 'Failed to delete ASR provider');
+    return res.status(500).json({
+      error: 'Failed to delete provider',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+}));
+
+/**
+ * POST /asr-providers/test
+ * Test Unica ASR connection
+ */
+adminTtsSttRouter.post('/asr-providers/test', asyncHandler(async (req, res) => {
+  const { config } = req.body;
+
+  const validation = z.object({
+    baseUrl: z.string().url(),
+    workspaceId: z.string().min(1),
+  }).safeParse(config);
+
+  if (!validation.success) {
+    return res.status(400).json({
+      error: 'Invalid config',
+      details: validation.error.errors,
+    });
+  }
+
+  try {
+    // Simple health check - try to get status of non-existent task
+    // Expect 404, which confirms API is working
+    const testUrl = `${config.baseUrl}/asr/SpeechRecognition/recognition-task/test-connection?workSpaceId=${config.workspaceId}`;
+    
+    const response = await fetch(testUrl, { method: 'GET' });
+    
+    // 404 - API works, task not found (expected)
+    // 200 - also ok
+    // 5xx - server problem
+    if (response.status === 404 || response.ok) {
+      return res.json({
+        success: true,
+        message: 'Connection successful',
+      });
+    } else if (response.status >= 500) {
+      return res.json({
+        success: false,
+        message: `Server error: ${response.status}`,
+      });
+    } else {
+      return res.json({
+        success: true,
+        message: `API responded with status ${response.status}`,
+      });
+    }
+  } catch (error) {
+    logger.error({ error, config }, 'ASR provider connection test failed');
+    return res.json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Connection failed',
+    });
+  }
+}));
+
 export default adminTtsSttRouter;

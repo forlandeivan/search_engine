@@ -6699,6 +6699,27 @@ export class DatabaseStorage implements IStorage {
     return provider ?? undefined;
   }
 
+  async createSpeechProvider(insert: SpeechProviderInsert): Promise<SpeechProvider> {
+    await ensureSpeechProvidersTables();
+    
+    // Нормализуем configJson если есть
+    const normalized = { ...insert };
+    if (insert.configJson) {
+      normalized.configJson = sql`${JSON.stringify(insert.configJson)}::jsonb` as any;
+    }
+    
+    const [created] = await this.db
+      .insert(speechProviders)
+      .values(normalized)
+      .returning();
+    
+    if (!created) {
+      throw new Error("Failed to create speech provider");
+    }
+    
+    return created;
+  }
+
   async updateSpeechProvider(
     id: string,
     updates: Partial<SpeechProviderInsert>,
@@ -6753,6 +6774,20 @@ export class DatabaseStorage implements IStorage {
     await this.db
       .delete(speechProviderSecrets)
       .where(and(eq(speechProviderSecrets.providerId, providerId), eq(speechProviderSecrets.secretKey, secretKey)));
+  }
+
+  async deleteSpeechProvider(id: string): Promise<void> {
+    await ensureSpeechProvidersTables();
+    
+    // Delete secrets first (foreign key constraint)
+    await this.db
+      .delete(speechProviderSecrets)
+      .where(eq(speechProviderSecrets.providerId, id));
+    
+    // Delete provider
+    await this.db
+      .delete(speechProviders)
+      .where(eq(speechProviders.id, id));
   }
 
   async createFile(file: FileInsert): Promise<File> {

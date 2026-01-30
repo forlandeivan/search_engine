@@ -15,6 +15,8 @@ import { asyncHandler } from '../middleware/async-handler';
 import { storage } from '../storage';
 import { yandexSttService } from '../yandex-stt-service';
 import { yandexSttAsyncService, YandexSttAsyncError, type TranscribeOperationStatus } from '../yandex-stt-async-service';
+import { unicaAsrService, UnicaAsrError } from '../unica-asr-service';
+import { speechProviderService } from '../speech-provider-service';
 import { asrExecutionLogService } from '../asr-execution-log-context';
 import { actionsRepository } from '../actions';
 import { skillActionsRepository } from '../skill-actions';
@@ -22,7 +24,8 @@ import { getSkillById } from '../skills';
 import { runTranscriptActionCommon } from '../lib/transcript-actions';
 import { upsertBotActionForChat } from '../chat-service';
 import { scheduleChatTitleGenerationIfNeeded } from '../chat-title-jobs';
-import type { PublicUser, ChatMessageMetadata } from '@shared/schema';
+import { uploadFileToProvider } from '../file-storage-provider-upload-service';
+import type { PublicUser, ChatMessageMetadata, UnicaAsrConfig } from '@shared/schema';
 
 const logger = createLogger('transcribe');
 
@@ -142,6 +145,150 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
     elapsed: Date.now() - startTime,
   }, '[TRANSCRIBE-STEP] Starting async transcription service');
 
+  // Получить ASR провайдер для навыка
+  let asrProvider = null;
+  let asrType: string = "yandex"; // default
+
+  if (chat.skillId) {
+    const skill = await getSkillById(workspaceId, chat.skillId);
+    if (skill) {
+      asrProvider = await speechProviderService.getAsrProviderForSkill(skill.id);
+      if (asrProvider) {
+        asrType = speechProviderService.getAsrProviderType(asrProvider.provider);
+        logger.info({
+          operationId,
+          chatId,
+          skillId: skill.id,
+          asrProviderId: asrProvider.provider.id,
+          asrType,
+        }, '[TRANSCRIBE-STEP] ASR provider selected');
+      }
+    }
+  }
+
+  // Handle Unica ASR
+  if (asrType === "unica" && asrProvider && chat.skillId) {
+    const skill = await getSkillById(workspaceId, chat.skillId);
+    if (!skill) {
+      return res.status(404).json({ message: 'Навык не найден' });
+    }
+
+    const config = asrProvider.config as UnicaAsrConfig;
+    const fileProviderId = skill.noCodeFileStorageProviderId;
+
+    if (!fileProviderId) {
+      return res.status(400).json({
+        message: 'Для Unica ASR необходимо настроить файловый провайдер в навыке',
+      });
+    }
+
+    try {
+      // 1. Загрузить файл через файловый провайдер
+      logger.info({
+        operationId,
+        chatId,
+        fileProviderId,
+      }, '[UNICA-ASR] Uploading file to provider');
+
+      const uploadResult = await uploadFileToProvider({
+        providerId: fileProviderId,
+        data: file.buffer,
+        fileName: file.originalname,
+        mimeType: file.mimetype,
+        context: {
+          workspaceId,
+          skillId: skill.id,
+          chatId,
+          userId: user.id,
+        },
+      });
+
+      logger.info({
+        operationId,
+        chatId,
+        filePath: uploadResult.filePath,
+      }, '[UNICA-ASR] File uploaded, starting recognition');
+
+      // 2. Запустить транскрибацию через Unica ASR
+      const { taskId, operationId: unicaOperationId } = await unicaAsrService.startRecognition(
+        uploadResult.filePath,
+        config
+      );
+
+      logger.info({
+        operationId,
+        unicaOperationId,
+        taskId,
+        elapsed: Date.now() - startTime,
+      }, '[UNICA-ASR] Recognition started successfully');
+
+      // 3. Создать ASR execution record
+      const asrExecution = await asrExecutionLogService.createExecution({
+        workspaceId,
+        chatId,
+        skillId: skill.id,
+        userId: user.id,
+        status: 'processing',
+        metadata: {
+          operationId: unicaOperationId,
+          taskId,
+          asrProviderType: 'unica',
+          fileProviderId,
+          filePath: uploadResult.filePath,
+        },
+      });
+
+      // 4. Create BotAction to show processing indicator
+      try {
+        await upsertBotActionForChat({
+          workspaceId,
+          chatId,
+          actionId: `transcribe-${unicaOperationId}`,
+          actionType: 'transcribe_audio',
+          status: 'processing',
+          displayText: `Распознаём речь: ${file.originalname || 'audio'}`,
+          userId: user.id,
+        });
+      } catch (botActionError) {
+        logger.warn({ error: botActionError, operationId: unicaOperationId }, '[UNICA-ASR] Failed to create bot action');
+      }
+
+      // Schedule chat title generation
+      scheduleChatTitleGenerationIfNeeded({
+        chatId,
+        workspaceId,
+        userId: user.id,
+        messageText: file.originalname || 'audio',
+        messageMetadata: { type: 'audio', fileName: file.originalname || 'audio' },
+        chatTitle: chat.title,
+      });
+
+      return res.json({
+        status: 'started',
+        operationId: unicaOperationId,
+        message: 'Аудио файл загружен и отправлен на транскрибацию через Unica ASR',
+      });
+    } catch (error) {
+      logger.error({
+        error,
+        chatId,
+        operationId,
+        elapsed: Date.now() - startTime,
+      }, '[UNICA-ASR] Recognition start failed');
+      
+      if (error instanceof UnicaAsrError) {
+        return res.status(error.statusCode || 500).json({
+          message: error.message,
+          code: error.code,
+        });
+      }
+
+      logger.error({ userId: user.id, chatId, operationId, error }, 'Error starting Unica ASR transcription');
+      throw error;
+    }
+  }
+
+  // Handle Yandex ASR (existing logic)
   try {
     const result = await yandexSttAsyncService.startAsyncTranscription({
       audioBuffer: file.buffer,
@@ -433,13 +580,29 @@ transcribeRouter.get('/operations/:operationId', asyncHandler(async (req, res) =
   }
 
   try {
-    const status = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
-    res.json(status);
+    // Определить тип операции по префиксу
+    if (operationId.startsWith('unica_')) {
+      // Unica ASR операция
+      const status = await unicaAsrService.getOperationStatus(operationId);
+      return res.json({
+        status: status.done ? 'completed' : 'processing',
+        done: status.done,
+        result: status.text ? { text: status.text } : undefined,
+        error: status.error,
+      });
+    } else {
+      // Yandex ASR операция (существующая логика)
+      const status = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
+      return res.json(status);
+    }
   } catch (err) {
     logger.error({ userId: user.id, operationId, err }, 'Error getting transcribe operation status');
     
     if (err instanceof YandexSttAsyncError) {
       return res.status(err.status).json({ message: err.message, code: err.code });
+    }
+    if (err instanceof UnicaAsrError) {
+      return res.status(err.statusCode || 500).json({ message: err.message, code: err.code });
     }
     throw err;
   }
@@ -452,6 +615,25 @@ transcribeRouter.get('/operations/:operationId', asyncHandler(async (req, res) =
 transcribeRouter.get('/status', asyncHandler(async (_req, res) => {
   const health = await yandexSttService.checkHealth();
   res.json(health);
+}));
+
+/**
+ * GET /asr-providers
+ * Get list of available ASR providers
+ */
+transcribeRouter.get('/asr-providers', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const providers = await speechProviderService.getAvailableAsrProviders();
+  
+  return res.json(providers.map(p => ({
+    id: p.provider.id,
+    displayName: p.provider.displayName,
+    asrProviderType: p.provider.asrProviderType,
+    isEnabled: p.provider.isEnabled,
+    status: p.provider.status,
+  })));
 }));
 
 /**
@@ -473,33 +655,73 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
     userId: user.id,
   }, '[COMPLETE-START] Starting transcription completion');
 
-  const status: TranscribeOperationStatus = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
-  
-  if (status.status !== 'completed' || !status.result?.text) {
-    logger.warn({ operationId, status: status.status, hasText: Boolean(status.result?.text) }, 'Operation not ready');
-    return res.status(400).json({ message: 'Операция не завершена или нет текста' });
+  // Определить тип операции и получить результат
+  let status: TranscribeOperationStatus;
+  let transcriptText: string;
+  let chatId: string | undefined;
+  let transcriptId: string | undefined;
+  let executionId: string | undefined;
+
+  if (operationId.startsWith('unica_')) {
+    // Unica ASR операция
+    logger.info({ operationId }, '[COMPLETE] Processing Unica ASR operation');
+    const unicaStatus = await unicaAsrService.getOperationStatus(operationId);
+    
+    if (!unicaStatus.done || unicaStatus.status !== 'completed' || !unicaStatus.text) {
+      logger.warn({ operationId, status: unicaStatus.status, hasText: Boolean(unicaStatus.text) }, 'Unica operation not ready');
+      return res.status(400).json({ message: 'Операция не завершена или нет текста' });
+    }
+
+    transcriptText = unicaStatus.text;
+    
+    // Получить chatId и другие данные из ASR execution
+    const executions = await asrExecutionLogService.listExecutions({});
+    const execution = executions.find(e => e.metadata?.operationId === operationId);
+    
+    if (!execution) {
+      return res.status(400).json({ message: 'Execution record не найден для операции' });
+    }
+    
+    chatId = execution.chatId;
+    transcriptId = execution.transcriptId || undefined;
+    executionId = execution.id;
+
+    // Очистить операцию из кэша
+    unicaAsrService.clearOperation(operationId);
+  } else {
+    // Yandex ASR операция (существующая логика)
+    status = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
+    
+    if (status.status !== 'completed' || !status.result?.text) {
+      logger.warn({ operationId, status: status.status, hasText: Boolean(status.result?.text) }, 'Operation not ready');
+      return res.status(400).json({ message: 'Операция не завершена или нет текста' });
+    }
+
+    const result = status as typeof status & { chatId?: string; transcriptId?: string; executionId?: string };
+    chatId = result.chatId;
+    transcriptId = result.transcriptId;
+    executionId = result.executionId;
+    transcriptText = status.result.text || 'Стенограмма получена';
   }
 
-  const result = status as typeof status & { chatId?: string; transcriptId?: string; executionId?: string };
-  if (!result.chatId) {
+  if (!chatId) {
     return res.status(400).json({ message: 'Chat ID не найден в операции' });
   }
 
-  const chat = await storage.getChatSessionById(result.chatId);
+  const chat = await storage.getChatSessionById(chatId);
   if (!chat || chat.userId !== user.id) {
     return res.status(404).json({ message: 'Чат не найден или недоступен' });
   }
 
-  const transcriptText = status.result.text || 'Стенограмма получена';
   const skill = chat.skillId ? await getSkillById(chat.workspaceId, chat.skillId) : null;
   const autoActionEnabled = Boolean(
     skill && skill.onTranscriptionMode === 'auto_action' && skill.onTranscriptionAutoActionId,
   );
-  const asrExecutionId = result.executionId ?? null;
+  const asrExecutionId = executionId ?? null;
 
   // Create transcript record if not exists
-  let transcriptId: string | null = result.transcriptId ?? null;
-  let transcriptRecord = transcriptId ? await storage.getTranscriptById?.(transcriptId) : null;
+  let transcriptIdFinal: string | null = transcriptId ?? null;
+  let transcriptRecord = transcriptIdFinal ? await storage.getTranscriptById?.(transcriptIdFinal) : null;
   
   if (!transcriptRecord) {
     const initialStatus = autoActionEnabled ? 'postprocessing' : 'ready';
@@ -512,10 +734,10 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
       fullText: transcriptText,
       sourceFileId: null,
     });
-    transcriptId = transcriptRecord.id;
+    transcriptIdFinal = transcriptRecord.id;
     logger.info({
       operationId,
-      transcriptId,
+      transcriptId: transcriptIdFinal,
       chatId: chat.id,
     }, '[COMPLETE-STEP] Created transcript record');
   }
@@ -523,7 +745,7 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
   if (asrExecutionId) {
     await asrExecutionLogService.addEvent(asrExecutionId, {
       stage: 'transcribe_complete_called',
-      details: { operationId, chatId: chat.id, transcriptId },
+      details: { operationId, chatId: chat.id, transcriptId: transcriptIdFinal },
     });
   }
   
@@ -543,7 +765,7 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
   logger.info({
     operationId,
     chatId: chat.id,
-    transcriptId,
+    transcriptId: transcriptIdFinal,
     textLength: transcriptText.length,
     autoActionEnabled,
     initialStatus: initialTranscriptStatus,
@@ -556,19 +778,19 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
     type: 'transcript',
     title: transcriptRecord?.title ?? 'Стенограмма',
     previewText,
-    transcriptId,
+    transcriptId: transcriptIdFinal,
     createdByUserId: user.id,
   });
 
   let createdMessage = await storage.createChatMessage({
-    chatId: result.chatId,
+    chatId: chatId,
     role: 'assistant',
     messageType: 'card',
     cardId: card.id,
     content: previewText,
     metadata: {
       type: 'transcript',
-      transcriptId: transcriptId,
+      transcriptId: transcriptIdFinal,
       transcriptStatus: initialTranscriptStatus,
       previewText,
       cardId: card.id,
@@ -583,7 +805,7 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
     });
     await asrExecutionLogService.updateExecution(asrExecutionId, {
       transcriptMessageId: createdMessage.id,
-      transcriptId: transcriptId ?? null,
+      transcriptId: transcriptIdFinal ?? null,
     });
   }
 
@@ -593,7 +815,7 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
       const actionId = skill.onTranscriptionAutoActionId!;
       logger.info({
         chatId: chat.id,
-        transcriptId: transcriptId,
+        transcriptId: transcriptIdFinal,
         actionId,
         operationId,
         elapsed: Date.now() - completeStartTime,
@@ -629,7 +851,7 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
       }
 
       const ctx = {
-        transcriptId: transcriptId,
+        transcriptId: transcriptIdFinal,
         selectionText: transcriptText,
         chatId: chat.id,
         trigger: 'auto_action',
@@ -647,7 +869,7 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
         skill,
         action,
         placement,
-        transcriptId: transcriptId,
+        transcriptId: transcriptIdFinal,
         transcriptText,
         context: ctx,
       });
@@ -671,8 +893,8 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
         });
       }
       
-      if (transcriptId) {
-        await storage.updateTranscript(transcriptId, {
+      if (transcriptIdFinal) {
+        await storage.updateTranscript(transcriptIdFinal, {
           previewText: updatedPreviewText,
           defaultViewActionId: action.id,
           status: 'ready',
@@ -701,12 +923,12 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
       if (asrExecutionId) {
         await asrExecutionLogService.addEvent(asrExecutionId, {
           stage: 'transcript_saved',
-          details: { transcriptId: transcriptId },
+          details: { transcriptId: transcriptIdFinal },
         });
         await asrExecutionLogService.updateExecution(asrExecutionId, {
           status: 'success',
           finishedAt: new Date(),
-          transcriptId: transcriptId ?? null,
+          transcriptId: transcriptIdFinal ?? null,
         });
       }
     } catch (autoError) {
@@ -723,8 +945,8 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
       await storage.updateChatMessage(createdMessage.id, { metadata: failedMetadata });
       createdMessage = { ...createdMessage, metadata: failedMetadata as ChatMessageMetadata };
       
-      if (transcriptId) {
-        await storage.updateTranscript(transcriptId, {
+      if (transcriptIdFinal) {
+        await storage.updateTranscript(transcriptIdFinal, {
           status: 'ready',
           previewText: transcriptText.substring(0, 200),
         });
@@ -743,15 +965,15 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
         await asrExecutionLogService.updateExecution(asrExecutionId, {
           status: 'failed',
           errorMessage: autoError instanceof Error ? autoError.message : String(autoError),
-          transcriptId: transcriptId ?? null,
+          transcriptId: transcriptIdFinal ?? null,
           transcriptMessageId: createdMessage.id,
           finishedAt: new Date(),
         });
       }
     }
   } else {
-    if (transcriptId) {
-      await storage.updateTranscript(transcriptId, {
+    if (transcriptIdFinal) {
+      await storage.updateTranscript(transcriptIdFinal, {
         status: 'ready',
         previewText: transcriptText.substring(0, 200),
       });
@@ -761,12 +983,12 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
     if (asrExecutionId) {
       await asrExecutionLogService.addEvent(asrExecutionId, {
         stage: 'transcript_saved',
-        details: { transcriptId: transcriptId },
+        details: { transcriptId: transcriptIdFinal },
       });
       await asrExecutionLogService.updateExecution(asrExecutionId, {
         status: 'success',
         finishedAt: new Date(),
-        transcriptId: transcriptId ?? null,
+        transcriptId: transcriptIdFinal ?? null,
         transcriptMessageId: createdMessage.id,
       });
     }

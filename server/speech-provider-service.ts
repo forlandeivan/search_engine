@@ -1,10 +1,14 @@
 import { storage } from "./storage";
+import { z } from "zod";
 import type {
   SpeechProvider,
   SpeechProviderSecret,
   SpeechProviderStatus,
   SpeechProviderInsert,
+  AsrProviderType,
+  UnicaAsrConfig,
 } from "@shared/schema";
+import { log } from "./vite";
 
 export class SpeechProviderServiceError extends Error {
   public status: number;
@@ -33,6 +37,14 @@ export class SpeechProviderDisabledError extends SpeechProviderServiceError {
 const BUILT_IN_STT_PROVIDER_ID = "yandex_speechkit";
 const BUILT_IN_SECRET_KEYS = ["apiKey", "folderId", "serviceAccountKey", "s3AccessKeyId", "s3SecretAccessKey", "s3BucketName"] as const;
 const BUILT_IN_CONFIG_KEYS = ["languageCode", "model", "enablePunctuation"] as const;
+
+// Валидация конфигурации Unica ASR
+export const unicaAsrConfigSchema = z.object({
+  baseUrl: z.string().url("Некорректный Base URL"),
+  workspaceId: z.string().min(1, "Укажите Workspace ID"),
+  pollingIntervalMs: z.number().min(1000).max(60000).optional().default(5000),
+  timeoutMs: z.number().min(60000).max(7200000).optional().default(3600000), // 60 минут по умолчанию, макс 2 часа
+});
 
 export type SpeechProviderSummary = Pick<
   SpeechProvider,
@@ -277,6 +289,125 @@ class SpeechProviderService {
     }
     // Placeholder implementation - actual IAM token testing would require specific Yandex Cloud API calls
     return { success: true, message: 'IAM token test not yet implemented' };
+  }
+
+  /**
+   * Получить ASR провайдер для навыка
+   * Провайдер должен быть явно выбран в навыке
+   */
+  async getAsrProviderForSkill(skillId: string): Promise<SpeechProviderDetail | null> {
+    const skill = await storage.getSkillById(skillId);
+    if (!skill) {
+      return null;
+    }
+
+    // Провайдер должен быть выбран в навыке
+    if (!skill.asrProviderId) {
+      return null; // Провайдер не настроен
+    }
+
+    const provider = await this.getProviderById(skill.asrProviderId);
+    if (!provider || !provider.provider.isEnabled) {
+      throw new SpeechProviderServiceError(`ASR provider ${skill.asrProviderId} is not available or disabled`, 400);
+    }
+
+    return provider;
+  }
+
+  /**
+   * Получить провайдер по типу ASR
+   */
+  async getProviderByAsrType(asrType: AsrProviderType): Promise<SpeechProviderDetail | null> {
+    const providers = await storage.listSpeechProviders();
+    const provider = providers.find(
+      (p) => p.asrProviderType === asrType && p.isEnabled
+    );
+
+    if (!provider) {
+      return null;
+    }
+
+    return this.getProviderById(provider.id);
+  }
+
+  /**
+   * Получить список всех доступных ASR провайдеров
+   */
+  async getAvailableAsrProviders(): Promise<SpeechProviderDetail[]> {
+    const providers = await storage.listSpeechProviders();
+    const asrProviders = providers.filter(
+      (p) => p.providerType === "stt" && p.isEnabled
+    );
+
+    const details: SpeechProviderDetail[] = [];
+    for (const provider of asrProviders) {
+      const detail = await this.getProviderById(provider.id);
+      if (detail) {
+        details.push(detail);
+      }
+    }
+
+    return details;
+  }
+
+  /**
+   * Валидировать конфигурацию провайдера
+   */
+  validateProviderConfig(
+    asrType: AsrProviderType,
+    config: Record<string, unknown>
+  ): { valid: boolean; errors?: string[] } {
+    if (asrType === "unica") {
+      const result = unicaAsrConfigSchema.safeParse(config);
+      if (!result.success) {
+        return {
+          valid: false,
+          errors: result.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`),
+        };
+      }
+      return { valid: true };
+    }
+
+    // Для Yandex — существующая валидация
+    return { valid: true };
+  }
+
+  /**
+   * Создать Unica ASR провайдер
+   */
+  async createUnicaProvider(
+    displayName: string,
+    config: UnicaAsrConfig
+  ): Promise<SpeechProvider> {
+    const validation = this.validateProviderConfig("unica", config);
+    if (!validation.valid) {
+      throw new SpeechProviderServiceError(`Invalid config: ${validation.errors?.join(", ")}`, 400);
+    }
+
+    const id = `unica_asr_${Date.now()}`;
+
+    const provider = await storage.createSpeechProvider({
+      id,
+      displayName,
+      providerType: "stt",
+      asrProviderType: "unica",
+      direction: "audio_to_text",
+      isEnabled: true,
+      status: "Enabled",
+      configJson: config,
+      isBuiltIn: false,
+    });
+
+    log(`[SpeechProvider] Created Unica ASR provider: ${id}`);
+
+    return provider;
+  }
+
+  /**
+   * Определить тип ASR провайдера
+   */
+  getAsrProviderType(provider: SpeechProvider): AsrProviderType {
+    return provider.asrProviderType || "yandex";
   }
 }
 

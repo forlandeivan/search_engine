@@ -1570,10 +1570,14 @@ export type SpeechProviderDirection = (typeof speechProviderDirections)[number];
 export const speechProviderStatuses = ["Disabled", "Enabled", "Error"] as const;
 export type SpeechProviderStatus = (typeof speechProviderStatuses)[number];
 
+export const asrProviderTypes = ["yandex", "unica"] as const;
+export type AsrProviderType = (typeof asrProviderTypes)[number];
+
 export const speechProviders = pgTable("speech_providers", {
   id: text("id").primaryKey(),
   displayName: text("display_name").notNull(),
   providerType: text("provider_type").$type<SpeechProviderType>().notNull().default("stt"),
+  asrProviderType: text("asr_provider_type").$type<AsrProviderType>(),
   direction: text("direction").$type<SpeechProviderDirection>().notNull().default("audio_to_text"),
   isEnabled: boolean("is_enabled").notNull().default(false),
   status: text("status").$type<SpeechProviderStatus>().notNull().default("Disabled"),
@@ -1700,6 +1704,7 @@ export const skills = pgTable(
       .$type<SkillTranscriptionFlowMode>()
       .notNull()
       .default("standard"),
+    asrProviderId: text("asr_provider_id").references(() => speechProviders.id, { onDelete: "set null" }),
     onTranscriptionMode: text("on_transcription_mode")
       .$type<SkillTranscriptionMode>()
       .notNull()
@@ -2897,6 +2902,15 @@ export type PublicEmbeddingProvider = Omit<EmbeddingProvider, "authorizationKey"
 export type SpeechProvider = typeof speechProviders.$inferSelect;
 export type SpeechProviderInsert = typeof speechProviders.$inferInsert;
 export type SpeechProviderSecret = typeof speechProviderSecrets.$inferSelect;
+
+// Unica ASR configuration interface
+export interface UnicaAsrConfig {
+  baseUrl: string;
+  workspaceId: string;
+  pollingIntervalMs?: number;
+  timeoutMs?: number;
+}
+
 export type LlmProvider = typeof llmProviders.$inferSelect;
 export type LlmProviderInsert = typeof llmProviders.$inferInsert;
 export type UnicaChatConfig = typeof unicaChatConfig.$inferSelect;
