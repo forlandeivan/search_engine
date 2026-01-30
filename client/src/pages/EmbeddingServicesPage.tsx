@@ -99,6 +99,10 @@ type TestCredentialsDebugStep = {
 type TestCredentialsResult = {
   message: string;
   steps: TestCredentialsDebugStep[];
+  testText?: string;
+  vectorSize?: number;
+  vectorPreview?: number[];
+  usageTokens?: number;
 };
 
 type TestCredentialsError = Error & {
@@ -266,6 +270,7 @@ export default function EmbeddingServicesPage() {
   const [selectedProviderId, setSelectedProviderId] = useState<string | "new" | null>(null);
   const [debugSteps, setDebugSteps] = useState<DebugStep[]>(() => buildDebugSteps());
   const [activeTab, setActiveTab] = useState<"settings" | "docs">("settings");
+  const [testEmbeddingText, setTestEmbeddingText] = useState("Hello world!");
   const watchedProviderType = form.watch("providerType");
   const isGigachatProvider = watchedProviderType === "gigachat";
   const isUnicaProvider = watchedProviderType === "unica";
@@ -725,6 +730,7 @@ export default function EmbeddingServicesPage() {
             model,
             allowSelfSignedCertificate: values.allowSelfSignedCertificate,
             requestHeaders,
+            testText: testEmbeddingText.trim() || undefined,
           }),
         });
       } catch (error) {
@@ -998,24 +1004,37 @@ export default function EmbeddingServicesPage() {
               )}
             </FormDescription>
             <div className="flex flex-col gap-3 pt-2">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={testEmbeddingText}
+                    onChange={(e) => setTestEmbeddingText(e.target.value)}
+                    placeholder="Текст для тестовой векторизации"
+                    className="max-w-xs"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => testCredentialsMutation.mutate()}
+                    disabled={testCredentialsMutation.isPending || !testEmbeddingText.trim()}
+                  >
+                    {testCredentialsMutation.isPending ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Проверяем...
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="mr-2 h-4 w-4" /> Проверить
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Введите текст для тестовой векторизации. Результат покажет размерность вектора и первые 10 значений.
+                </p>
+              </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => testCredentialsMutation.mutate()}
-                  disabled={testCredentialsMutation.isPending}
-                >
-                  {testCredentialsMutation.isPending ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Проверяем...
-                    </>
-                  ) : (
-                    <>
-                      <ShieldCheck className="mr-2 h-4 w-4" /> Проверить авторизацию
-                    </>
-                  )}
-                </Button>
                 {testCredentialsMutation.isSuccess && !testCredentialsMutation.isPending ? (
                   <span className="flex items-center gap-1 text-sm text-emerald-600">
                     <ShieldCheck className="h-4 w-4" /> {testCredentialsMutation.data?.message}
@@ -1061,6 +1080,37 @@ export default function EmbeddingServicesPage() {
                   </div>
                 </div>
               ) : null}
+
+              {testCredentialsMutation.isSuccess && testCredentialsMutation.data?.vectorPreview && (
+                <div className="rounded-lg border bg-muted/30 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-3">
+                    Результат векторизации
+                  </p>
+                  <div className="space-y-2 text-sm">
+                    <p>
+                      <span className="text-muted-foreground">Текст:</span>{" "}
+                      <span className="font-medium">"{testCredentialsMutation.data.testText}"</span>
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Размерность:</span>{" "}
+                      <span className="font-medium">{testCredentialsMutation.data.vectorSize}</span>
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Токенов:</span>{" "}
+                      <span className="font-medium">
+                        {testCredentialsMutation.data.usageTokens ?? "—"}
+                      </span>
+                    </p>
+                    <div>
+                      <span className="text-muted-foreground">Вектор (первые 10 значений):</span>
+                      <code className="block mt-1 text-xs bg-background p-2 rounded overflow-x-auto border">
+                        [{testCredentialsMutation.data.vectorPreview.map((n) => n.toFixed(6)).join(", ")}
+                        {(testCredentialsMutation.data.vectorSize ?? 0) > 10 ? ", ..." : ""}]
+                      </code>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
             <FormMessage />
           </FormItem>
@@ -1068,19 +1118,21 @@ export default function EmbeddingServicesPage() {
       />
 
       <div className="grid gap-4 md:grid-cols-2">
-        <FormField
-          control={form.control}
-          name="scope"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>OAuth scope</FormLabel>
-              <FormControl>
-                <Input {...field} placeholder="GIGACHAT_API_PERS" required />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        {!isUnicaProvider && (
+          <FormField
+            control={form.control}
+            name="scope"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>OAuth scope</FormLabel>
+                <FormControl>
+                  <Input {...field} placeholder="GIGACHAT_API_PERS" required />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
 
         <FormField
           control={form.control}

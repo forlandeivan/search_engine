@@ -193,6 +193,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
     workSpaceId: z.string().trim().optional(),
     truncate: z.boolean().optional(),
     dimensions: z.number().int().positive().optional(),
+    testText: z.string().trim().min(1, "Введите текст для тестирования").max(1000, "Текст слишком длинный").optional(),
   }).refine(
     (data) => {
       if (data.providerType === "unica") {
@@ -212,7 +213,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
   );
 
   const payload = testSchema.parse(req.body);
-  const TEST_EMBEDDING_TEXT = "привет!";
+  const embeddingText = payload.testText?.trim() || "привет!";
 
   const steps: Array<{
     stage: string;
@@ -287,13 +288,13 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
         ? {
             workSpaceId: payload.workSpaceId ?? "GENERAL",
             model: payload.model,
-            input: [TEST_EMBEDDING_TEXT],
+            input: [embeddingText],
             truncate: payload.truncate ?? true,
             ...(payload.dimensions ? { dimensions: payload.dimensions } : {}),
           }
         : {
             model: payload.model,
-            input: [TEST_EMBEDDING_TEXT],
+            input: [embeddingText],
             encoding_format: "float",
           };
 
@@ -392,7 +393,9 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
       res.json({
         message: "Авторизация подтверждена",
         steps,
+        testText: embeddingText,
         vectorSize: vector.length,
+        vectorPreview: vector.slice(0, 10),
         usageTokens,
       });
     } catch (error) {
