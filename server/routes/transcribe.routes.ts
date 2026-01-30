@@ -173,8 +173,8 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
       return res.status(404).json({ message: 'Навык не найден' });
     }
 
-    const config = asrProvider.config as UnicaAsrConfig;
-    const fileProviderId = skill.noCodeFileStorageProviderId;
+    const config = asrProvider.config as unknown as UnicaAsrConfig;
+    const fileProviderId = skill.noCodeConnection?.fileStorageProviderId;
 
     if (!fileProviderId) {
       return res.status(400).json({
@@ -183,18 +183,40 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
     }
 
     try {
-      // 1. Загрузить файл через файловый провайдер
+      // 1. Создать запись файла в БД
+      const fileId = `audio_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      const audioFile = await storage.createFile({
+        id: fileId,
+        workspaceId,
+        name: file.originalname || 'audio.wav',
+        kind: 'audio',
+        sizeBytes: BigInt(file.size),
+        mimeType: file.mimetype || 'audio/wav',
+        status: 'uploading',
+        skillId: skill.id,
+        chatId,
+        userId: user.id,
+        metadata: {
+          originalName: file.originalname,
+          uploadedAt: new Date().toISOString(),
+        },
+      });
+
       logger.info({
         operationId,
         chatId,
+        fileId: audioFile.id,
         fileProviderId,
-      }, '[UNICA-ASR] Uploading file to provider');
+      }, '[UNICA-ASR] File record created, uploading to provider');
 
-      const uploadResult = await uploadFileToProvider({
+      // 2. Загрузить файл через файловый провайдер
+      const uploadedFile = await uploadFileToProvider({
+        fileId: audioFile.id,
         providerId: fileProviderId,
         data: file.buffer,
         fileName: file.originalname,
         mimeType: file.mimetype,
+        sizeBytes: file.size,
         context: {
           workspaceId,
           skillId: skill.id,
@@ -203,15 +225,21 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         },
       });
 
+      // Получить filePath из провайдера (providerFileId)
+      const filePath = uploadedFile.providerFileId;
+      if (!filePath) {
+        throw new Error('Provider did not return file path');
+      }
+
       logger.info({
         operationId,
         chatId,
-        filePath: uploadResult.filePath,
+        filePath,
       }, '[UNICA-ASR] File uploaded, starting recognition');
 
       // 2. Запустить транскрибацию через Unica ASR
       const { taskId, operationId: unicaOperationId } = await unicaAsrService.startRecognition(
-        uploadResult.filePath,
+        filePath,
         config
       );
 
@@ -223,18 +251,20 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
       }, '[UNICA-ASR] Recognition started successfully');
 
       // 3. Создать ASR execution record
-      const asrExecution = await asrExecutionLogService.createExecution({
+      await asrExecutionLogService.createExecution({
         workspaceId,
         chatId,
         skillId: skill.id,
-        userId: user.id,
+        transcriptId: null,
+        audioFileUrl: filePath,
         status: 'processing',
         metadata: {
-          operationId: unicaOperationId,
+          unicaOperationId,
           taskId,
           asrProviderType: 'unica',
           fileProviderId,
-          filePath: uploadResult.filePath,
+          filePath,
+          fileId: audioFile.id,
         },
       });
 

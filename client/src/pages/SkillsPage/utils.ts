@@ -8,8 +8,12 @@ export type SkillFormValues = {
   name: string;
   description: string | null;
   systemKey: string | null;
+  systemPrompt: string | null;
   icon: string | null;
   llmSelection: string;
+  llmKey: string;
+  llmTemperature: number | null;
+  llmMaxTokens: number | null;
   collectionName: string | null;
   knowledgeBaseIds: string[];
   executionMode: "standard" | "no_code";
@@ -17,7 +21,7 @@ export type SkillFormValues = {
   noCodeFileStorageProviderId: string | null;
   noCodeAuthType: "none" | "bearer";
   noCodeBearerToken: string | null;
-  noCodeBearerTokenAction: "keep" | "clear" | "new";
+  noCodeBearerTokenAction: "keep" | "clear" | "new" | "replace";
   contextInputLimit: number | null;
   transcriptionFlowMode: "standard" | "no_code";
   asrProviderId: string | null;
@@ -45,8 +49,12 @@ export const skillFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().nullable(),
   systemKey: z.string().nullable(),
+  systemPrompt: z.string().nullable(),
   icon: z.string().nullable(),
   llmSelection: z.string(),
+  llmKey: z.string(),
+  llmTemperature: z.number().nullable(),
+  llmMaxTokens: z.number().nullable(),
   collectionName: z.string().nullable(),
   knowledgeBaseIds: z.array(z.string()),
   executionMode: z.enum(["standard", "no_code"]),
@@ -54,7 +62,7 @@ export const skillFormSchema = z.object({
   noCodeFileStorageProviderId: z.string().nullable(),
   noCodeAuthType: z.enum(["none", "bearer"]),
   noCodeBearerToken: z.string().nullable(),
-  noCodeBearerTokenAction: z.enum(["keep", "clear", "new"]),
+  noCodeBearerTokenAction: z.enum(["keep", "clear", "new", "replace"]),
   contextInputLimit: z.number().nullable(),
   transcriptionFlowMode: z.enum(["standard", "no_code"]),
   asrProviderId: z.string().nullable(),
@@ -82,8 +90,12 @@ export const defaultFormValues: SkillFormValues = {
   name: "",
   description: null,
   systemKey: null,
+  systemPrompt: null,
   icon: null,
   llmSelection: "",
+  llmKey: "",
+  llmTemperature: null,
+  llmMaxTokens: null,
   collectionName: null,
   knowledgeBaseIds: [],
   executionMode: "standard",

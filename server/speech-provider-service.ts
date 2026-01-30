@@ -296,19 +296,23 @@ class SpeechProviderService {
    * Провайдер должен быть явно выбран в навыке
    */
   async getAsrProviderForSkill(skillId: string): Promise<SpeechProviderDetail | null> {
-    const skill = await storage.getSkillById(skillId);
-    if (!skill) {
+    // Get skill from storage using Drizzle query
+    const skillRecord = await storage.db.query.skills.findFirst({
+      where: (skills, { eq }) => eq(skills.id, skillId),
+    });
+
+    if (!skillRecord) {
       return null;
     }
 
     // Провайдер должен быть выбран в навыке
-    if (!skill.asrProviderId) {
+    if (!skillRecord.asrProviderId) {
       return null; // Провайдер не настроен
     }
 
-    const provider = await this.getProviderById(skill.asrProviderId);
+    const provider = await this.getProviderById(skillRecord.asrProviderId);
     if (!provider || !provider.provider.isEnabled) {
-      throw new SpeechProviderServiceError(`ASR provider ${skill.asrProviderId} is not available or disabled`, 400);
+      throw new SpeechProviderServiceError(`ASR provider ${skillRecord.asrProviderId} is not available or disabled`, 400);
     }
 
     return provider;
@@ -362,7 +366,7 @@ class SpeechProviderService {
       if (!result.success) {
         return {
           valid: false,
-          errors: result.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`),
+          errors: result.error.issues.map((e) => `${e.path.join(".")}: ${e.message}`),
         };
       }
       return { valid: true };
@@ -394,7 +398,7 @@ class SpeechProviderService {
       direction: "audio_to_text",
       isEnabled: true,
       status: "Enabled",
-      configJson: config,
+      configJson: config as unknown as Record<string, unknown>,
       isBuiltIn: false,
     });
 
