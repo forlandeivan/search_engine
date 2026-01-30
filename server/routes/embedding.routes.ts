@@ -358,10 +358,32 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
       responseBody: JSON.stringify(embeddingJson).substring(0, 500),
     });
 
-    const embeddingData = embeddingJson as {
+    // Обработка формата Unica AI: { vectors: [[...]], meta: {...} }
+    // Преобразуем в стандартный формат OpenAI: { data: [{ embedding: [...] }] }
+    let embeddingData: {
       data?: Array<{ embedding: number[]; index?: number }>;
       usage?: { total_tokens?: number };
     };
+
+    if (payload.providerType === "unica") {
+      const unicaResponse = embeddingJson as { vectors?: number[][]; meta?: unknown };
+      if (unicaResponse.vectors && Array.isArray(unicaResponse.vectors)) {
+        embeddingData = {
+          data: unicaResponse.vectors.map((vector, index) => ({
+            embedding: vector,
+            index,
+          })),
+          usage: { total_tokens: 0 },
+        };
+      } else {
+        embeddingData = { data: [] };
+      }
+    } else {
+      embeddingData = embeddingJson as {
+        data?: Array<{ embedding: number[]; index?: number }>;
+        usage?: { total_tokens?: number };
+      };
+    }
 
     if (!embeddingData.data || embeddingData.data.length === 0) {
       logger.warn('[test-credentials] Empty data array in response', {
