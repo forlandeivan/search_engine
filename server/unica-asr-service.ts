@@ -106,7 +106,16 @@ export class UnicaAsrService {
       },
     };
 
-    log(`[UnicaASR] Starting recognition: ${filePath}`);
+    log("[UnicaASR] ========== START RECOGNITION ==========");
+    log("[UnicaASR] File path:", filePath);
+    log("[UnicaASR] Config:", {
+      baseUrl: config.baseUrl,
+      workspaceId: config.workspaceId,
+      pollingIntervalMs: config.pollingIntervalMs,
+      timeoutMs: config.timeoutMs,
+    });
+    log("[UnicaASR] POST", url);
+    log("[UnicaASR] Request body:", JSON.stringify(body, null, 2));
 
     const response = await fetchWithRetry(url, {
       method: "POST",
@@ -114,8 +123,11 @@ export class UnicaAsrService {
       body: JSON.stringify(body),
     });
 
+    log("[UnicaASR] Response status:", response.status, response.statusText);
+
     if (!response.ok) {
       const errorText = await response.text();
+      log("[UnicaASR] ❌ Error response:", errorText);
       throw new UnicaAsrError(
         `Failed to start recognition: ${errorText}`,
         "START_RECOGNITION_FAILED",
@@ -124,6 +136,7 @@ export class UnicaAsrService {
     }
 
     const task: UnicaRecognitionTask = await response.json();
+    log("[UnicaASR] ✅ Response body:", JSON.stringify(task, null, 2));
 
     // Генерируем operationId для совместимости с существующей архитектурой
     const operationId = `unica_${task.id}`;
@@ -136,7 +149,9 @@ export class UnicaAsrService {
       filePath,
     });
 
-    log(`[UnicaASR] Task created: ${task.id}, operationId: ${operationId}`);
+    log("[UnicaASR] Task created. Task ID:", task.id);
+    log("[UnicaASR] Operation ID:", operationId);
+    log("[UnicaASR] ========================================");
 
     return { taskId: task.id, operationId };
   }
@@ -147,10 +162,17 @@ export class UnicaAsrService {
   async getTaskStatus(taskId: string, config: UnicaAsrConfig): Promise<UnicaRecognitionTask> {
     const url = `${config.baseUrl}/asr/SpeechRecognition/recognition-task/${taskId}?workSpaceId=${config.workspaceId}`;
 
+    log("[UnicaASR] ========== GET TASK STATUS ==========");
+    log("[UnicaASR] Task ID:", taskId);
+    log("[UnicaASR] GET", url);
+
     const response = await fetchWithRetry(url, { method: "GET" });
+
+    log("[UnicaASR] Response status:", response.status, response.statusText);
 
     if (!response.ok) {
       const errorText = await response.text();
+      log("[UnicaASR] ❌ Error response:", errorText);
       throw new UnicaAsrError(
         `Failed to get task status: ${errorText}`,
         "GET_STATUS_FAILED",
@@ -158,7 +180,12 @@ export class UnicaAsrService {
       );
     }
 
-    return response.json();
+    const task = await response.json();
+    log("[UnicaASR] ✅ Task status:", task.status);
+    log("[UnicaASR] Response body:", JSON.stringify(task, null, 2));
+    log("[UnicaASR] ========================================");
+
+    return task;
   }
 
   /**
@@ -167,10 +194,18 @@ export class UnicaAsrService {
   async getDatasetText(datasetId: string, config: UnicaAsrConfig, version: number = 1): Promise<string> {
     const url = `${config.baseUrl}/datamanagement/Datasets/${datasetId}?workspaceId=${config.workspaceId}&version=${version}`;
 
+    log("[UnicaASR] ========== GET DATASET TEXT ==========");
+    log("[UnicaASR] Dataset ID:", datasetId);
+    log("[UnicaASR] Version:", version);
+    log("[UnicaASR] GET", url);
+
     const response = await fetchWithRetry(url, { method: "GET" });
+
+    log("[UnicaASR] Response status:", response.status, response.statusText);
 
     if (!response.ok) {
       const errorText = await response.text();
+      log("[UnicaASR] ❌ Error response:", errorText);
       throw new UnicaAsrError(
         `Failed to get dataset: ${errorText}`,
         "GET_DATASET_FAILED",
@@ -179,7 +214,14 @@ export class UnicaAsrService {
     }
 
     const data: UnicaDatasetResponse = await response.json();
-    return data.dataset.text;
+    const text = data.dataset.text;
+    
+    log("[UnicaASR] ✅ Dataset retrieved");
+    log("[UnicaASR] Text length:", text.length, "chars");
+    log("[UnicaASR] Text preview (first 200 chars):", text.substring(0, 200));
+    log("[UnicaASR] ========================================");
+
+    return text;
   }
 
   /**
@@ -192,16 +234,26 @@ export class UnicaAsrService {
     text?: string;
     error?: string;
   }> {
+    log("[UnicaASR] ========== GET OPERATION STATUS ==========");
+    log("[UnicaASR] Operation ID:", operationId);
+
     const cached = this.operationsCache.get(operationId);
     if (!cached) {
+      log("[UnicaASR] ❌ Operation not found in cache");
       throw new UnicaAsrError(`Operation not found: ${operationId}`, "OPERATION_NOT_FOUND");
     }
 
     const { taskId, config, startedAt } = cached;
     const timeoutMs = config.timeoutMs || 3600000; // 60 минут по умолчанию
+    const elapsedMs = Date.now() - startedAt.getTime();
+
+    log("[UnicaASR] Task ID:", taskId);
+    log("[UnicaASR] Elapsed time:", Math.round(elapsedMs / 1000), "seconds");
+    log("[UnicaASR] Timeout:", Math.round(timeoutMs / 1000), "seconds");
 
     // Проверка таймаута
-    if (Date.now() - startedAt.getTime() > timeoutMs) {
+    if (elapsedMs > timeoutMs) {
+      log("[UnicaASR] ❌ Operation timed out");
       this.operationsCache.delete(operationId);
       return {
         done: true,
@@ -212,7 +264,10 @@ export class UnicaAsrService {
 
     const task = await this.getTaskStatus(taskId, config);
 
+    log("[UnicaASR] Unica task status:", task.status);
+
     if (task.status === "Failed") {
+      log("[UnicaASR] ❌ Task failed:", task.error || "Unknown error");
       this.operationsCache.delete(operationId);
       return {
         done: true,
@@ -222,8 +277,16 @@ export class UnicaAsrService {
     }
 
     if (task.status === "Completed" && task.resultDatasetId) {
+      log("[UnicaASR] ✅ Task completed, fetching dataset...");
+      log("[UnicaASR] Result dataset ID:", task.resultDatasetId);
+      
       const text = await this.getDatasetText(task.resultDatasetId, config);
       this.operationsCache.delete(operationId);
+      
+      log("[UnicaASR] ✅ Transcription completed successfully");
+      log("[UnicaASR] Final text length:", text.length, "chars");
+      log("[UnicaASR] ========================================");
+      
       return {
         done: true,
         status: "completed",
@@ -232,9 +295,13 @@ export class UnicaAsrService {
     }
 
     // Queued или Processing
+    const mappedStatus = task.status === "Queued" ? "pending" : "processing";
+    log("[UnicaASR] Task status:", mappedStatus, "(waiting...)");
+    log("[UnicaASR] ========================================");
+    
     return {
       done: false,
-      status: task.status === "Queued" ? "pending" : "processing",
+      status: mappedStatus,
     };
   }
 

@@ -168,15 +168,32 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
 
   // Handle Unica ASR
   if (asrType === "unica" && asrProvider && chat.skillId) {
+    logger.info("[UNICA-ASR] ========== UNICA ASR FLOW START ==========");
+    logger.info({ operationId, chatId, workspaceId, asrProviderId: asrProvider.provider.id }, "[UNICA-ASR] Using Unica ASR provider");
+
     const skill = await getSkillById(workspaceId, chat.skillId);
     if (!skill) {
+      logger.error({ skillId: chat.skillId }, "[UNICA-ASR] ❌ Skill not found");
       return res.status(404).json({ message: 'Навык не найден' });
     }
+
+    logger.info({ skillId: skill.id, skillName: skill.name }, "[UNICA-ASR] Skill loaded");
 
     const config = asrProvider.config as unknown as UnicaAsrConfig;
     const fileProviderId = skill.noCodeConnection?.fileStorageProviderId;
 
+    logger.info({
+      config: {
+        baseUrl: config.baseUrl,
+        workspaceId: config.workspaceId,
+        pollingIntervalMs: config.pollingIntervalMs,
+        timeoutMs: config.timeoutMs,
+      },
+      fileProviderId,
+    }, "[UNICA-ASR] Configuration");
+
     if (!fileProviderId) {
+      logger.error("[UNICA-ASR] ❌ No file provider configured for skill");
       return res.status(400).json({
         message: 'Для Unica ASR необходимо настроить файловый провайдер в навыке',
       });
@@ -185,6 +202,14 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
     try {
       // 1. Создать запись файла в БД
       const fileId = `audio_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      
+      logger.info({
+        fileId,
+        fileName: file.originalname,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+      }, "[UNICA-ASR] Creating file record in DB");
+
       const audioFile = await storage.createFile({
         id: fileId,
         workspaceId,
@@ -202,14 +227,11 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         },
       });
 
-      logger.info({
-        operationId,
-        chatId,
-        fileId: audioFile.id,
-        fileProviderId,
-      }, '[UNICA-ASR] File record created, uploading to provider');
+      logger.info({ fileId: audioFile.id }, "[UNICA-ASR] ✅ File record created");
 
       // 2. Загрузить файл через файловый провайдер
+      logger.info({ fileProviderId, fileId: audioFile.id }, "[UNICA-ASR] Uploading file to provider");
+
       const uploadedFile = await uploadFileToProvider({
         fileId: audioFile.id,
         providerId: fileProviderId,
@@ -228,29 +250,33 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
       // Получить filePath из провайдера (providerFileId)
       const filePath = uploadedFile.providerFileId;
       if (!filePath) {
+        logger.error({ uploadedFile }, "[UNICA-ASR] ❌ Provider did not return file path");
         throw new Error('Provider did not return file path');
       }
 
       logger.info({
-        operationId,
-        chatId,
         filePath,
-      }, '[UNICA-ASR] File uploaded, starting recognition');
+        providerFileId: uploadedFile.providerFileId,
+        status: uploadedFile.status,
+      }, "[UNICA-ASR] ✅ File uploaded to provider");
 
       // 2. Запустить транскрибацию через Unica ASR
+      logger.info({ filePath }, "[UNICA-ASR] Starting recognition via Unica ASR service...");
+      
       const { taskId, operationId: unicaOperationId } = await unicaAsrService.startRecognition(
         filePath,
         config
       );
 
+      const elapsed = Date.now() - startTime;
       logger.info({
-        operationId,
         unicaOperationId,
         taskId,
-        elapsed: Date.now() - startTime,
-      }, '[UNICA-ASR] Recognition started successfully');
+        elapsed,
+      }, "[UNICA-ASR] ✅ Recognition started successfully");
 
       // 3. Создать ASR execution record
+      logger.info("[UNICA-ASR] Creating ASR execution log...");
       await asrExecutionLogService.createExecution({
         workspaceId,
         chatId,
@@ -267,9 +293,11 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
           fileId: audioFile.id,
         },
       });
+      logger.info("[UNICA-ASR] ✅ ASR execution log created");
 
       // 4. Create BotAction to show processing indicator
       try {
+        logger.info("[UNICA-ASR] Creating bot action for processing indicator...");
         await upsertBotActionForChat({
           workspaceId,
           chatId,
@@ -279,11 +307,13 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
           displayText: `Распознаём речь: ${file.originalname || 'audio'}`,
           userId: user.id,
         });
+        logger.info("[UNICA-ASR] ✅ Bot action created");
       } catch (botActionError) {
-        logger.warn({ error: botActionError, operationId: unicaOperationId }, '[UNICA-ASR] Failed to create bot action');
+        logger.warn({ error: botActionError, operationId: unicaOperationId }, '[UNICA-ASR] ⚠️ Failed to create bot action');
       }
 
       // Schedule chat title generation
+      logger.info("[UNICA-ASR] Scheduling chat title generation...");
       scheduleChatTitleGenerationIfNeeded({
         chatId,
         workspaceId,
@@ -292,6 +322,9 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         messageMetadata: { type: 'audio', fileName: file.originalname || 'audio' },
         chatTitle: chat.title,
       });
+
+      logger.info("[UNICA-ASR] ========== UNICA ASR FLOW COMPLETED ==========");
+      logger.info({ unicaOperationId, message: "Client should poll for status" }, "[UNICA-ASR] Response sent to client");
 
       return res.json({
         status: 'started',
@@ -304,16 +337,21 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         chatId,
         operationId,
         elapsed: Date.now() - startTime,
-      }, '[UNICA-ASR] Recognition start failed');
+      }, '[UNICA-ASR] ❌ Recognition start failed');
       
       if (error instanceof UnicaAsrError) {
+        logger.error({
+          code: error.code,
+          statusCode: error.statusCode,
+          message: error.message,
+        }, "[UNICA-ASR] ❌ UnicaAsrError details");
         return res.status(error.statusCode || 500).json({
           message: error.message,
           code: error.code,
         });
       }
 
-      logger.error({ userId: user.id, chatId, operationId, error }, 'Error starting Unica ASR transcription');
+      logger.error({ userId: user.id, chatId, operationId, error }, '[UNICA-ASR] ❌ Unexpected error');
       throw error;
     }
   }
@@ -613,7 +651,27 @@ transcribeRouter.get('/operations/:operationId', asyncHandler(async (req, res) =
     // Определить тип операции по префиксу
     if (operationId.startsWith('unica_')) {
       // Unica ASR операция
+      logger.info({ operationId, userId: user.id }, "[UNICA-ASR] ========== POLLING STATUS ==========");
+      logger.info({ operationId }, "[UNICA-ASR] Checking Unica ASR operation status");
+      
       const status = await unicaAsrService.getOperationStatus(operationId);
+      
+      logger.info({
+        operationId,
+        done: status.done,
+        status: status.status,
+        hasText: !!status.text,
+        textLength: status.text?.length,
+        error: status.error,
+      }, "[UNICA-ASR] Status retrieved");
+      
+      if (status.done) {
+        logger.info({ operationId, status: status.status }, "[UNICA-ASR] ✅ Operation completed");
+      } else {
+        logger.info({ operationId, status: status.status }, "[UNICA-ASR] ⏳ Operation still in progress");
+      }
+      logger.info("[UNICA-ASR] ========================================");
+      
       return res.json({
         status: status.done ? 'completed' : 'processing',
         done: status.done,
@@ -632,6 +690,12 @@ transcribeRouter.get('/operations/:operationId', asyncHandler(async (req, res) =
       return res.status(err.status).json({ message: err.message, code: err.code });
     }
     if (err instanceof UnicaAsrError) {
+      logger.error({
+        operationId,
+        code: err.code,
+        statusCode: err.statusCode,
+        message: err.message,
+      }, "[UNICA-ASR] ❌ Error getting operation status");
       return res.status(err.statusCode || 500).json({ message: err.message, code: err.code });
     }
     throw err;
@@ -694,21 +758,39 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
 
   if (operationId.startsWith('unica_')) {
     // Unica ASR операция
-    logger.info({ operationId }, '[COMPLETE] Processing Unica ASR operation');
+    logger.info({ operationId }, "[UNICA-ASR] ========== COMPLETE TRANSCRIPTION ==========");
+    logger.info({ operationId }, "[UNICA-ASR] Processing Unica ASR operation completion");
+    
     const unicaStatus = await unicaAsrService.getOperationStatus(operationId);
     
+    logger.info({
+      operationId,
+      done: unicaStatus.done,
+      status: unicaStatus.status,
+      hasText: Boolean(unicaStatus.text),
+      textLength: unicaStatus.text?.length,
+      error: unicaStatus.error,
+    }, "[UNICA-ASR] Final operation status");
+    
     if (!unicaStatus.done || unicaStatus.status !== 'completed' || !unicaStatus.text) {
-      logger.warn({ operationId, status: unicaStatus.status, hasText: Boolean(unicaStatus.text) }, 'Unica operation not ready');
+      logger.warn({
+        operationId,
+        status: unicaStatus.status,
+        hasText: Boolean(unicaStatus.text),
+      }, '[UNICA-ASR] ❌ Operation not ready for completion');
       return res.status(400).json({ message: 'Операция не завершена или нет текста' });
     }
 
     transcriptText = unicaStatus.text;
+    logger.info({ operationId, textLength: transcriptText.length }, "[UNICA-ASR] ✅ Transcription text retrieved");
     
     // Получить chatId и другие данные из ASR execution
+    logger.info({ operationId }, "[UNICA-ASR] Looking up ASR execution record...");
     const executions = await asrExecutionLogService.listExecutions({});
-    const execution = executions.find(e => e.metadata?.operationId === operationId);
+    const execution = executions.find(e => e.metadata?.unicaOperationId === operationId);
     
     if (!execution) {
+      logger.error({ operationId }, "[UNICA-ASR] ❌ Execution record not found");
       return res.status(400).json({ message: 'Execution record не найден для операции' });
     }
     
@@ -716,7 +798,15 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
     transcriptId = execution.transcriptId || undefined;
     executionId = execution.id;
 
+    logger.info({
+      operationId,
+      chatId,
+      transcriptId,
+      executionId,
+    }, "[UNICA-ASR] ✅ Execution record found");
+
     // Очистить операцию из кэша
+    logger.info({ operationId }, "[UNICA-ASR] Clearing operation from cache");
     unicaAsrService.clearOperation(operationId);
   } else {
     // Yandex ASR операция (существующая логика)
@@ -735,13 +825,19 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
   }
 
   if (!chatId) {
+    logger.error({ operationId }, "[UNICA-ASR] ❌ Chat ID not found in operation");
     return res.status(400).json({ message: 'Chat ID не найден в операции' });
   }
 
+  logger.info({ chatId, operationId }, operationId.startsWith('unica_') ? "[UNICA-ASR] Loading chat session..." : "Loading chat session");
+
   const chat = await storage.getChatSessionById(chatId);
   if (!chat || chat.userId !== user.id) {
+    logger.error({ chatId, userId: user.id }, operationId.startsWith('unica_') ? "[UNICA-ASR] ❌ Chat not found or access denied" : "Chat not found or access denied");
     return res.status(404).json({ message: 'Чат не найден или недоступен' });
   }
+
+  logger.info({ chatId, skillId: chat.skillId }, operationId.startsWith('unica_') ? "[UNICA-ASR] ✅ Chat loaded" : "Chat loaded");
 
   const skill = chat.skillId ? await getSkillById(chat.workspaceId, chat.skillId) : null;
   const autoActionEnabled = Boolean(
@@ -749,7 +845,18 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
   );
   const asrExecutionId = executionId ?? null;
 
+  if (operationId.startsWith('unica_')) {
+    logger.info({
+      skillId: skill?.id,
+      onTranscriptionMode: skill?.onTranscriptionMode,
+      autoActionEnabled,
+      autoActionId: skill?.onTranscriptionAutoActionId,
+    }, "[UNICA-ASR] Skill configuration for transcription");
+  }
+
   // Create transcript record if not exists
+  logger.info({ transcriptId, operationId }, operationId.startsWith('unica_') ? "[UNICA-ASR] Creating transcript record..." : "Creating transcript record");
+  
   let transcriptIdFinal: string | null = transcriptId ?? null;
   let transcriptRecord = transcriptIdFinal ? await storage.getTranscriptById?.(transcriptIdFinal) : null;
   
@@ -769,7 +876,8 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
       operationId,
       transcriptId: transcriptIdFinal,
       chatId: chat.id,
-    }, '[COMPLETE-STEP] Created transcript record');
+      status: initialStatus,
+    }, operationId.startsWith('unica_') ? "[UNICA-ASR] ✅ Transcript record created" : '[COMPLETE-STEP] Created transcript record');
   }
   
   if (asrExecutionId) {
@@ -1026,6 +1134,7 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
 
   // Update BotAction to show completion (standard mode)
   try {
+    logger.info({ operationId, chatId: chat.id }, operationId.startsWith('unica_') ? "[UNICA-ASR] Updating bot action to completed" : "Updating bot action");
     await upsertBotActionForChat({
       workspaceId: chat.workspaceId,
       chatId: chat.id,
@@ -1035,10 +1144,21 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
       displayText: 'Распознавание завершено',
       userId: user.id,
     });
-    logger.info({ operationId }, '[COMPLETE-BOT-ACTION] Updated bot action to done');
+    logger.info({ operationId }, operationId.startsWith('unica_') ? "[UNICA-ASR] ✅ Bot action updated" : '[COMPLETE-BOT-ACTION] Updated bot action to done');
   } catch (botActionError) {
     // Non-critical error, log and continue
-    logger.warn({ error: botActionError, operationId }, '[COMPLETE-BOT-ACTION] Failed to update bot action');
+    logger.warn({ error: botActionError, operationId }, operationId.startsWith('unica_') ? "[UNICA-ASR] ⚠️ Failed to update bot action" : '[COMPLETE-BOT-ACTION] Failed to update bot action');
+  }
+
+  if (operationId.startsWith('unica_')) {
+    logger.info({
+      operationId,
+      messageId: createdMessage.id,
+      transcriptId: transcriptIdFinal,
+      chatId: chat.id,
+      elapsed: Date.now() - completeStartTime,
+    }, "[UNICA-ASR] ========== TRANSCRIPTION COMPLETE ==========");
+    logger.info({ operationId }, "[UNICA-ASR] ✅ Unica ASR flow successfully completed!");
   }
 
   res.json({
