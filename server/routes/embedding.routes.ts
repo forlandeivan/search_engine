@@ -150,10 +150,14 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
 
   // Если ключ не передан, но есть ID, пробуем взять его из базы
   let effectiveAuthorizationKey = payload.authorizationKey || "";
+  let effectiveUnicaWorkspaceId = payload.unicaWorkspaceId || "";
   if (!effectiveAuthorizationKey && payload.id) {
     const savedProvider = await storage.getEmbeddingProvider(payload.id);
     if (savedProvider?.authorizationKey) {
       effectiveAuthorizationKey = savedProvider.authorizationKey;
+    }
+    if (savedProvider?.unicaWorkspaceId) {
+      effectiveUnicaWorkspaceId = savedProvider.unicaWorkspaceId;
     }
   }
 
@@ -258,7 +262,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
     const embeddingBody =
       payload.providerType === "unica"
         ? {
-            workSpaceId: payload.unicaWorkspaceId ?? "GENERAL",
+            workSpaceId: effectiveUnicaWorkspaceId || payload.unicaWorkspaceId || "GENERAL",
             input: [embeddingText],
             model: payload.model,
             truncate: payload.truncate ?? true,
@@ -269,6 +273,15 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
             input: [embeddingText],
             encoding_format: "float",
           };
+
+    logger.info('[test-credentials] Embedding request', {
+      providerType: payload.providerType,
+      providerId: payload.id,
+      embeddingsUrl: payload.embeddingsUrl,
+      model: payload.model,
+      bodyKeys: Object.keys(embeddingBody),
+      workSpaceId: payload.providerType === "unica" ? embeddingBody.workSpaceId : undefined,
+    });
 
     let embeddingResponse: FetchResponse;
     try {
@@ -301,6 +314,12 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
 
     if (!embeddingResponse.ok) {
       const errorText = await embeddingResponse.text();
+      logger.error('[test-credentials] Embedding request failed', {
+        status: embeddingResponse.status,
+        statusText: embeddingResponse.statusText,
+        errorBody: errorText,
+        providerId: payload.id,
+      });
       upsertStep({
         stage: "embedding-response",
         status: "error",
@@ -438,6 +457,14 @@ embeddingRouter.put('/services/:id', asyncHandler(async (req, res) => {
   if (!user) return;
 
   const providerId = req.params.id;
+  
+  logger.info('[PUT /services/:id] Update provider', {
+    providerId,
+    bodyKeys: Object.keys(req.body),
+    providerType: req.body.providerType,
+    unicaWorkspaceId: req.body.unicaWorkspaceId,
+  });
+  
   const provider = await storage.updateEmbeddingProvider(providerId, req.body);
   
   if (!provider) {
