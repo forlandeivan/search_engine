@@ -414,7 +414,7 @@ export default function EmbeddingServicesPage() {
 
       toast({
         title: "Сервис создан",
-        description: "Шаблон GigaChat заполнен автоматически, проверьте ключ.",
+        description: `Шаблон ${provider.providerType === "gigachat" ? "GigaChat" : provider.providerType === "unica" ? "Unica AI" : provider.providerType} заполнен автоматически, проверьте данные.`,
       });
 
       const updatedValues = {
@@ -813,6 +813,16 @@ export default function EmbeddingServicesPage() {
     setActiveTab("settings");
   };
 
+  const handleProviderTypeChange = (value: string) => {
+    const type = value as EmbeddingProviderType;
+    form.setValue("providerType", type);
+
+    if (isCreating) {
+      const templateValues = buildTemplateValues(type);
+      form.reset(templateValues);
+    }
+  };
+
   const handleCopyValue = async (value: string, label: string) => {
     try {
       await navigator.clipboard.writeText(value);
@@ -841,7 +851,7 @@ export default function EmbeddingServicesPage() {
             <FormItem>
               <FormLabel>Провайдер</FormLabel>
               <FormControl>
-                <Select onValueChange={field.onChange} value={field.value}>
+                <Select onValueChange={handleProviderTypeChange} value={field.value}>
                   <SelectTrigger>
                     <SelectValue placeholder="Выберите провайдера" />
                   </SelectTrigger>
@@ -855,7 +865,9 @@ export default function EmbeddingServicesPage() {
                 </Select>
               </FormControl>
               <FormDescription>
-                Определяет преднастроенные параметры интеграции. Для GigaChat мы подставим рабочие URL, scope и модель.
+                Определяет преднастроенные параметры интеграции.
+                {isGigachatProvider && " Для GigaChat мы подставим рабочие URL, scope и модель."}
+                {isUnicaProvider && " Для Unica AI мы подставим модель по умолчанию."}
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -905,7 +917,17 @@ export default function EmbeddingServicesPage() {
             <FormItem>
               <FormLabel>Название</FormLabel>
               <FormControl>
-                <Input {...field} placeholder="Например, GigaChat Embeddings Prod" required />
+                <Input
+                  {...field}
+                  placeholder={
+                    isGigachatProvider
+                      ? "Например, GigaChat Embeddings Prod"
+                      : isUnicaProvider
+                        ? "Например, Unica AI bge-m3"
+                        : "Введите название сервиса"
+                  }
+                  required
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -936,7 +958,15 @@ export default function EmbeddingServicesPage() {
               <FormItem>
                 <FormLabel>Endpoint для Access Token</FormLabel>
                 <FormControl>
-                  <Input {...field} placeholder="https://ngw.devices.sberbank.ru:9443/api/v2/oauth" required />
+                  <Input
+                    {...field}
+                    placeholder={
+                      isGigachatProvider
+                        ? "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+                        : "https://auth.example.com/oauth2/token"
+                    }
+                    required
+                  />
                 </FormControl>
                 <FormDescription>
                   {isGigachatProvider
@@ -956,7 +986,15 @@ export default function EmbeddingServicesPage() {
             <FormItem>
               <FormLabel>Endpoint эмбеддингов</FormLabel>
               <FormControl>
-                <Input {...field} placeholder="https://gigachat.devices.sberbank.ru/api/v1/embeddings" required />
+                <Input
+                  {...field}
+                  placeholder={
+                    isGigachatProvider
+                      ? "https://gigachat.devices.sberbank.ru/api/v1/embeddings"
+                      : "https://api.example.com/v1/embeddings"
+                  }
+                  required
+                />
               </FormControl>
               <FormDescription>Именно сюда будет отправляться текст для расчёта векторов.</FormDescription>
               <FormMessage />
@@ -1254,7 +1292,7 @@ export default function EmbeddingServicesPage() {
         </h1>
         <p className="text-muted-foreground max-w-3xl">
           Выберите подключённый сервис и настройте ключи, модель и дополнительные заголовки. Можно добавить новый шаблон —
-          для GigaChat мы автоматически подставим рабочие URL, scope и модель dev-стенда.
+          мы автоматически подставим рабочие URL, scope и модель, если это предусмотрено шаблоном.
         </p>
       </div>
 
@@ -1264,14 +1302,14 @@ export default function EmbeddingServicesPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <CardTitle>Сервисы эмбеддингов</CardTitle>
-                <CardDescription>Выберите сервис или создайте новый шаблон GigaChat.</CardDescription>
+                <CardDescription>Выберите сервис или создайте новый по шаблону.</CardDescription>
               </div>
               <Button size="sm" onClick={handleStartCreate} disabled={isSubmitPending} className="gap-2">
                 <Sparkles className="h-4 w-4" /> Добавить сервис
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Шаблон GigaChat заполнит OAuth endpoint, embeddings URL, scope и модель dev-стенда.
+              Шаблоны помогут быстро заполнить URL, scope и модель для известных провайдеров.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1285,11 +1323,11 @@ export default function EmbeddingServicesPage() {
               </div>
             ) : providers.length === 0 ? (
               <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                <p className="mb-3">Сервисы ещё не настроены. Создайте GigaChat по готовому шаблону.</p>
+                <p className="mb-3">Сервисы ещё не настроены. Создайте новый сервис по готовому шаблону.</p>
                 <Button size="sm" onClick={handleStartCreate} disabled={isSubmitPending} className="mb-2">
                   Добавить сервис
                 </Button>
-                <p className="text-xs">Мы автоматически подставим URL, scope и модель dev-стенда.</p>
+                <p className="text-xs">Мы автоматически подставим URL, scope и модель, если это предусмотрено шаблоном.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -1391,7 +1429,7 @@ export default function EmbeddingServicesPage() {
             </CardTitle>
             <CardDescription>
               {isCreating
-                ? "Автозаполнили шаблон GigaChat: проверьте ключ и сохраните."
+                ? `Автозаполнили шаблон ${watchedProviderType === "gigachat" ? "GigaChat" : watchedProviderType === "unica" ? "Unica AI" : watchedProviderType}: проверьте данные и сохраните.`
                 : selectedProvider
                   ? "Обновите ключи доступа, модель эмбеддингов и дополнительные параметры."
                   : "Выберите сервис слева или нажмите «Добавить сервис»."}
@@ -1439,7 +1477,7 @@ export default function EmbeddingServicesPage() {
                 settingsFormContent
               ) : !selectedProvider ? (
                 <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                  Выберите сервис слева или создайте новый шаблон GigaChat.
+                  Выберите сервис слева или нажмите «Добавить сервис», чтобы создать новый по шаблону.
                 </div>
               ) : isSelectedGigachatProvider ? (
                 <Tabs
