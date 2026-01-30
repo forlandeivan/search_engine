@@ -1,4 +1,4 @@
-import { MouseEvent, useEffect, useMemo, useState } from "react";
+import { MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useFieldArray, type FieldPath } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -289,10 +289,14 @@ export default function EmbeddingServicesPage() {
   const [testEmbeddingText, setTestEmbeddingText] = useState("Hello world!");
   const [isLoadingKey, setIsLoadingKey] = useState(false);
   const [loadedAuthKey, setLoadedAuthKey] = useState<string>("");
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [originalFormValues, setOriginalFormValues] = useState<FormValues | null>(null);
   const watchedProviderType = form.watch("providerType");
   const isGigachatProvider = watchedProviderType === "gigachat";
   const isUnicaProvider = watchedProviderType === "unica";
   const isCreating = selectedProviderId === "new";
+  const isViewMode = !isCreating && !isEditMode;
+  const lastInitializedProviderIdRef = useRef<string | "new" | null>(null);
 
   const providersQuery = useQuery<ProvidersResponse>({
     queryKey: ["/api/embedding/services"],
@@ -350,15 +354,29 @@ export default function EmbeddingServicesPage() {
   }, [providersLoaded, providers, selectedProviderId, form]);
 
   useEffect(() => {
-    if (selectedProvider) {
-      const values = mapProviderToFormValues(selectedProvider);
-      form.reset(values);
-      modelsArray.replace(values.availableModels ?? []);
-      setIsAuthorizationVisible(false);
-      setLoadedAuthKey("");
-      setDebugSteps(buildDebugSteps());
-      setActiveTab("settings");
+    // ВАЖНО: инициализируем форму только при смене выбранного провайдера/режима,
+    // иначе useFieldArray-объект будет триггерить эффект на каждом ререндере.
+    if (lastInitializedProviderIdRef.current === selectedProviderId) {
       return;
+    }
+
+    lastInitializedProviderIdRef.current = selectedProviderId;
+
+    if (selectedProviderId && selectedProviderId !== "new") {
+      const provider = providers.find((p) => p.id === selectedProviderId) ?? null;
+
+      if (provider) {
+        const values = mapProviderToFormValues(provider);
+        form.reset(values);
+        modelsArray.replace(values.availableModels ?? []);
+        setIsAuthorizationVisible(false);
+        setLoadedAuthKey("");
+        setDebugSteps(buildDebugSteps());
+        setActiveTab("settings");
+        setIsEditMode(false);
+        setOriginalFormValues(values);
+        return;
+      }
     }
 
     if (isCreating) {
@@ -366,6 +384,8 @@ export default function EmbeddingServicesPage() {
       setLoadedAuthKey("");
       setDebugSteps(buildDebugSteps());
       setActiveTab("settings");
+      setIsEditMode(false);
+      setOriginalFormValues(null);
       return;
     }
 
@@ -375,7 +395,9 @@ export default function EmbeddingServicesPage() {
     setLoadedAuthKey("");
     setDebugSteps(buildDebugSteps());
     setActiveTab("settings");
-  }, [selectedProvider, form, isCreating, modelsArray]);
+    setIsEditMode(false);
+    setOriginalFormValues(null);
+  }, [selectedProviderId, providers, isCreating, form, modelsArray]);
 
   const updateProviderMutation = useMutation<
     { provider: PublicEmbeddingProvider },
@@ -406,6 +428,8 @@ export default function EmbeddingServicesPage() {
       form.reset(updatedValues);
       modelsArray.replace(updatedValues.availableModels ?? []);
       setIsAuthorizationVisible(false);
+      setIsEditMode(false);
+      setLoadedAuthKey("");
     },
     onError: (error) => {
       toast({
@@ -680,6 +704,22 @@ export default function EmbeddingServicesPage() {
     }
   });
 
+  const handleStartEdit = () => {
+    setIsEditMode(true);
+    const currentValues = form.getValues();
+    setOriginalFormValues(currentValues);
+  };
+
+  const handleCancelEdit = () => {
+    if (originalFormValues) {
+      form.reset(originalFormValues);
+      modelsArray.replace(originalFormValues.availableModels ?? []);
+    }
+    setIsEditMode(false);
+    setLoadedAuthKey("");
+    setIsAuthorizationVisible(false);
+  };
+
   const handleCreate = form.handleSubmit((values) => {
     form.clearErrors();
 
@@ -950,7 +990,7 @@ export default function EmbeddingServicesPage() {
             <FormItem>
               <FormLabel>Провайдер</FormLabel>
               <FormControl>
-                <Select onValueChange={handleProviderTypeChange} value={field.value}>
+                <Select onValueChange={handleProviderTypeChange} value={field.value} disabled={isViewMode}>
                   <SelectTrigger>
                     <SelectValue placeholder="Выберите провайдера" />
                   </SelectTrigger>
@@ -985,7 +1025,7 @@ export default function EmbeddingServicesPage() {
                 </FormDescription>
               </div>
               <FormControl>
-                <Switch checked={field.value} onCheckedChange={field.onChange} />
+                <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isViewMode} />
               </FormControl>
             </FormItem>
           )}
@@ -1003,7 +1043,7 @@ export default function EmbeddingServicesPage() {
                 </FormDescription>
               </div>
               <FormControl>
-                <Switch checked={field.value} onCheckedChange={field.onChange} />
+                <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isViewMode} />
               </FormControl>
             </FormItem>
           )}
@@ -1026,6 +1066,7 @@ export default function EmbeddingServicesPage() {
                         : "Введите название сервиса"
                   }
                   required
+                  disabled={isViewMode}
                 />
               </FormControl>
               <FormMessage />
@@ -1040,7 +1081,7 @@ export default function EmbeddingServicesPage() {
             <FormItem>
               <FormLabel>Описание</FormLabel>
               <FormControl>
-                <Input {...field} placeholder="Для чего используется этот сервис" />
+                <Input {...field} placeholder="Для чего используется этот сервис" disabled={isViewMode} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -1065,6 +1106,7 @@ export default function EmbeddingServicesPage() {
                         : "https://auth.example.com/oauth2/token"
                     }
                     required
+                    disabled={isViewMode}
                   />
                 </FormControl>
                 <FormDescription>
@@ -1093,6 +1135,7 @@ export default function EmbeddingServicesPage() {
                       : "https://api.example.com/v1/embeddings"
                   }
                   required
+                  disabled={isViewMode}
                 />
               </FormControl>
               <FormDescription>Именно сюда будет отправляться текст для расчёта векторов.</FormDescription>
@@ -1120,6 +1163,7 @@ export default function EmbeddingServicesPage() {
                   }
                   autoComplete="new-password"
                   className="pr-10"
+                  disabled={isViewMode}
                 />
                 <Button
                   type="button"
@@ -1127,7 +1171,7 @@ export default function EmbeddingServicesPage() {
                   variant="ghost"
                   className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
                   onClick={handleToggleAuthorizationVisibility}
-                  disabled={isLoadingKey}
+                  disabled={isLoadingKey || isViewMode}
                   aria-label={isAuthorizationVisible ? (isUnicaProvider ? "Скрыть API ключ" : "Скрыть Authorization key") : (isUnicaProvider ? "Показать API ключ" : "Показать Authorization key")}
                 >
                   {isLoadingKey ? (
@@ -1164,13 +1208,14 @@ export default function EmbeddingServicesPage() {
                     onChange={(e) => setTestEmbeddingText(e.target.value)}
                     placeholder="Текст для тестовой векторизации"
                     className="max-w-xs"
+                    disabled={isViewMode}
                   />
                   <Button
                     type="button"
                     size="sm"
                     variant="outline"
                     onClick={() => testCredentialsMutation.mutate()}
-                    disabled={testCredentialsMutation.isPending || !testEmbeddingText.trim()}
+                    disabled={testCredentialsMutation.isPending || !testEmbeddingText.trim() || isViewMode}
                   >
                     {testCredentialsMutation.isPending ? (
                       <>
@@ -1279,7 +1324,7 @@ export default function EmbeddingServicesPage() {
               <FormItem>
                 <FormLabel>OAuth scope</FormLabel>
                 <FormControl>
-                  <Input {...field} placeholder="GIGACHAT_API_PERS" required />
+                  <Input {...field} placeholder="GIGACHAT_API_PERS" required disabled={isViewMode} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -1295,7 +1340,7 @@ export default function EmbeddingServicesPage() {
               <FormLabel>Модель по умолчанию</FormLabel>
               <FormControl>
                 {providerCatalogOptions.length > 0 || modelsArray.fields.length > 0 ? (
-                  <Select onValueChange={field.onChange} value={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value} disabled={isViewMode}>
                     <SelectTrigger>
                       <SelectValue placeholder="Выберите модель" />
                     </SelectTrigger>
@@ -1317,7 +1362,7 @@ export default function EmbeddingServicesPage() {
                   </Select>
                 ) : (
                   <div className="flex gap-2">
-                    <Input {...field} placeholder="Например, bge-m3" required />
+                    <Input {...field} placeholder="Например, bge-m3" required disabled={isViewMode} />
                   </div>
                 )}
               </FormControl>
@@ -1340,6 +1385,7 @@ export default function EmbeddingServicesPage() {
               size="sm"
               className="h-8 gap-2"
               onClick={() => modelsArray.append({ label: "", value: "" })}
+              disabled={isViewMode}
             >
               <Sparkles className="h-3.5 w-3.5" /> Добавить модель
             </Button>
@@ -1357,7 +1403,7 @@ export default function EmbeddingServicesPage() {
                     <FormItem>
                       <FormLabel className="text-[10px] uppercase text-muted-foreground">Название (для UI)</FormLabel>
                       <FormControl>
-                        <Input {...field} placeholder="Например, BGE-M3" />
+                        <Input {...field} placeholder="Например, BGE-M3" disabled={isViewMode} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1370,7 +1416,7 @@ export default function EmbeddingServicesPage() {
                     <FormItem>
                       <FormLabel className="text-[10px] uppercase text-muted-foreground">Ключ (ID модели)</FormLabel>
                       <FormControl>
-                        <Input {...field} placeholder="Например, bge-m3" />
+                        <Input {...field} placeholder="Например, bge-m3" disabled={isViewMode} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1382,6 +1428,7 @@ export default function EmbeddingServicesPage() {
                   size="icon"
                   className="mt-7 h-9 w-9 text-muted-foreground hover:text-destructive"
                   onClick={() => modelsArray.remove(index)}
+                  disabled={isViewMode}
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
@@ -1408,6 +1455,7 @@ export default function EmbeddingServicesPage() {
                   pattern="[0-9]*"
                   placeholder="Например, 4096"
                   required
+                  disabled={isViewMode}
                 />
               </FormControl>
               <FormDescription>
@@ -1432,7 +1480,7 @@ export default function EmbeddingServicesPage() {
               </FormDescription>
             </div>
             <FormControl>
-              <Switch checked={field.value} onCheckedChange={field.onChange} />
+              <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isViewMode} />
             </FormControl>
           </FormItem>
         )}
@@ -1445,7 +1493,7 @@ export default function EmbeddingServicesPage() {
           <FormItem>
             <FormLabel>Дополнительные заголовки</FormLabel>
             <FormControl>
-              <Textarea {...field} spellCheck={false} rows={4} placeholder='{"Accept": "application/json"}' />
+              <Textarea {...field} spellCheck={false} rows={4} placeholder='{"Accept": "application/json"}' disabled={isViewMode} />
             </FormControl>
             <FormDescription>
               JSON-объект со строковыми значениями. Добавьте заголовки только если они требуются вашим API.
@@ -1456,24 +1504,43 @@ export default function EmbeddingServicesPage() {
       />
 
       <div className="flex flex-wrap items-center gap-2 justify-end">
-        <Button type="submit" disabled={isSubmitPending}>
-          {isSubmitPending ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isCreating ? "Создаём..." : "Сохраняем..."}
-            </>
-          ) : isCreating ? (
-            "Создать сервис"
-          ) : (
-            "Сохранить изменения"
-          )}
-        </Button>
+        {isViewMode ? (
+          <Button type="button" onClick={handleStartEdit}>
+            Редактировать
+          </Button>
+        ) : (
+          <>
+            <Button type="button" onClick={isCreating ? handleCreate : handleUpdate} disabled={isSubmitPending}>
+              {isSubmitPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isCreating ? "Создаём..." : "Сохраняем..."}
+                </>
+              ) : isCreating ? (
+                "Создать сервис"
+              ) : (
+                "Сохранить изменения"
+              )}
+            </Button>
+            
+            {!isCreating && (
+              <Button 
+                type="button" 
+                variant="outline"
+                onClick={handleCancelEdit}
+                disabled={isSubmitPending}
+              >
+                Отмена
+              </Button>
+            )}
+          </>
+        )}
         
         {!isCreating && selectedProvider && (
           <Button 
             type="button" 
             variant="destructive" 
             onClick={handleDelete}
-            disabled={deleteProviderMutation.isPending}
+            disabled={deleteProviderMutation.isPending || isViewMode}
           >
             {deleteProviderMutation.isPending ? (
               <>
