@@ -208,11 +208,11 @@ authRouter.post('/register', authRegisterLimiter, asyncHandler(async (req, res, 
   const emailRaw = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
   const passwordRaw = typeof req.body?.password === 'string' ? req.body.password : '';
   const fullNameRaw = typeof req.body?.fullName === 'string' ? req.body.fullName.trim() : '';
-  if (!emailRaw || emailRaw.length > 255) return res.status(400).json({ message: 'Email is too long' });
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) return res.status(400).json({ message: 'Invalid email format' });
-  if (!passwordRaw || passwordRaw.length < 8) return res.status(400).json({ message: 'Password is too short' });
-  if (passwordRaw.length > 100 || !(/[A-Za-z]/.test(passwordRaw) && /[0-9]/.test(passwordRaw))) return res.status(400).json({ message: 'Invalid password format' });
-  if (fullNameRaw.length > 255) return res.status(400).json({ message: 'Full name is too long' });
+  if (!emailRaw || emailRaw.length > 255) return res.status(400).json({ message: 'Слишком длинный email' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) return res.status(400).json({ message: 'Введите корректный email' });
+  if (!passwordRaw || passwordRaw.length < 8) return res.status(400).json({ message: 'Минимум 8 символов' });
+  if (passwordRaw.length > 100 || !(/[A-Za-z]/.test(passwordRaw) && /[0-9]/.test(passwordRaw))) return res.status(400).json({ message: 'Должен содержать буквы и цифры' });
+  if (fullNameRaw.length > 255) return res.status(400).json({ message: 'Слишком длинное имя' });
   const email = emailRaw.toLowerCase();
   const fullName = fullNameRaw || email;
   const existingUser = await storage.getUserByEmail(email);

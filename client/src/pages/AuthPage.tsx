@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type SubmitErrorHandler } from "react-hook-form";
 import { zodResolver } from "@/lib/zod-resolver";
 import { z } from "zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -96,6 +96,7 @@ export default function AuthPage() {
 
   const loginForm = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
+    mode: "onChange", // Real-time validation
     defaultValues: { email: "", password: "" },
   });
 
@@ -104,8 +105,26 @@ export default function AuthPage() {
     defaultValues: { fullName: "", email: "", password: "", confirmPassword: "" },
   });
 
+  // Focus first invalid field on login form submit
+  const focusFirstLoginError: SubmitErrorHandler<LoginValues> = (errors) => {
+    const order: (keyof LoginValues)[] = ["email", "password"];
+    for (const key of order) {
+      if (errors[key]) {
+        loginForm.setFocus(key);
+        break;
+      }
+    }
+  };
+
   const loginMutation = useMutation({
-    mutationFn: (values: LoginValues) => postJson("/api/auth/login", values),
+    mutationFn: async (values: LoginValues) => {
+      // Client-side validation before API call
+      const result = loginSchema.safeParse(values);
+      if (!result.success) {
+        throw new Error("Заполните все обязательные поля корректно");
+      }
+      return postJson("/api/auth/login", values);
+    },
     onSuccess: async () => {
       toast({ title: "Добро пожаловать!" });
       loginForm.reset();
@@ -155,20 +174,20 @@ export default function AuthPage() {
     },
     onError: (error: Error) => {
       const msg = error.message;
-      if (msg === "Invalid email format" || msg === "Email is too long") {
-        registerForm.setError("email", { message: "Некорректный email" });
+      if (msg === "Введите корректный email" || msg === "Слишком длинный email") {
+        registerForm.setError("email", { message: msg });
         return;
       }
-      if (msg === "Password is too short") {
-        registerForm.setError("password", { message: "Минимум 8 символов" });
+      if (msg === "Минимум 8 символов") {
+        registerForm.setError("password", { message: msg });
         return;
       }
-      if (msg === "Invalid password format") {
-        registerForm.setError("password", { message: "Пароль должен содержать буквы и цифры" });
+      if (msg === "Должен содержать буквы и цифры" || msg === "Слишком длинный пароль") {
+        registerForm.setError("password", { message: msg });
         return;
       }
-      if (msg === "Full name is too long") {
-        registerForm.setError("fullName", { message: "Слишком длинное имя" });
+      if (msg === "Слишком длинное имя") {
+        registerForm.setError("fullName", { message: msg });
         return;
       }
       toast({
@@ -194,7 +213,7 @@ export default function AuthPage() {
     },
     onError: (error: Error & { status?: number }) => {
       const msg = error.message;
-      if (msg === "Email is too long" || msg === "Invalid email format") {
+      if (msg === "Слишком длинный email" || msg === "Введите корректный email") {
         loginForm.setError("email", { message: "Некорректный email" });
         setResendMessage(null);
         return;
@@ -344,7 +363,10 @@ export default function AuthPage() {
             {isLogin ? (
               <form
                 className="space-y-4"
-                onSubmit={loginForm.handleSubmit((values) => loginMutation.mutate(values))}
+                onSubmit={loginForm.handleSubmit(
+                  (values) => loginMutation.mutate(values),
+                  focusFirstLoginError
+                )}
               >
                 <div className="space-y-2">
                   <Label htmlFor="login-email">Email</Label>
@@ -352,10 +374,13 @@ export default function AuthPage() {
                     id="login-email"
                     type="email"
                     placeholder="name@example.com"
+                    aria-invalid={Boolean(loginForm.formState.errors.email)}
                     {...loginForm.register("email")}
                   />
                   {loginForm.formState.errors.email && (
-                    <p className="text-sm text-destructive">{loginForm.formState.errors.email.message}</p>
+                    <p className="text-sm text-destructive" role="alert">
+                      {loginForm.formState.errors.email.message}
+                    </p>
                   )}
                 </div>
                 <div className="space-y-2">
@@ -364,10 +389,13 @@ export default function AuthPage() {
                     id="login-password"
                     type="password"
                     placeholder="Введите пароль"
+                    aria-invalid={Boolean(loginForm.formState.errors.password)}
                     {...loginForm.register("password")}
                   />
                   {loginForm.formState.errors.password && (
-                    <p className="text-sm text-destructive">{loginForm.formState.errors.password.message}</p>
+                    <p className="text-sm text-destructive" role="alert">
+                      {loginForm.formState.errors.password.message}
+                    </p>
                   )}
                 </div>
                 <Button

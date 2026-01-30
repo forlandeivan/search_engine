@@ -1388,20 +1388,20 @@ export const registerUserSchema = z
     fullName: z
       .string()
       .trim()
-      .max(255, "Full name is too long")
+      .max(255, "Слишком длинное имя")
       .optional()
       .default(""),
     email: z
       .string()
       .trim()
-      .max(255, "Email is too long")
-      .email("Invalid email format"),
+      .max(255, "Слишком длинный email")
+      .email("Введите корректный email"),
     password: z
       .string()
-      .min(8, "Password is too short")
-      .max(100, "Password is too long")
+      .min(8, "Минимум 8 символов")
+      .max(100, "Слишком длинный пароль")
       .refine((value) => /[A-Za-z]/.test(value) && /[0-9]/.test(value), {
-        message: "Invalid password format",
+        message: "Должен содержать буквы и цифры",
       }),
   })
   .strict();
