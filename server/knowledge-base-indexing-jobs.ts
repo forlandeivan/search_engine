@@ -352,9 +352,13 @@ const JOB_TYPE = "knowledge_base_indexing";
 const LOCK_RETRY_DELAY_MS = 5_000;
 const ACTION_TIMEOUT_HOURS = 1;
 const ACTION_COMPLETION_CHECK_SECONDS = 30;
+const ENABLE_DEV_LOG_FILE = process.env.DEV_LOG === "1";
 
 // Логирование в файл для отладки
 function logToFile(message: string): void {
+  if (!ENABLE_DEV_LOG_FILE) {
+    return;
+  }
   try {
     const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
     const timestamp = new Date().toISOString();

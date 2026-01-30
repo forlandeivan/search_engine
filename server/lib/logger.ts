@@ -5,27 +5,34 @@ import { createWriteStream } from 'fs';
 const isDevelopment = process.env.NODE_ENV !== 'production';
 const logLevel = process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info');
 
-// Create file stream for dev.log
-const devLogStream = isDevelopment
-  ? pino.multistream([
-      { stream: pino.transport({
-          target: 'pino-pretty',
-          options: {
-            colorize: true,
-            translateTime: 'HH:MM:ss.l',
-            ignore: 'pid,hostname',
-            singleLine: false,
-          },
-        })
+// dev.log is opt-in: set DEV_LOG=1 to enable file logging in development
+const enableDevLogFile = isDevelopment && process.env.DEV_LOG === '1';
+
+const prettyTransport = isDevelopment
+  ? pino.transport({
+      target: 'pino-pretty',
+      options: {
+        colorize: true,
+        translateTime: 'HH:MM:ss.l',
+        ignore: 'pid,hostname',
+        singleLine: false,
       },
-      { stream: createWriteStream(resolve(process.cwd(), 'dev.log'), { flags: 'a' }) },
-    ])
+    })
+  : undefined;
+
+const destination = isDevelopment
+  ? enableDevLogFile
+    ? pino.multistream([
+        { stream: prettyTransport! },
+        { stream: createWriteStream(resolve(process.cwd(), 'dev.log'), { flags: 'a' }) },
+      ])
+    : prettyTransport
   : undefined;
 
 // Create base Pino logger
 export const logger = pino({
   level: logLevel,
-  ...(isDevelopment && devLogStream
+  ...(isDevelopment && destination
     ? {}
     : {
         formatters: {
@@ -34,7 +41,7 @@ export const logger = pino({
         },
         timestamp: pino.stdTimeFunctions.isoTime,
       }),
-}, devLogStream);
+}, destination);
 
 // Create child loggers for different components
 export const createLogger = (component: string) => logger.child({ component });

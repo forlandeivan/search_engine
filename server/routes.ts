@@ -3478,6 +3478,8 @@ const knowledgeRagRequestSchema = z.object({
           collection: z.string().trim().optional(),
           collections: z.array(z.string().trim().min(1)).optional(), // Список коллекций для vector
           embedding_provider_id: z.string().trim().optional(),
+          // Optional override of embedding model for query embedding (to match KB indexing policy model)
+          embedding_model: z.string().trim().optional(),
         })
         .default({}),
     })
@@ -3878,6 +3880,11 @@ async function runKnowledgeBaseRagPipeline(options: {
   const requestedEmbeddingProviderId =
     typeof body.hybrid.vector.embedding_provider_id === "string"
       ? body.hybrid.vector.embedding_provider_id.trim()
+      : "";
+
+  const requestedEmbeddingModel =
+    typeof body.hybrid.vector.embedding_model === "string"
+      ? body.hybrid.vector.embedding_model.trim()
       : "";
   
   // Поддержка нескольких коллекций: используем collections если есть, иначе fallback на collection
@@ -4377,8 +4384,29 @@ async function runKnowledgeBaseRagPipeline(options: {
           throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
         }
 
-        embeddingProviderId = embeddingProvider.id;
-        selectedEmbeddingProvider = embeddingProvider;
+        // Apply optional embedding model override (important when KB indexing policy selects a model different from provider default)
+        const modelOverride = requestedEmbeddingModel && requestedEmbeddingModel.length > 0 ? requestedEmbeddingModel : null;
+        const effectiveEmbeddingProvider =
+          modelOverride && modelOverride !== (embeddingProvider.model ?? "")
+            ? { ...embeddingProvider, model: modelOverride }
+            : embeddingProvider;
+
+        if (modelOverride && modelOverride !== (embeddingProvider.model ?? "")) {
+          logger.info(
+            {
+              component: "RAG_PIPELINE",
+              step: "embedding_model_override",
+              providerId: embeddingProvider.id,
+              providerName: embeddingProvider.name,
+              originalModel: embeddingProvider.model ?? null,
+              overrideModel: modelOverride,
+            },
+            "[RAG] Using embedding model override for query embedding",
+          );
+        }
+
+        embeddingProviderId = effectiveEmbeddingProvider.id;
+        selectedEmbeddingProvider = effectiveEmbeddingProvider;
 
         // Для embedding ВСЕГДА используем queryForEmbedding (оригинальный запрос без истории)
         // Это гарантирует, что мы не превысим лимит токенов провайдера embedding
@@ -4389,8 +4417,8 @@ async function runKnowledgeBaseRagPipeline(options: {
         const embeddingStep = startPipelineStep(
           "vector_embedding",
           {
-            providerId: embeddingProvider.id,
-            model: embeddingProvider.model,
+            providerId: effectiveEmbeddingProvider.id,
+            model: effectiveEmbeddingProvider.model,
             text: embeddingQuery,
             originalQueryLength: queryForEmbedding.length,
             enhancedQueryLength: query.length,
@@ -4403,12 +4431,12 @@ async function runKnowledgeBaseRagPipeline(options: {
         try {
           const embeddingInputTokens = estimateTokens(embeddingQuery);
           try {
-            const embeddingModel = embeddingProvider.model 
-              ? await tryResolveModel(embeddingProvider.model, { expectedType: "EMBEDDINGS" })
+            const embeddingModel = effectiveEmbeddingProvider.model 
+              ? await tryResolveModel(effectiveEmbeddingProvider.model, { expectedType: "EMBEDDINGS" })
               : null;
             await ensureCreditsForEmbeddingPreflight(workspaceId, {
               consumptionUnit: "TOKENS_1K",
-              modelKey: embeddingProvider.model ?? null,
+              modelKey: effectiveEmbeddingProvider.model ?? null,
               id: embeddingModel?.id ?? null,
               creditsPerUnit: embeddingModel?.creditsPerUnit ?? 0,
             }, embeddingInputTokens);
@@ -4419,16 +4447,16 @@ async function runKnowledgeBaseRagPipeline(options: {
             throw error;
           }
 
-          const embeddingAccessToken = await fetchAccessToken(embeddingProvider);
+          const embeddingAccessToken = await fetchAccessToken(effectiveEmbeddingProvider);
           embeddingResult = await fetchEmbeddingVector(
-            embeddingProvider,
+            effectiveEmbeddingProvider,
             embeddingAccessToken,
             embeddingQuery, // Используем оригинальный запрос без истории
             {
               onBeforeRequest(details) {
                 embeddingStep.setInput({
-                  providerId: embeddingProvider.id,
-                  model: embeddingProvider.model,
+                  providerId: effectiveEmbeddingProvider.id,
+                  model: effectiveEmbeddingProvider.model,
                   text: embeddingQuery, // Используем оригинальный запрос
                   request: details,
                 });
@@ -4439,7 +4467,7 @@ async function runKnowledgeBaseRagPipeline(options: {
           const embeddingTokensForUsage = embeddingUsageTokens ?? estimateTokens(embeddingQuery);
           embeddingUsageMeasurement = measureTokensForModel(embeddingTokensForUsage, {
             consumptionUnit: "TOKENS_1K",
-            modelKey: embeddingProvider.model ?? null,
+            modelKey: effectiveEmbeddingProvider.model ?? null,
           });
           embeddingResultForMetadata = embeddingResult;
           embeddingStep.finish({
@@ -4459,9 +4487,9 @@ async function runKnowledgeBaseRagPipeline(options: {
             originalQueryLength: queryForEmbedding.length,
             enhancedQueryLength: query.length,
             usingOriginalQuery: embeddingQuery !== query,
-            providerId: embeddingProvider.id,
-            providerName: embeddingProvider.name,
-            model: embeddingProvider.model,
+            providerId: effectiveEmbeddingProvider.id,
+            providerName: effectiveEmbeddingProvider.name,
+            model: effectiveEmbeddingProvider.model,
             vectorDimensions: embeddingResult.vector.length,
             usageTokens: embeddingUsageTokens,
           }, `[RAG] Embedding generated: ${embeddingResult.vector.length} dimensions, ${embeddingUsageTokens ?? 'N/A'} tokens (using ${embeddingQuery !== query ? 'original' : 'enhanced'} query)`);
@@ -4485,8 +4513,8 @@ async function runKnowledgeBaseRagPipeline(options: {
 
         await recordEmbeddingUsageSafe({
           workspaceId,
-          provider: embeddingProvider,
-          modelKey: embeddingProvider.model ?? null,
+          provider: effectiveEmbeddingProvider,
+          modelKey: effectiveEmbeddingProvider.model ?? null,
           tokensTotal: embeddingUsageMeasurement?.quantityRaw ?? embeddingUsageTokens ?? estimateTokens(embeddingQuery),
           contentBytes: Buffer.byteLength(embeddingQuery, "utf8"), // Используем оригинальный запрос
           operationId: `rag-query-${randomUUID()}`,
@@ -4498,7 +4526,7 @@ async function runKnowledgeBaseRagPipeline(options: {
 
         const vectorPayload = buildVectorPayload(
           embeddingResult.vector,
-          embeddingProvider.qdrantConfig?.vectorFieldName,
+          effectiveEmbeddingProvider.qdrantConfig?.vectorFieldName,
         );
 
         let lastVectorResponseStatus = 200;
@@ -5262,6 +5290,28 @@ async function runKnowledgeBaseRagPipeline(options: {
       tokensPerChunk: tokensPerChunk,
       avgTokensPerChunk: combinedResults.length > 0 ? Math.round(totalTokensBeforeContext / combinedResults.length) : 0,
     }, `[RAG] Forming context records: ${combinedResults.length} chunks, ${totalTokensBeforeContext} tokens (limit: ${effectiveMaxContextTokens ?? 'none'}, exceeded by: ${effectiveMaxContextTokens && totalTokensBeforeContext > effectiveMaxContextTokens ? totalTokensBeforeContext - effectiveMaxContextTokens : 0})`);
+
+    if (process.env.RAG_DEBUG === "1") {
+      logger.info(
+        {
+          component: "RAG_PIPELINE",
+          step: "context_records_sample",
+          sample: combinedResults.slice(0, 12).map((c) => ({
+            knowledgeBaseId: c.knowledgeBaseId ?? null,
+            docTitle: (c.docTitle ?? "").slice(0, 80),
+            chunkId: c.chunkId,
+            combinedScore: c.combinedScore,
+            bm25Score: c.bm25Score,
+            vectorScore: c.vectorScore,
+            sectionTitle: c.sectionTitle,
+            textLength: c.text.length,
+            snippetLength: c.snippet.length,
+            estTokens: estimateTokens(c.text),
+          })),
+        },
+        "[RAG_DEBUG] Sample of chunks passed into LLM context",
+      );
+    }
 
     const contextRecords: LlmContextRecord[] = combinedResults.map((item, index) => ({
       index,

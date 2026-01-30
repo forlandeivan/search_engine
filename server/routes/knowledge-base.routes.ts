@@ -637,6 +637,18 @@ knowledgeBaseRouter.post('/bases/:baseId/index', asyncHandler(async (req, res) =
   // Поддержка старого формата (mode в query) и нового (mode в body)
   const mode = (req.body.mode ?? req.query.mode === "changed" ? "changed" : "full") as "full" | "changed";
   const config = req.body.config;
+
+  logger.info(
+    {
+      workspaceId,
+      baseId: req.params.baseId,
+      userId: user.id,
+      mode,
+      hasConfig: Boolean(config),
+      configKeys: config && typeof config === "object" ? Object.keys(config as Record<string, unknown>) : [],
+    },
+    "Indexing start requested",
+  );
   
   const result = await startKnowledgeBaseIndexing(
     req.params.baseId,
@@ -644,6 +656,19 @@ knowledgeBaseRouter.post('/bases/:baseId/index', asyncHandler(async (req, res) =
     mode,
     user.id,
     config,
+  );
+
+  logger.info(
+    {
+      workspaceId,
+      baseId: req.params.baseId,
+      userId: user.id,
+      mode,
+      actionId: result.actionId ?? null,
+      jobCount: result.jobCount,
+      status: result.status ?? null,
+    },
+    "Indexing start result",
   );
   res.json(result);
 }));

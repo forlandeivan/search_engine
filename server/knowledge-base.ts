@@ -38,6 +38,7 @@ import {
   type KnowledgeDocumentIndexStatus,
   workspaces,
 } from "@shared/schema";
+import { createLogger } from "./lib/logger";
 import { db } from "./db";
 import { storage, ensureKnowledgeBaseTables, isKnowledgeBasePathLtreeEnabled } from "./storage";
 import { and, asc, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
@@ -229,6 +230,8 @@ const INDEXING_CHANGE_STATUSES: KnowledgeDocumentIndexStatus[] = [
   "not_indexed",
   "error",
 ];
+
+const logger = createLogger("knowledge-base-indexing");
 
 type KnowledgeBaseIndexingMode = "full" | "changed";
 
@@ -1146,6 +1149,26 @@ export async function startKnowledgeBaseIndexing(
   status?: KnowledgeBaseIndexStatus;
   documentIds?: string[];
 }> {
+  logger.info(
+    {
+      workspaceId,
+      baseId,
+      userId: userId ?? null,
+      mode,
+      source: requestConfig ? "request" : "policy",
+      configSummary: requestConfig
+        ? {
+            embeddingsProvider: requestConfig.embeddingsProvider,
+            embeddingsModel: requestConfig.embeddingsModel,
+            chunkSize: requestConfig.chunkSize,
+            chunkOverlap: requestConfig.chunkOverlap,
+            schemaFieldCount: Array.isArray(requestConfig.schemaFields) ? requestConfig.schemaFields.length : 0,
+            saveToPolicy: Boolean(requestConfig.saveToPolicy),
+          }
+        : null,
+    },
+    "startKnowledgeBaseIndexing: entry",
+  );
   try {
     await ensureKnowledgeBaseTables();
   } catch (error) {
@@ -1172,10 +1195,33 @@ export async function startKnowledgeBaseIndexing(
       const indexingDocuments = await countIndexingDocumentsByBase(baseId, workspaceId);
       const status: KnowledgeBaseIndexStatus =
         totalDocuments === 0 ? "not_indexed" : indexingDocuments > 0 ? "indexing" : "up_to_date";
+      logger.warn(
+        {
+          workspaceId,
+          baseId,
+          mode,
+          totalDocuments,
+          indexingDocuments,
+          resolvedStatus: status,
+        },
+        "startKnowledgeBaseIndexing: no documents selected for mode=changed",
+      );
       return { jobCount: 0, status, documentIds: [] };
     }
+    logger.warn({ workspaceId, baseId, mode }, "startKnowledgeBaseIndexing: no documents selected");
     return { jobCount: 0, actionId: undefined, documentIds: [] };
   }
+
+  logger.info(
+    {
+      workspaceId,
+      baseId,
+      mode,
+      documentsSelected: documents.length,
+      sampleDocumentIds: documents.slice(0, 10).map((d) => d.documentId),
+    },
+    "startKnowledgeBaseIndexing: selected documents",
+  );
 
   // Создаем action для отслеживания статуса индексации
   let actionId: string | undefined;
@@ -1267,6 +1313,22 @@ export async function startKnowledgeBaseIndexing(
               saveToPolicy: requestConfig?.saveToPolicy ?? false,
             };
 
+            logger.info(
+              {
+                workspaceId,
+                baseId,
+                mode,
+                providerId: providerId ?? null,
+                providerName: providerName ?? null,
+                model: resolvedConfig.embeddingsModel ?? null,
+                chunkSize: resolvedConfig.chunkSize ?? null,
+                chunkOverlap: resolvedConfig.chunkOverlap ?? null,
+                schemaFieldCount: resolvedConfig.schemaFields?.length ?? 0,
+                saveToPolicy: Boolean(requestConfig?.saveToPolicy),
+              },
+              "startKnowledgeBaseIndexing: resolved config",
+            );
+
             // Сохранение в политику, если запрошено
             if (requestConfig?.saveToPolicy && resolvedConfig) {
               try {
@@ -1292,17 +1354,27 @@ export async function startKnowledgeBaseIndexing(
             }
           } catch (error) {
             validationError = `Ошибка проверки провайдера эмбеддингов: ${error instanceof Error ? error.message : String(error)}`;
+            logger.error(
+              { workspaceId, baseId, mode, providerId: resolvedConfig.embeddingsProvider ?? null, error },
+              "startKnowledgeBaseIndexing: provider validation failed",
+            );
           }
         }
       }
     } catch (error) {
       validationError = `Ошибка получения конфигурации индексации: ${error instanceof Error ? error.message : String(error)}`;
+      logger.error({ workspaceId, baseId, mode, error }, "startKnowledgeBaseIndexing: config resolution failed");
     }
     
     await knowledgeBaseIndexingActionsService.start(workspaceId, baseId, actionId, "initializing", userId);
+    logger.info({ workspaceId, baseId, mode, actionId }, "startKnowledgeBaseIndexing: action started");
     
     // Если есть ошибка валидации, сразу завершаем action
     if (validationError) {
+      logger.warn(
+        { workspaceId, baseId, mode, actionId, validationError },
+        "startKnowledgeBaseIndexing: validationError -> action error",
+      );
       await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
         status: "error",
         stage: "error",

@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { isRagSkill } from "./skill-type";
 import { ensureModelAvailable, ModelInactiveError, ModelUnavailableError, ModelValidationError } from "./model-service";
 import { indexingRulesService } from "./indexing-rules";
+import { knowledgeBaseIndexingPolicyService } from "./knowledge-base-indexing-policy";
 import type { ChatConversationMessage } from "./chat-service";
 import { createLogger } from "./lib/logger";
 import { rewriteQuery, type QueryRewriteResult } from "./query-rewriter";
@@ -45,6 +46,11 @@ export type KnowledgeRagRequestPayload = {
       collection?: string; // Оставляем для обратной совместимости
       collections?: string[]; // Новое поле для списка коллекций
       embedding_provider_id?: string;
+      /**
+       * Optional override of embedding model used for query embedding.
+       * Needed to match KB indexing policy model when provider supports model selection.
+       */
+      embedding_model?: string;
     };
   };
   llm: {
@@ -310,14 +316,46 @@ export async function buildSkillRagRequestPayload(options: {
     topK: indexingRules.topK,
   });
 
-  // Используем провайдер эмбеддингов из правил индексации (БЗ индексируются с этим провайдером)
-  const embeddingProviderId = indexingRules.embeddingsProvider;
-  if (!embeddingProviderId || embeddingProviderId.trim().length === 0) {
-    console.error(`[RAG BUILD PAYLOAD] ERROR: embedding provider not configured in indexing rules`);
-    throw new SkillRagConfigurationError("Сервис эмбеддингов не настроен в правилах индексации. Настройте его в админ-панели.");
+  // Для RAG по базам знаний query embedding должен совпадать с политикой индексации баз знаний.
+  // Иначе векторы запроса будут из другой модели и качество поиска сильно падает.
+  let kbPolicyProviderId: string | null = null;
+  let kbPolicyModel: string | null = null;
+  try {
+    const policy = await knowledgeBaseIndexingPolicyService.get();
+    kbPolicyProviderId = policy?.embeddingsProvider?.trim() ? policy.embeddingsProvider.trim() : null;
+    kbPolicyModel = policy?.embeddingsModel?.trim() ? policy.embeddingsModel.trim() : null;
+  } catch (error) {
+    logger.warn(
+      {
+        step: "kb_policy_load",
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "[RAG BUILD PAYLOAD] Failed to load knowledge base indexing policy, falling back to indexing rules",
+    );
   }
-  
-  console.log(`[RAG BUILD PAYLOAD] embeddingProviderId=${embeddingProviderId}, knowledgeBaseIds=[${knowledgeBaseIds.join(", ")}]`);
+
+  const indexingRulesProviderId = indexingRules.embeddingsProvider?.trim() ?? "";
+  const embeddingProviderId = kbPolicyProviderId ?? (indexingRulesProviderId.length > 0 ? indexingRulesProviderId : null);
+  if (!embeddingProviderId) {
+    throw new SkillRagConfigurationError(
+      "Сервис эмбеддингов не настроен (ни в политике индексации баз знаний, ни в профиле индексации навыков).",
+    );
+  }
+
+  logger.info(
+    {
+      step: "embedding_provider_resolve",
+      workspaceId,
+      knowledgeBaseIds,
+      kbPolicyProviderId,
+      kbPolicyModel,
+      indexingRulesProviderId: indexingRulesProviderId || null,
+      chosenEmbeddingProviderId: embeddingProviderId,
+      chosenEmbeddingModel: kbPolicyModel,
+    },
+    "[RAG BUILD PAYLOAD] Resolved embedding provider/model for KB RAG",
+  );
 
   const llmProviderId = sanitizeOptionalString(skill.llmProviderConfigId);
   if (!llmProviderId) {
@@ -399,6 +437,7 @@ export async function buildSkillRagRequestPayload(options: {
         collection: vectorCollection, // Для обратной совместимости
         collections: vectorCollections, // Новое поле для списка коллекций
         embedding_provider_id: embeddingProviderId,
+        ...(kbPolicyModel ? { embedding_model: kbPolicyModel } : {}),
       },
     },
     llm: {
