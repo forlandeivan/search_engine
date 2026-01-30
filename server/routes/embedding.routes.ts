@@ -106,12 +106,13 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
   if (!user) return;
 
   const testSchema = z.object({
+    id: z.string().optional(),
     providerType: z.enum(embeddingProviderTypes).default("gigachat"),
     tokenUrl: z.string().trim().url("Некорректный URL для получения токена").or(z.literal("")),
     embeddingsUrl: z.string().trim().url("Некорректный URL сервиса эмбеддингов"),
-    authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
+    authorizationKey: z.string().trim().optional().or(z.literal("")),
     scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")),
-    model: z.string().trim().min(1, "Укажите модель эмбеддингов"),
+    model: z.string().trim().optional().or(z.literal("")),
     allowSelfSignedCertificate: z.boolean().default(false),
     requestHeaders: z.record(z.string(), z.string()).default({}),
     workSpaceId: z.string().trim().optional(),
@@ -139,6 +140,15 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
   const payload = testSchema.parse(req.body);
   const embeddingText = payload.testText?.trim() || "привет!";
 
+  // Если ключ не передан, но есть ID, пробуем взять его из базы
+  let effectiveAuthorizationKey = payload.authorizationKey || "";
+  if (!effectiveAuthorizationKey && payload.id) {
+    const savedProvider = await storage.getEmbeddingProvider(payload.id);
+    if (savedProvider?.authorizationKey) {
+      effectiveAuthorizationKey = savedProvider.authorizationKey;
+    }
+  }
+
   type TestStepStage = "token-request" | "token-response" | "embedding-request" | "embedding-response";
   type TestStep = {
     stage: TestStepStage;
@@ -161,7 +171,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
     let accessToken: string;
 
     if (payload.providerType === "unica") {
-      accessToken = payload.authorizationKey;
+      accessToken = effectiveAuthorizationKey;
       upsertStep({
         stage: "token-request",
         status: "success",
@@ -179,7 +189,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
         providerType: payload.providerType as EmbeddingProviderType,
         tokenUrl: payload.tokenUrl,
         embeddingsUrl: payload.embeddingsUrl,
-        authorizationKey: payload.authorizationKey,
+        authorizationKey: effectiveAuthorizationKey,
         scope: payload.scope,
         model: payload.model,
         allowSelfSignedCertificate: payload.allowSelfSignedCertificate,
@@ -380,8 +390,14 @@ embeddingRouter.post('/services', asyncHandler(async (req, res) => {
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
+  // Попробуем получить workspaceId из заголовков, но не блокируем, если его нет (админская сущность)
+  const workspaceId = getRequestWorkspace(req);
+
   try {
-    const provider = await storage.createEmbeddingProvider(req.body);
+    const provider = await storage.createEmbeddingProvider({ 
+      ...req.body, 
+      workspaceId: workspaceId || null 
+    });
     
     // Sync models with catalog
     await syncModelsWithEmbeddingProvider(provider);

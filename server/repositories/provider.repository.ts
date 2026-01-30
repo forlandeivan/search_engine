@@ -39,7 +39,11 @@ export const providerRepository = {
         .select()
         .from(llmProviders)
         .where(
-          or(eq(llmProviders.workspaceId, workspaceId), eq(llmProviders.isGlobal, true)),
+          or(
+            eq(llmProviders.workspaceId, workspaceId), 
+            eq(llmProviders.isGlobal, true),
+            sql`${llmProviders.workspaceId} IS NULL`
+          ),
         )
         .orderBy(desc(llmProviders.createdAt));
     }
@@ -53,7 +57,11 @@ export const providerRepository = {
     const condition = workspaceId
       ? and(
           eq(llmProviders.id, id),
-          or(eq(llmProviders.workspaceId, workspaceId), eq(llmProviders.isGlobal, true)),
+          or(
+            eq(llmProviders.workspaceId, workspaceId), 
+            eq(llmProviders.isGlobal, true),
+            sql`${llmProviders.workspaceId} IS NULL`
+          ),
         )
       : eq(llmProviders.id, id);
     const [provider] = await db.select().from(llmProviders).where(condition);
@@ -82,7 +90,11 @@ export const providerRepository = {
     const condition = workspaceId
       ? and(
           eq(llmProviders.id, id),
-          or(eq(llmProviders.workspaceId, workspaceId), eq(llmProviders.isGlobal, true)),
+          or(
+            eq(llmProviders.workspaceId, workspaceId), 
+            eq(llmProviders.isGlobal, true),
+            sql`${llmProviders.workspaceId} IS NULL`
+          ),
         )
       : eq(llmProviders.id, id);
 
@@ -99,7 +111,13 @@ export const providerRepository = {
    */
   async deleteLlmProvider(id: string, workspaceId?: string): Promise<boolean> {
     const condition = workspaceId
-      ? and(eq(llmProviders.id, id), eq(llmProviders.workspaceId, workspaceId))
+      ? and(
+          eq(llmProviders.id, id),
+          or(
+            eq(llmProviders.workspaceId, workspaceId), 
+            sql`${llmProviders.workspaceId} IS NULL`
+          )
+        )
       : eq(llmProviders.id, id);
 
     const deleted = await db
@@ -120,7 +138,11 @@ export const providerRepository = {
         .select()
         .from(embeddingProviders)
         .where(
-          or(eq(embeddingProviders.workspaceId, workspaceId), eq(embeddingProviders.isGlobal, true)),
+          or(
+            eq(embeddingProviders.workspaceId, workspaceId), 
+            eq(embeddingProviders.isGlobal, true),
+            sql`${embeddingProviders.workspaceId} IS NULL`
+          ),
         )
         .orderBy(desc(embeddingProviders.createdAt));
     }
@@ -134,7 +156,11 @@ export const providerRepository = {
     const condition = workspaceId
       ? and(
           eq(embeddingProviders.id, id),
-          or(eq(embeddingProviders.workspaceId, workspaceId), eq(embeddingProviders.isGlobal, true)),
+          or(
+            eq(embeddingProviders.workspaceId, workspaceId), 
+            eq(embeddingProviders.isGlobal, true),
+            sql`${embeddingProviders.workspaceId} IS NULL`
+          ),
         )
       : eq(embeddingProviders.id, id);
     const [provider] = await db.select().from(embeddingProviders).where(condition);
@@ -163,7 +189,11 @@ export const providerRepository = {
     const condition = workspaceId
       ? and(
           eq(embeddingProviders.id, id),
-          or(eq(embeddingProviders.workspaceId, workspaceId), eq(embeddingProviders.isGlobal, true)),
+          or(
+            eq(embeddingProviders.workspaceId, workspaceId), 
+            eq(embeddingProviders.isGlobal, true),
+            sql`${embeddingProviders.workspaceId} IS NULL`
+          ),
         )
       : eq(embeddingProviders.id, id);
 
@@ -180,7 +210,13 @@ export const providerRepository = {
    */
   async deleteEmbeddingProvider(id: string, workspaceId?: string): Promise<boolean> {
     const condition = workspaceId
-      ? and(eq(embeddingProviders.id, id), eq(embeddingProviders.workspaceId, workspaceId))
+      ? and(
+          eq(embeddingProviders.id, id),
+          or(
+            eq(embeddingProviders.workspaceId, workspaceId), 
+            sql`${embeddingProviders.workspaceId} IS NULL`
+          )
+        )
       : eq(embeddingProviders.id, id);
 
     const deleted = await db

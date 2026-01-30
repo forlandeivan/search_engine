@@ -751,31 +751,9 @@ export default function EmbeddingServicesPage() {
       const providerType = values.providerType;
       const tokenUrl = values.tokenUrl.trim();
       const embeddingsUrl = values.embeddingsUrl.trim();
-      let authorizationKey = values.authorizationKey.trim();
+      const authorizationKey = values.authorizationKey.trim();
       const scope = values.scope.trim();
       const model = values.model.trim();
-
-      // Если поле пустое и есть сохранённый ключ, загружаем его
-      if (!authorizationKey && selectedProvider?.hasAuthorizationKey) {
-        if (!loadedAuthKey) {
-          // Загружаем ключ
-          try {
-            const response = await apiRequest("GET", `/api/embedding/services/${selectedProvider.id}/key`);
-            if (!response.ok) {
-              throw new Error("Не удалось загрузить ключ");
-            }
-            const data = (await response.json()) as { authorizationKey: string };
-            authorizationKey = data.authorizationKey;
-            setLoadedAuthKey(authorizationKey);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "Не удалось загрузить ключ авторизации";
-            form.setError("authorizationKey", { type: "manual", message });
-            throw new Error(message);
-          }
-        } else {
-          authorizationKey = loadedAuthKey;
-        }
-      }
 
       if (providerType !== "unica" && !tokenUrl) {
         const message = "Укажите endpoint для получения токена";
@@ -786,24 +764,6 @@ export default function EmbeddingServicesPage() {
       if (!embeddingsUrl) {
         const message = "Укажите endpoint сервиса эмбеддингов";
         form.setError("embeddingsUrl", { type: "manual", message });
-        throw new Error(message);
-      }
-
-      if (!authorizationKey) {
-        const message = isUnicaProvider ? "Укажите API ключ" : "Укажите Authorization key";
-        form.setError("authorizationKey", { type: "manual", message });
-        throw new Error(message);
-      }
-
-      if (providerType !== "unica" && !scope) {
-        const message = "Укажите OAuth scope";
-        form.setError("scope", { type: "manual", message });
-        throw new Error(message);
-      }
-
-      if (!model) {
-        const message = "Укажите модель";
-        form.setError("model", { type: "manual", message });
         throw new Error(message);
       }
 
@@ -830,6 +790,7 @@ export default function EmbeddingServicesPage() {
           },
           credentials: "include",
           body: JSON.stringify({
+            id: selectedProvider?.id,
             providerType,
             tokenUrl,
             embeddingsUrl,

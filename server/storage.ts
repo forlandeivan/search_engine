@@ -3994,7 +3994,7 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
         "request_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "response_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "qdrant_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
-        "workspace_id" varchar NOT NULL,
+        "workspace_id" varchar,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
@@ -4089,7 +4089,7 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
     try {
       await db.execute(sql`
         ALTER TABLE "embedding_providers"
-        ALTER COLUMN "workspace_id" SET NOT NULL
+        ALTER COLUMN "workspace_id" DROP NOT NULL
       `);
     } catch (error) {
       swallowPgError(error, ["23502"]);
@@ -4320,7 +4320,7 @@ async function ensureLlmProvidersTable(): Promise<void> {
         "request_headers" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "request_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "response_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
-        "workspace_id" varchar NOT NULL,
+        "workspace_id" varchar,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
@@ -4419,7 +4419,7 @@ async function ensureLlmProvidersTable(): Promise<void> {
     try {
       await db.execute(sql`
         ALTER TABLE "llm_providers"
-        ALTER COLUMN "workspace_id" SET NOT NULL
+        ALTER COLUMN "workspace_id" DROP NOT NULL
       `);
     } catch (error) {
       swallowPgError(error, ["23502"]);
@@ -6458,7 +6458,11 @@ export class DatabaseStorage implements IStorage {
     await ensureEmbeddingProvidersTable();
     const query = workspaceId
       ? this.db.select().from(embeddingProviders).where(
-          or(eq(embeddingProviders.workspaceId, workspaceId), eq(embeddingProviders.isGlobal, true)),
+          or(
+            eq(embeddingProviders.workspaceId, workspaceId), 
+            eq(embeddingProviders.isGlobal, true),
+            sql`${embeddingProviders.workspaceId} IS NULL`
+          ),
         )
       : this.db.select().from(embeddingProviders);
     return await query.orderBy(desc(embeddingProviders.createdAt));
@@ -6469,7 +6473,11 @@ export class DatabaseStorage implements IStorage {
     const condition = workspaceId
       ? and(
           eq(embeddingProviders.id, id),
-          or(eq(embeddingProviders.workspaceId, workspaceId), eq(embeddingProviders.isGlobal, true)),
+          or(
+            eq(embeddingProviders.workspaceId, workspaceId), 
+            eq(embeddingProviders.isGlobal, true),
+            sql`${embeddingProviders.workspaceId} IS NULL`
+          ),
         )
       : eq(embeddingProviders.id, id);
     const [provider] = await this.db.select().from(embeddingProviders).where(condition);
@@ -6536,7 +6544,11 @@ export class DatabaseStorage implements IStorage {
     await ensureLlmProvidersTable();
     const query = workspaceId
       ? this.db.select().from(llmProviders).where(
-          or(eq(llmProviders.workspaceId, workspaceId), eq(llmProviders.isGlobal, true)),
+          or(
+            eq(llmProviders.workspaceId, workspaceId), 
+            eq(llmProviders.isGlobal, true),
+            sql`${llmProviders.workspaceId} IS NULL`
+          ),
         )
       : this.db.select().from(llmProviders);
     const result = await query.orderBy(desc(llmProviders.createdAt));
@@ -6556,7 +6568,11 @@ export class DatabaseStorage implements IStorage {
           .where(
             and(
               eq(llmProviders.id, id),
-              or(eq(llmProviders.workspaceId, workspaceId), eq(llmProviders.isGlobal, true)),
+              or(
+                eq(llmProviders.workspaceId, workspaceId), 
+                eq(llmProviders.isGlobal, true),
+                sql`${llmProviders.workspaceId} IS NULL`
+              ),
             ),
           )
           .limit(1)

@@ -1480,7 +1480,6 @@ export const embeddingProviders = pgTable("embedding_providers", {
   responseConfig: jsonb("response_config").$type<EmbeddingResponseConfig>().notNull().default(sql`'{}'::jsonb`),
   qdrantConfig: jsonb("qdrant_config").$type<QdrantIntegrationConfig>().notNull().default(sql`'{}'::jsonb`),
   workspaceId: varchar("workspace_id")
-    .notNull()
     .references(() => workspaces.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -1624,7 +1623,6 @@ export const llmProviders = pgTable("llm_providers", {
   requestConfig: jsonb("request_config").$type<LlmRequestConfig>().notNull().default(sql`'{}'::jsonb`),
   responseConfig: jsonb("response_config").$type<LlmResponseConfig>().notNull().default(sql`'{}'::jsonb`),
   workspaceId: varchar("workspace_id")
-    .notNull()
     .references(() => workspaces.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),

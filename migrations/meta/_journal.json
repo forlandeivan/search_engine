@@ -218,6 +218,13 @@
       "when": 1738245600000,
       "tag": "0125_add_embedding_providers_available_models",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1738245600001,
+      "tag": "0126_make_providers_workspace_optional",
+      "breakpoints": true
     }
   ]
 }

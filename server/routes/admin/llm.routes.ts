@@ -132,8 +132,12 @@ adminLlmRouter.get('/llm-providers', asyncHandler(async (_req, res) => {
  * Create new LLM provider
  */
 adminLlmRouter.post('/llm-providers', asyncHandler(async (req, res) => {
+  const workspaceId = getRequestWorkspace(req);
   try {
-    const provider = await storage.createLlmProvider(req.body as LlmProviderInsert);
+    const provider = await storage.createLlmProvider({
+      ...(req.body as Record<string, unknown>),
+      workspaceId: workspaceId?.id || null
+    } as LlmProviderInsert);
     res.status(201).json({ provider });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -332,8 +336,12 @@ adminLlmRouter.get('/embeddings/providers', asyncHandler(async (_req, res) => {
  * Create embedding provider
  */
 adminLlmRouter.post('/embeddings/providers', asyncHandler(async (req, res) => {
+  const workspaceId = getRequestWorkspace(req);
   try {
-    const provider = await storage.createEmbeddingProvider(req.body);
+    const provider = await storage.createEmbeddingProvider({
+      ...req.body,
+      workspaceId: workspaceId?.id || null
+    });
     res.status(201).json({ provider });
   } catch (error) {
     if (error instanceof z.ZodError) {
