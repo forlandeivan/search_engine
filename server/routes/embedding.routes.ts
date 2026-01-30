@@ -81,11 +81,12 @@ embeddingRouter.get('/services', asyncHandler(async (req, res) => {
   // Получаем полные объекты провайдеров, а не только статус
   const fullProviders = await storage.listEmbeddingProviders(workspaceId);
   
-  // Преобразуем в PublicEmbeddingProvider (скрываем authorizationKey)
+  // Преобразуем в PublicEmbeddingProvider (скрываем authorizationKey и гарантируем наличие availableModels)
   const publicProviders: PublicEmbeddingProvider[] = fullProviders.map(provider => {
-    const { authorizationKey, ...rest } = provider;
+    const { authorizationKey, availableModels, ...rest } = provider;
     return {
       ...rest,
+      availableModels: Array.isArray(availableModels) ? availableModels : [],
       hasAuthorizationKey: typeof authorizationKey === 'string' && authorizationKey.trim().length > 0,
     };
   });
