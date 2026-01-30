@@ -182,16 +182,16 @@ const embeddingTemplates: Record<EmbeddingProviderType, Partial<FormValues>> = {
   },
   unica: {
     providerType: "unica",
-    name: "Unica AI Embeddings",
-    description: "Эмбеддинги через Unica AI API (модель bge-m3)",
+    name: "",
+    description: "",
     isActive: true,
     isGlobal: true,
     tokenUrl: "",
     embeddingsUrl: "",
     scope: "",
-    model: "bge-m3",
-    maxTokensPerVectorization: "4096",
-    availableModels: [{ label: "BGE-M3", value: "bge-m3" }],
+    model: "",
+    maxTokensPerVectorization: "",
+    availableModels: [],
   },
 };
 
@@ -1353,7 +1353,7 @@ export default function EmbeddingServicesPage() {
                           .filter((m) => !providerCatalogOptions.some((opt) => opt.value === m.value))
                           .map((m, index) => (
                             <SelectItem key={m.value || index} value={m.value}>
-                              {m.label || m.value} (не в каталоге)
+                              {m.label || m.value}
                             </SelectItem>
                           ))}
                       </>
