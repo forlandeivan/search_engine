@@ -25,6 +25,7 @@ export interface Skill {
   knowledgeBaseIds?: string[];
   ragConfig?: SkillRagConfig | null;
   transcriptionFlowMode: SkillTranscriptionFlowMode;
+  asrProviderId?: string | null;
   onTranscriptionMode: SkillTranscriptionMode;
   onTranscriptionAutoActionId: string | null;
   createdAt: string;
@@ -46,6 +47,7 @@ export interface SkillPayload {
   knowledgeBaseIds?: string[];
   ragConfig?: SkillRagConfig | null;
   transcriptionFlowMode?: SkillTranscriptionFlowMode;
+  asrProviderId?: string | null;
   onTranscriptionMode?: SkillTranscriptionMode;
   onTranscriptionAutoActionId?: string | null;
   noCodeEndpointUrl?: string | null;

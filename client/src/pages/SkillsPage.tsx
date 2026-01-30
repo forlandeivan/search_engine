@@ -67,6 +67,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 
 import { useSkills } from "@/hooks/useSkills";
 import { useModels, type PublicModel } from "@/hooks/useModels";
+import { useAsrProviders } from "@/hooks/useAsrProviders";
 import { apiRequest } from "@/lib/queryClient";
 import { getSkillIcon } from "@/lib/skill-icons";
 import { cn } from "@/lib/utils";
@@ -236,6 +237,9 @@ export function SkillFormContent({
     lastFour: null,
   });
   const [showCallbackTokenModal, setShowCallbackTokenModal] = useState(false);
+
+  // Fetch ASR providers
+  const { data: asrProviders } = useAsrProviders();
 
   const handleTabChange = (tab: string) => {
     const next: SkillSettingsTab = tab === "transcription" || tab === "actions" || tab === "files" ? tab : "main";
@@ -601,6 +605,7 @@ export function SkillFormContent({
         systemPrompt: skill.systemPrompt ?? "",
         icon: skill.icon ?? "",
         transcriptionFlowMode: skill.transcriptionFlowMode ?? "standard",
+        asrProviderId: skill.asrProviderId ?? null,
         onTranscriptionMode: skill.onTranscriptionMode ?? "raw_only",
         onTranscriptionAutoActionId: skill.onTranscriptionAutoActionId ?? "",
         noCodeFileStorageProviderId:
@@ -1753,6 +1758,51 @@ export function SkillFormContent({
                       />
                     </div>
                   </div>
+
+                  {/* ASR Provider Selection (только для стандартного режима) */}
+                  {!isTranscriptionNoCode && (
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="text-base font-semibold text-foreground">ASR провайдер</h3>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Провайдер для распознавания речи
+                        </p>
+                      </div>
+                      <FormField
+                        control={form.control}
+                        name="asrProviderId"
+                        render={({ field }) => (
+                          <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
+                            <FormLabel className="pt-2.5 text-sm font-medium">Провайдер</FormLabel>
+                            <div className="space-y-2">
+                              <FormControl>
+                                <Select
+                                  value={field.value ?? ""}
+                                  onValueChange={field.onChange}
+                                  disabled={controlsDisabled}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Выберите ASR провайдер..." />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {asrProviders?.map((provider) => (
+                                      <SelectItem key={provider.id} value={provider.id}>
+                                        {provider.displayName} ({provider.asrProviderType})
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </FormControl>
+                              <p className="text-sm text-muted-foreground">
+                                Провайдер для распознавания речи. Обязателен для стандартного режима транскрибации.
+                              </p>
+                              <FormMessage className="text-xs text-destructive leading-tight" />
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
 
                   {isTranscriptionNoCode ? (
                     <div className="space-y-4">
