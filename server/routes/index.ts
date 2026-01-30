@@ -30,7 +30,9 @@ import { embeddingRouter } from './embedding.routes';
 import { modelsRouter } from './models.routes';
 import { llmRouter } from './llm.routes';
 import { fileStorageRouter } from './file-storage.routes';
+import { maintenanceRouter } from './maintenance.routes';
 import { generalApiLimiter } from '../middleware/rate-limit';
+import { requireAdmin } from '../auth';
 
 const routerLogger = createLogger('router');
 
@@ -91,7 +93,7 @@ export function registerRouteModules(app: Express): void {
   routerLogger.info('Registered: /api/workspaces');
   
   // Admin routes
-  app.use('/api/admin', adminRouter);
+  app.use('/api/admin', requireAdmin, adminRouter);
   routerLogger.info('Registered: /api/admin');
   
   // Vector routes (Qdrant operations)
@@ -121,6 +123,10 @@ export function registerRouteModules(app: Express): void {
   // Health check routes
   app.use('/api/health', healthRouter);
   routerLogger.info('Registered: /api/health');
+
+  // Maintenance mode status (public)
+  app.use('/api/maintenance', maintenanceRouter);
+  routerLogger.info('Registered: /api/maintenance');
 
   // Prometheus metrics endpoint
   app.use('/metrics', metricsRouter);

@@ -577,6 +577,38 @@ export const smtpSettings = pgTable("smtp_settings", {
 export type SmtpSettings = typeof smtpSettings.$inferSelect;
 export type SmtpSettingsInsert = typeof smtpSettings.$inferInsert;
 
+export const maintenanceModeSettings = pgTable("maintenance_mode_settings", {
+  id: varchar("id").primaryKey().default("maintenance_mode_singleton"),
+  scheduledStartAt: timestamp("scheduled_start_at"),
+  scheduledEndAt: timestamp("scheduled_end_at"),
+  forceEnabled: boolean("force_enabled").notNull().default(false),
+  messageTitle: varchar("message_title", { length: 120 }).notNull().default(""),
+  messageBody: text("message_body").notNull().default(""),
+  publicEta: text("public_eta"),
+  updatedByAdminId: varchar("updated_by_admin_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+export type MaintenanceModeSettings = typeof maintenanceModeSettings.$inferSelect;
+export type MaintenanceModeSettingsInsert = typeof maintenanceModeSettings.$inferInsert;
+
+export const maintenanceModeAuditLog = pgTable(
+  "maintenance_mode_audit_log",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    eventType: varchar("event_type", { length: 64 }).notNull(),
+    actorAdminId: varchar("actor_admin_id").references(() => users.id, { onDelete: "set null" }),
+    occurredAt: timestamp("occurred_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
+  },
+  (table) => ({
+    occurredAtIdx: index("maintenance_mode_audit_log_occurred_at_idx").on(table.occurredAt),
+    eventTypeIdx: index("maintenance_mode_audit_log_event_type_idx").on(table.eventType),
+  }),
+);
+export type MaintenanceModeAuditLog = typeof maintenanceModeAuditLog.$inferSelect;
+export type MaintenanceModeAuditLogInsert = typeof maintenanceModeAuditLog.$inferInsert;
+
 export const indexingRules = pgTable("indexing_rules", {
   id: varchar("id").primaryKey().default("indexing_rules_singleton"),
   embeddingsProvider: varchar("embeddings_provider", { length: 255 }).notNull(),

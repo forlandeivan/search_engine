@@ -168,6 +168,7 @@ const FileStorageProvidersPage = lazyWithRetry(() => import("@/pages/FileStorage
 const FileStorageProviderDetailsPage = lazyWithRetry(() => import("@/pages/FileStorageProviderDetailsPage"));
 const SmtpSettingsPage = lazyWithRetry(() => import("@/pages/SmtpSettingsPage"));
 const AdminIndexingRulesPage = lazyWithRetry(() => import("@/pages/AdminIndexingRulesPage"));
+const AdminMaintenanceModePage = lazyWithRetry(() => import("@/pages/AdminMaintenanceModePage"));
 
 // Lazy loaded pages - Main routes (с автоперезагрузкой при ошибке загрузки чанков)
 const KnowledgeBasePage = lazyWithRetry(() => import("@/pages/KnowledgeBasePage"));
@@ -233,6 +234,9 @@ function AdminRouter() {
       </Route>
       <Route path="/admin/indexing-rules">
         <LazyRouteWrapper><AdminIndexingRulesPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/settings/maintenance">
+        <LazyRouteWrapper><AdminMaintenanceModePage /></LazyRouteWrapper>
       </Route>
       <Route path="/admin/settings/smtp">
         <LazyRouteWrapper><SmtpSettingsPage /></LazyRouteWrapper>
