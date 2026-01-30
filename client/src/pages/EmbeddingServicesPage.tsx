@@ -586,33 +586,31 @@ export default function EmbeddingServicesPage() {
     const trimmedMaxTokens = values.maxTokensPerVectorization.trim();
     const trimmedModel = values.model.trim();
 
-    if (!trimmedModel) {
+    if (!trimmedModel && values.providerType !== "unica") {
       const message = "Укажите модель";
       form.setError("model", { type: "manual", message });
       throw new Error(message);
     }
 
-    const isInCatalog = catalogByKey.has(trimmedModel);
-    const isInAvailable = values.availableModels?.some((m) => m.value === trimmedModel);
+    const isInCatalog = trimmedModel ? catalogByKey.has(trimmedModel) : false;
+    const isInAvailable = trimmedModel ? values.availableModels?.some((m) => m.value === trimmedModel) : false;
 
-    if (!isInCatalog && !isInAvailable) {
+    if (trimmedModel && !isInCatalog && !isInAvailable) {
       const message = "Модель не найдена в каталоге и списке доступных моделей";
       form.setError("model", { type: "manual", message });
       throw new Error(message);
     }
 
-    if (!trimmedMaxTokens) {
-      const message = "Укажите максимальное количество токенов";
-      form.setError("maxTokensPerVectorization", { type: "manual", message });
-      throw new Error(message);
-    }
+    let parsedMaxTokens: number | undefined = undefined;
 
-    const parsedMaxTokens = Number.parseInt(trimmedMaxTokens, 10);
-
-    if (!Number.isFinite(parsedMaxTokens) || parsedMaxTokens <= 0) {
-      const message = "Введите положительное целое число";
-      form.setError("maxTokensPerVectorization", { type: "manual", message });
-      throw new Error(message);
+    if (trimmedMaxTokens) {
+      const val = Number.parseInt(trimmedMaxTokens, 10);
+      if (!Number.isFinite(val) || val <= 0) {
+        const message = "Введите положительное целое число";
+        form.setError("maxTokensPerVectorization", { type: "manual", message });
+        throw new Error(message);
+      }
+      parsedMaxTokens = val;
     }
 
     const payloadBase = {
@@ -647,7 +645,7 @@ export default function EmbeddingServicesPage() {
     const formattedRequestHeaders = formatJson(requestHeaders);
 
     if (mode === "create") {
-      if (!trimmedAuthorizationKey) {
+      if (!trimmedAuthorizationKey && values.providerType !== "unica") {
         const message = "Укажите Authorization key";
         form.setError("authorizationKey", { type: "manual", message });
         throw new Error(message);
@@ -655,7 +653,7 @@ export default function EmbeddingServicesPage() {
 
       const payload: InsertEmbeddingProvider = {
         ...payloadBase,
-        authorizationKey: trimmedAuthorizationKey,
+        authorizationKey: trimmedAuthorizationKey || "",
         requestConfig: { ...DEFAULT_EMBEDDING_REQUEST_CONFIG },
         responseConfig: { ...DEFAULT_EMBEDDING_RESPONSE_CONFIG },
         qdrantConfig: { ...DEFAULT_QDRANT_CONFIG },
@@ -1171,7 +1169,7 @@ export default function EmbeddingServicesPage() {
                   variant="ghost"
                   className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
                   onClick={handleToggleAuthorizationVisibility}
-                  disabled={isLoadingKey || isViewMode}
+                  disabled={isLoadingKey}
                   aria-label={isAuthorizationVisible ? (isUnicaProvider ? "Скрыть API ключ" : "Скрыть Authorization key") : (isUnicaProvider ? "Показать API ключ" : "Показать Authorization key")}
                 >
                   {isLoadingKey ? (
@@ -1208,14 +1206,13 @@ export default function EmbeddingServicesPage() {
                     onChange={(e) => setTestEmbeddingText(e.target.value)}
                     placeholder="Текст для тестовой векторизации"
                     className="max-w-xs"
-                    disabled={isViewMode}
                   />
                   <Button
                     type="button"
                     size="sm"
                     variant="outline"
                     onClick={() => testCredentialsMutation.mutate()}
-                    disabled={testCredentialsMutation.isPending || !testEmbeddingText.trim() || isViewMode}
+                    disabled={testCredentialsMutation.isPending || !testEmbeddingText.trim()}
                   >
                     {testCredentialsMutation.isPending ? (
                       <>
@@ -1339,32 +1336,34 @@ export default function EmbeddingServicesPage() {
             <FormItem>
               <FormLabel>Модель по умолчанию</FormLabel>
               <FormControl>
-                {providerCatalogOptions.length > 0 || modelsArray.fields.length > 0 ? (
-                  <Select onValueChange={field.onChange} value={field.value} disabled={isViewMode}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Выберите модель" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {providerCatalogOptions.map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </SelectItem>
-                      ))}
-                      {/* Также показываем модели из локального списка, которых нет в каталоге */}
-                      {modelsArray.fields
-                        .filter((m) => !providerCatalogOptions.some((opt) => opt.value === m.value))
-                        .map((m, index) => (
-                          <SelectItem key={m.value || index} value={m.value}>
-                            {m.label || m.value} (не в каталоге)
+                <Select onValueChange={field.onChange} value={field.value} disabled={isViewMode}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите модель" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {providerCatalogOptions.length > 0 || modelsArray.fields.length > 0 ? (
+                      <>
+                        {providerCatalogOptions.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
                           </SelectItem>
                         ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <div className="flex gap-2">
-                    <Input {...field} placeholder="Например, bge-m3" required disabled={isViewMode} />
-                  </div>
-                )}
+                        {/* Также показываем модели из локального списка, которых нет в каталоге */}
+                        {modelsArray.fields
+                          .filter((m) => !providerCatalogOptions.some((opt) => opt.value === m.value))
+                          .map((m, index) => (
+                            <SelectItem key={m.value || index} value={m.value}>
+                              {m.label || m.value} (не в каталоге)
+                            </SelectItem>
+                          ))}
+                      </>
+                    ) : (
+                      <div className="p-2 text-sm text-muted-foreground text-center">
+                        Моделей нет. Добавьте их в списке ниже.
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
               </FormControl>
               <FormDescription>
                 {providerCatalogOptions.length > 0
@@ -1540,7 +1539,7 @@ export default function EmbeddingServicesPage() {
             type="button" 
             variant="destructive" 
             onClick={handleDelete}
-            disabled={deleteProviderMutation.isPending || isViewMode}
+            disabled={deleteProviderMutation.isPending}
           >
             {deleteProviderMutation.isPending ? (
               <>

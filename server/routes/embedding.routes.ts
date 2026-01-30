@@ -11,10 +11,12 @@
 
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
+import fetch, { Headers, type Response as FetchResponse } from "node-fetch";
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { fetchAccessToken } from '../llm-access-token';
 import { listModels, syncModelsWithEmbeddingProvider } from '../model-service';
+import { applyTlsPreferences, type NodeFetchOptions } from "../http-utils";
 import { storage } from '../storage';
 import type { PublicUser, EmbeddingProvider, PublicEmbeddingProvider, EmbeddingProviderType } from '@shared/schema';
 import { embeddingProviderTypes } from '@shared/schema';
@@ -137,11 +139,22 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
   const payload = testSchema.parse(req.body);
   const embeddingText = payload.testText?.trim() || "привет!";
 
-  const steps: Array<{
-    stage: string;
-    status: 'success' | 'error';
+  type TestStepStage = "token-request" | "token-response" | "embedding-request" | "embedding-response";
+  type TestStep = {
+    stage: TestStepStage;
+    status: "success" | "error";
     detail?: string;
-  }> = [];
+  };
+
+  const steps: TestStep[] = [];
+  const upsertStep = (step: TestStep) => {
+    const index = steps.findIndex((item) => item.stage === step.stage);
+    if (index >= 0) {
+      steps[index] = { ...steps[index], ...step };
+      return;
+    }
+    steps.push(step);
+  };
 
   try {
     // Step 1: Fetch access token
@@ -149,18 +162,17 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
 
     if (payload.providerType === "unica") {
       accessToken = payload.authorizationKey;
-      steps.push({
+      upsertStep({
         stage: "token-request",
         status: "success",
         detail: "API-ключ используется напрямую (без OAuth)",
       });
-      steps.push({
-        stage: "token-received",
+      upsertStep({
+        stage: "token-response",
         status: "success",
         detail: "OAuth не требуется для Unica AI",
       });
     } else {
-      steps.push({ stage: "token-request", status: "success" });
       const provider: EmbeddingProvider = {
         id: "test",
         name: "Test Provider",
@@ -180,10 +192,24 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
 
       try {
         accessToken = await fetchAccessToken(provider);
-        steps.push({ stage: "token-received", status: "success" });
+        upsertStep({
+          stage: "token-request",
+          status: "success",
+          detail: `Запрос access_token выполнен`,
+        });
+        upsertStep({
+          stage: "token-response",
+          status: "success",
+          detail: `access_token получен`,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        steps.push({ stage: "token-received", status: "error", detail: message });
+        upsertStep({
+          stage: "token-request",
+          status: "success",
+          detail: `Запрос access_token выполнен`,
+        });
+        upsertStep({ stage: "token-response", status: "error", detail: message });
         return res.status(400).json({
           message: "Не удалось получить токен доступа",
           steps,
@@ -192,7 +218,6 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
     }
 
     // Step 2: Test embedding request
-    steps.push({ stage: "embedding-request", status: "success" });
     const embeddingHeaders = new Headers();
     embeddingHeaders.set("Content-Type", "application/json");
     embeddingHeaders.set("Accept", "application/json");
@@ -217,16 +242,38 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
             encoding_format: "float",
           };
 
-    const embeddingResponse = await fetch(payload.embeddingsUrl, {
-      method: "POST",
-      headers: embeddingHeaders,
-      body: JSON.stringify(embeddingBody),
-      ...(payload.allowSelfSignedCertificate ? { agent: undefined } : {}),
-    });
+    let embeddingResponse: FetchResponse;
+    try {
+      const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+        {
+          method: "POST",
+          headers: embeddingHeaders,
+          body: JSON.stringify(embeddingBody),
+        },
+        payload.allowSelfSignedCertificate,
+      );
+      embeddingResponse = await fetch(payload.embeddingsUrl, requestOptions);
+      upsertStep({
+        stage: "embedding-request",
+        status: "success",
+        detail: `HTTP ${embeddingResponse.status}`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      upsertStep({
+        stage: "embedding-request",
+        status: "error",
+        detail: message,
+      });
+      return res.status(400).json({
+        message: "Не удалось выполнить запрос эмбеддингов",
+        steps,
+      });
+    }
 
     if (!embeddingResponse.ok) {
       const errorText = await embeddingResponse.text();
-      steps.push({
+      upsertStep({
         stage: "embedding-response",
         status: "error",
         detail: `HTTP ${embeddingResponse.status}: ${errorText}`,
@@ -237,13 +284,30 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
       });
     }
 
-    const embeddingData = (await embeddingResponse.json()) as {
+    const rawEmbeddingBody = await embeddingResponse.text();
+    let embeddingJson: unknown;
+    try {
+      embeddingJson = rawEmbeddingBody ? JSON.parse(rawEmbeddingBody) : null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      upsertStep({
+        stage: "embedding-response",
+        status: "error",
+        detail: `Не удалось разобрать JSON: ${message}. Ответ: ${rawEmbeddingBody || "пусто"}`,
+      });
+      return res.status(400).json({
+        message: "Некорректный ответ сервиса эмбеддингов",
+        steps,
+      });
+    }
+
+    const embeddingData = embeddingJson as {
       data?: Array<{ embedding: number[]; index?: number }>;
       usage?: { total_tokens?: number };
     };
 
     if (!embeddingData.data || embeddingData.data.length === 0) {
-      steps.push({
+      upsertStep({
         stage: "embedding-response",
         status: "error",
         detail: "Пустой массив data в ответе",
@@ -259,7 +323,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
     const vectorPreview = firstEmbedding.slice(0, 10);
     const usageTokens = embeddingData.usage?.total_tokens;
 
-    steps.push({
+    upsertStep({
       stage: "embedding-response",
       status: "success",
       detail: `Получен вектор размерностью ${vectorSize}`,
@@ -276,11 +340,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.error(`[embedding test] Unexpected error: ${message}`);
-    steps.push({
-      stage: "embedding-request",
-      status: "error",
-      detail: message,
-    });
+    upsertStep({ stage: "embedding-request", status: "error", detail: message });
     res.status(500).json({
       message: "Ошибка при проверке credentials",
       steps,

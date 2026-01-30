@@ -2339,9 +2339,9 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
       .string()
       .trim()
       .url("Некорректный URL сервиса эмбеддингов"),
-    authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
-    scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")),
-    model: z.string().trim().min(1, "Укажите модель"),
+    authorizationKey: z.string().trim().optional().or(z.literal("")),
+    scope: z.string().trim().optional().or(z.literal("")),
+    model: z.string().trim().optional().or(z.literal("")),
     availableModels: z.array(z.object({
       label: z.string().trim(),
       value: z.string().trim(),
@@ -2414,9 +2414,9 @@ export const updateEmbeddingProviderSchema = z
       .trim()
       .url("Некорректный URL сервиса эмбеддингов")
       .optional(),
-    authorizationKey: z.string().trim().min(1, "Укажите Authorization key").optional(),
-    scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")).optional(),
-    model: z.string().trim().min(1, "Укажите модель").optional(),
+    authorizationKey: z.string().trim().optional().or(z.literal("")),
+    scope: z.string().trim().optional().or(z.literal("")),
+    model: z.string().trim().optional().or(z.literal("")),
     availableModels: z.array(z.object({
       label: z.string().trim(),
       value: z.string().trim(),
