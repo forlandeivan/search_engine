@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { fetchAccessToken } from '../llm-access-token';
-import { listModels } from '../model-service';
+import { listModels, syncModelsWithEmbeddingProvider } from '../model-service';
 import { storage } from '../storage';
 import type { PublicUser, EmbeddingProvider, PublicEmbeddingProvider, EmbeddingProviderType } from '@shared/schema';
 import { embeddingProviderTypes } from '@shared/schema';
