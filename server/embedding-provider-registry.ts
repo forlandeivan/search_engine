@@ -27,9 +27,14 @@ function computeStatus(provider: EmbeddingProvider): Pick<EmbeddingProviderStatu
     return { isConfigured: false, statusReason: "Провайдер отключен" };
   }
 
-  const hasAuthKey = typeof provider.authorizationKey === "string" && provider.authorizationKey.trim().length > 0;
-  if (!hasAuthKey) {
-    return { isConfigured: false, statusReason: "Не задан ключ авторизации" };
+  // Для Unica AI ключ авторизации и tokenUrl не обязательны
+  const isUnicaProvider = provider.providerType === "unica";
+  
+  if (!isUnicaProvider) {
+    const hasAuthKey = typeof provider.authorizationKey === "string" && provider.authorizationKey.trim().length > 0;
+    if (!hasAuthKey) {
+      return { isConfigured: false, statusReason: "Не задан ключ авторизации" };
+    }
   }
 
   const embeddingsUrl = typeof provider.embeddingsUrl === "string" ? provider.embeddingsUrl.trim() : "";
@@ -37,9 +42,11 @@ function computeStatus(provider: EmbeddingProvider): Pick<EmbeddingProviderStatu
     return { isConfigured: false, statusReason: "Не указан URL сервиса эмбеддингов" };
   }
 
-  const tokenUrl = typeof provider.tokenUrl === "string" ? provider.tokenUrl.trim() : "";
-  if (!tokenUrl) {
-    return { isConfigured: false, statusReason: "Не указан URL получения токена" };
+  if (!isUnicaProvider) {
+    const tokenUrl = typeof provider.tokenUrl === "string" ? provider.tokenUrl.trim() : "";
+    if (!tokenUrl) {
+      return { isConfigured: false, statusReason: "Не указан URL получения токена" };
+    }
   }
 
   const model = typeof provider.model === "string" ? provider.model.trim() : "";
