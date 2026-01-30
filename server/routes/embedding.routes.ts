@@ -271,7 +271,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
         : {
             model: payload.model,
             input: [embeddingText],
-            encoding_format: "float",
+            encoding_format: "float" as const,
           };
 
     logger.info('[test-credentials] Embedding request', {
@@ -280,7 +280,7 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
       embeddingsUrl: payload.embeddingsUrl,
       model: payload.model,
       bodyKeys: Object.keys(embeddingBody),
-      workSpaceId: payload.providerType === "unica" ? embeddingBody.workSpaceId : undefined,
+      workSpaceId: payload.providerType === "unica" ? (embeddingBody as { workSpaceId: string }).workSpaceId : undefined,
     });
 
     let embeddingResponse: FetchResponse;
@@ -337,6 +337,11 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
       embeddingJson = rawEmbeddingBody ? JSON.parse(rawEmbeddingBody) : null;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      logger.error('[test-credentials] Failed to parse embedding response', {
+        error: message,
+        rawBody: rawEmbeddingBody?.substring(0, 500),
+        providerId: payload.id,
+      });
       upsertStep({
         stage: "embedding-response",
         status: "error",
@@ -348,12 +353,26 @@ embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res)
       });
     }
 
+    logger.info('[test-credentials] Embedding response received', {
+      providerId: payload.id,
+      providerType: payload.providerType,
+      responseKeys: embeddingJson ? Object.keys(embeddingJson as object) : [],
+      responseBody: JSON.stringify(embeddingJson).substring(0, 500),
+    });
+
     const embeddingData = embeddingJson as {
       data?: Array<{ embedding: number[]; index?: number }>;
       usage?: { total_tokens?: number };
     };
 
     if (!embeddingData.data || embeddingData.data.length === 0) {
+      logger.warn('[test-credentials] Empty data array in response', {
+        providerId: payload.id,
+        hasData: !!embeddingData.data,
+        dataLength: embeddingData.data?.length ?? 0,
+        responseKeys: Object.keys(embeddingData),
+        fullResponse: JSON.stringify(embeddingData).substring(0, 1000),
+      });
       upsertStep({
         stage: "embedding-response",
         status: "error",
