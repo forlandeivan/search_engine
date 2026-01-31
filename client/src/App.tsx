@@ -15,8 +15,20 @@ console.log("[App.tsx] react-query loaded");
 import { queryClient, getQueryFn } from "./lib/queryClient";
 console.log("[App.tsx] queryClient loaded");
 
+import { isApiError } from "@/lib/api-errors";
+console.log("[App.tsx] api-errors loaded");
+
 import { Toaster } from "@/components/ui/toaster";
 console.log("[App.tsx] Toaster loaded");
+
+import { MaintenanceBanner } from "@/components/maintenance-mode/MaintenanceBanner";
+console.log("[App.tsx] MaintenanceBanner loaded");
+
+import { MaintenanceOverlay } from "@/components/maintenance-mode/MaintenanceOverlay";
+console.log("[App.tsx] MaintenanceOverlay loaded");
+
+import { useMaintenanceStatus } from "@/hooks/use-maintenance-status";
+console.log("[App.tsx] useMaintenanceStatus loaded");
 
 import { useToast } from "@/hooks/use-toast";
 console.log("[App.tsx] useToast loaded");
@@ -471,6 +483,13 @@ function AppContent() {
     return <LoadingScreen />;
   }
 
+  const isMaintenanceSessionError =
+    isApiError(sessionQuery.error) && sessionQuery.error.code === "MAINTENANCE_MODE";
+
+  if (sessionQuery.error && isMaintenanceSessionError) {
+    return null;
+  }
+
   // Если произошла ошибка при загрузке сессии - показываем AuthPage
   if (sessionQuery.error) {
     console.error("Session query error:", sessionQuery.error);
@@ -541,6 +560,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
+        <MaintenanceLayer />
         <AppContent />
         <Toaster />
       </TooltipProvider>
@@ -549,3 +569,17 @@ function App() {
 }
 
 export default App;
+
+function MaintenanceLayer() {
+  const maintenance = useMaintenanceStatus();
+  const shouldShowBanner = maintenance.status === "scheduled" && Boolean(maintenance.data);
+  const shouldShowOverlay = maintenance.status === "active" || maintenance.status === "unknown";
+  const safeMode = maintenance.status === "unknown";
+
+  return (
+    <>
+      {shouldShowBanner && maintenance.data ? <MaintenanceBanner status={maintenance.data} /> : null}
+      {shouldShowOverlay ? <MaintenanceOverlay status={maintenance.data} safeMode={safeMode} /> : null}
+    </>
+  );
+}

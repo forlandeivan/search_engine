@@ -1,5 +1,6 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import type { SessionResponse } from "@/types/session";
+import { toast } from "@/hooks/use-toast";
 
 export class ApiError extends Error {
   code?: string;
@@ -13,6 +14,9 @@ export class ApiError extends Error {
     this.details = opts?.details;
   }
 }
+
+const MAINTENANCE_TOAST_COOLDOWN_MS = 30_000;
+let lastMaintenanceToastAt = 0;
 
 // Инициализируем queryClient ПЕРЕД использованием в функциях
 export const queryClient = new QueryClient({
@@ -93,6 +97,18 @@ export async function throwIfResNotOk(res: Response) {
   } else if (text.startsWith("<")) {
     // HTML-ответы от прокси не информативны, используем статус
     errorMessage = res.statusText || "Неизвестная ошибка";
+  }
+
+  if (errorCode === "MAINTENANCE_MODE") {
+    const now = Date.now();
+    if (now - lastMaintenanceToastAt > MAINTENANCE_TOAST_COOLDOWN_MS) {
+      lastMaintenanceToastAt = now;
+      toast({
+        title: "Сервис временно недоступен",
+        description: errorMessage || "Идут технические работы. Попробуйте позже.",
+        variant: "destructive",
+      });
+    }
   }
 
   throw new ApiError(errorMessage ? `${errorMessage}` : `${res.status}: ${errorMessage}`, {

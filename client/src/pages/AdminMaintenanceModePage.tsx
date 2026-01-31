@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@/lib/zod-resolver";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronDownIcon, Loader2, RefreshCw } from "lucide-react";
+import { Check, ChevronDownIcon, ChevronsUpDown, Loader2, RefreshCw } from "lucide-react";
 
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -17,6 +17,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Label } from "@/components/ui/label";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Form,
   FormControl,
@@ -36,6 +44,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import { cn } from "@/lib/utils";
 import type { MaintenanceModeSettingsDto } from "@shared/maintenance-mode";
 
 type AuditLogItem = {
@@ -55,6 +64,8 @@ type AuditLogResponse = {
 };
 
 const DEFAULT_TIME_ZONE = "UTC";
+const DEFAULT_START_TIME = "10:00";
+const DEFAULT_END_TIME = "11:00";
 
 const timeField = z
   .string()
@@ -202,6 +213,79 @@ function listTimeZones(): string[] {
   return [DEFAULT_TIME_ZONE];
 }
 
+function sanitizeText(value: string | null | undefined): string {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.includes("�")) return "";
+  if (/^[?]+$/.test(trimmed)) return "";
+  if (/\?{3,}/.test(trimmed)) return "";
+  return trimmed;
+}
+
+function formatUtcOffset(minutes: number): string {
+  const sign = minutes >= 0 ? "+" : "-";
+  const abs = Math.abs(minutes);
+  const hours = String(Math.floor(abs / 60)).padStart(2, "0");
+  const mins = String(abs % 60).padStart(2, "0");
+  return `UTC${sign}${hours}:${mins}`;
+}
+
+function getTimeZoneOffsetMinutes(timeZone: string): number {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const utcFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
+  const toParts = (parts: Intl.DateTimeFormatPart[]) => {
+    const map: Record<string, number> = {};
+    for (const part of parts) {
+      if (part.type !== "literal") {
+        map[part.type] = Number(part.value);
+      }
+    }
+    return map;
+  };
+
+  const tzParts = toParts(formatter.formatToParts(now));
+  const utcParts = toParts(utcFormatter.formatToParts(now));
+  const tzStamp = Date.UTC(
+    tzParts.year,
+    tzParts.month - 1,
+    tzParts.day,
+    tzParts.hour,
+    tzParts.minute,
+    tzParts.second,
+  );
+  const utcStamp = Date.UTC(
+    utcParts.year,
+    utcParts.month - 1,
+    utcParts.day,
+    utcParts.hour,
+    utcParts.minute,
+    utcParts.second,
+  );
+
+  return Math.round((tzStamp - utcStamp) / 60000);
+}
+
 function toZonedParts(date: Date, timeZone: string) {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -274,10 +358,22 @@ export default function AdminMaintenanceModePage() {
     dateTo: "",
   });
   const pageSize = 20;
+  const [timeZoneOpen, setTimeZoneOpen] = useState(false);
 
   const timeZones = useMemo(() => listTimeZones(), []);
   const [timeZone, setTimeZone] = useState(resolveTimeZone);
   const normalizedTimeZone = timeZones.includes(timeZone) ? timeZone : DEFAULT_TIME_ZONE;
+  const timeZoneOptions = useMemo(() => {
+    const options = timeZones.map((zone) => {
+      const offsetMinutes = getTimeZoneOffsetMinutes(zone);
+      return {
+        value: zone,
+        offsetMinutes,
+        label: `${formatUtcOffset(offsetMinutes)} (${zone})`,
+      };
+    });
+    return options.sort((a, b) => a.offsetMinutes - b.offsetMinutes || a.value.localeCompare(b.value));
+  }, [timeZones]);
 
   const { data, isLoading, isError, error, refetch } = useQuery<MaintenanceModeSettingsDto>({
     queryKey: ["/api/admin/settings/maintenance"],
@@ -298,9 +394,9 @@ export default function AdminMaintenanceModePage() {
     mode: "onChange",
     defaultValues: {
       scheduledStartDate: undefined,
-      scheduledStartTime: "",
+      scheduledStartTime: DEFAULT_START_TIME,
       scheduledEndDate: undefined,
-      scheduledEndTime: "",
+      scheduledEndTime: DEFAULT_END_TIME,
       forceEnabled: false,
       messageTitle: "",
       messageBody: "",
@@ -316,13 +412,13 @@ export default function AdminMaintenanceModePage() {
     form.reset(
       {
         scheduledStartDate: start.date,
-        scheduledStartTime: start.time,
+        scheduledStartTime: start.time || DEFAULT_START_TIME,
         scheduledEndDate: end.date,
-        scheduledEndTime: end.time,
+        scheduledEndTime: end.time || DEFAULT_END_TIME,
         forceEnabled: data.forceEnabled ?? false,
-        messageTitle: data.messageTitle ?? "",
-        messageBody: data.messageBody ?? "",
-        publicEta: data.publicEta ?? "",
+        messageTitle: sanitizeText(data.messageTitle),
+        messageBody: sanitizeText(data.messageBody),
+        publicEta: sanitizeText(data.publicEta),
       },
       { keepDirtyValues: true },
     );
@@ -355,13 +451,13 @@ export default function AdminMaintenanceModePage() {
 
       form.reset({
         scheduledStartDate: start.date,
-        scheduledStartTime: start.time,
+        scheduledStartTime: start.time || DEFAULT_START_TIME,
         scheduledEndDate: end.date,
-        scheduledEndTime: end.time,
+        scheduledEndTime: end.time || DEFAULT_END_TIME,
         forceEnabled: updated.forceEnabled ?? false,
-        messageTitle: updated.messageTitle ?? "",
-        messageBody: updated.messageBody ?? "",
-        publicEta: updated.publicEta ?? "",
+        messageTitle: sanitizeText(updated.messageTitle),
+        messageBody: sanitizeText(updated.messageBody),
+        publicEta: sanitizeText(updated.publicEta),
       });
       toast({ title: "Настройки сохранены", description: "Режим обслуживания обновлен." });
     },
@@ -460,21 +556,49 @@ export default function AdminMaintenanceModePage() {
 
               <div className="space-y-2">
                 <Label htmlFor="maintenance-timezone">Часовой пояс</Label>
-                <Select value={normalizedTimeZone} onValueChange={setTimeZone}>
-                  <SelectTrigger id="maintenance-timezone">
-                    <SelectValue placeholder="Выберите часовой пояс" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-[320px]">
-                    <SelectGroup>
-                      <SelectLabel>Часовые пояса</SelectLabel>
-                      {timeZones.map((zone) => (
-                        <SelectItem key={zone} value={zone}>
-                          {zone}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                <Popover open={timeZoneOpen} onOpenChange={setTimeZoneOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={timeZoneOpen}
+                      id="maintenance-timezone"
+                      className="w-full justify-between"
+                    >
+                      {timeZoneOptions.find((zone) => zone.value === normalizedTimeZone)?.label ??
+                        "Выберите часовой пояс"}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-full p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Поиск часового пояса..." className="h-9" />
+                      <CommandList>
+                        <CommandEmpty>Ничего не найдено.</CommandEmpty>
+                        <CommandGroup>
+                          {timeZoneOptions.map((zone) => (
+                            <CommandItem
+                              key={zone.value}
+                              value={`${zone.label} ${zone.value}`}
+                              onSelect={() => {
+                                setTimeZone(zone.value);
+                                setTimeZoneOpen(false);
+                              }}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4",
+                                  normalizedTimeZone === zone.value ? "opacity-100" : "opacity-0",
+                                )}
+                              />
+                              {zone.label}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
                 <p className="text-xs text-muted-foreground">
                   Даты и время интерпретируются в выбранном часовом поясе.
                 </p>

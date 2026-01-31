@@ -66,3 +66,5 @@
 - `docs/epics/maintenance-mode/non-functional-requirements.md`
 - `docs/epics/maintenance-mode/implementation-tasks.md`
 - `docs/epics/maintenance-mode/test-scenarios.md`
+- `docs/epics/maintenance-mode/runbook.md`
+- `docs/public-docs/maintenance-mode.md`
