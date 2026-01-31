@@ -2,7 +2,7 @@
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@/lib/zod-resolver";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDownIcon, ChevronsUpDown, Loader2, RefreshCw } from "lucide-react";
 
 import { apiRequest } from "@/lib/queryClient";
@@ -231,20 +231,9 @@ function formatUtcOffset(minutes: number): string {
   return `UTC${sign}${hours}:${mins}`;
 }
 
-function getTimeZoneOffsetMinutes(timeZone: string): number {
-  const now = new Date();
+function getTimeZoneOffsetMinutesAt(timeZone: string, date: Date): number {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const utcFormatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: "UTC",
     hour12: false,
     year: "numeric",
     month: "2-digit",
@@ -264,8 +253,7 @@ function getTimeZoneOffsetMinutes(timeZone: string): number {
     return map;
   };
 
-  const tzParts = toParts(formatter.formatToParts(now));
-  const utcParts = toParts(utcFormatter.formatToParts(now));
+  const tzParts = toParts(formatter.formatToParts(date));
   const tzStamp = Date.UTC(
     tzParts.year,
     tzParts.month - 1,
@@ -274,16 +262,12 @@ function getTimeZoneOffsetMinutes(timeZone: string): number {
     tzParts.minute,
     tzParts.second,
   );
-  const utcStamp = Date.UTC(
-    utcParts.year,
-    utcParts.month - 1,
-    utcParts.day,
-    utcParts.hour,
-    utcParts.minute,
-    utcParts.second,
-  );
 
-  return Math.round((tzStamp - utcStamp) / 60000);
+  return Math.round((tzStamp - date.getTime()) / 60000);
+}
+
+function getTimeZoneOffsetMinutes(timeZone: string): number {
+  return getTimeZoneOffsetMinutesAt(timeZone, new Date());
 }
 
 function toZonedParts(date: Date, timeZone: string) {
@@ -342,15 +326,16 @@ function zonedDateTimeToUtcIso(date: Date | undefined, time: string, timeZone: s
     return null;
   }
 
-  const utcDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute));
-  const tzDate = new Date(utcDate.toLocaleString("en-US", { timeZone }));
-  const offset = utcDate.getTime() - tzDate.getTime();
+  const assumedUtc = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute));
+  const offsetMinutes = getTimeZoneOffsetMinutesAt(timeZone, assumedUtc);
+  const actualUtc = new Date(assumedUtc.getTime() - offsetMinutes * 60000);
 
-  return new Date(utcDate.getTime() + offset).toISOString();
+  return actualUtc.toISOString();
 }
 
 export default function AdminMaintenanceModePage() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [logFilters, setLogFilters] = useState({
     type: "all",
@@ -459,6 +444,7 @@ export default function AdminMaintenanceModePage() {
         messageBody: sanitizeText(updated.messageBody),
         publicEta: sanitizeText(updated.publicEta),
       });
+      queryClient.invalidateQueries({ queryKey: ["/api/maintenance/status"] });
       toast({ title: "Настройки сохранены", description: "Режим обслуживания обновлен." });
     },
     onError: (err: unknown) => {

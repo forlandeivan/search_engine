@@ -3,7 +3,7 @@ console.log("[App.tsx] Starting imports...");
 import { Switch, Route, useLocation } from "wouter";
 console.log("[App.tsx] wouter loaded");
 
-import { useEffect, Suspense, useState, Component, type ReactNode, type ErrorInfo } from "react";
+import { useEffect, useLayoutEffect, useRef, Suspense, useState, Component, type ReactNode, type ErrorInfo } from "react";
 console.log("[App.tsx] react loaded");
 
 import { lazyWithRetry, isChunkLoadError, canAutoReload, performAutoReload } from "@/lib/lazy-with-retry";
@@ -57,6 +57,76 @@ console.log("[App.tsx] Button loaded");
 import type { PublicUser } from "@shared/schema";
 import type { SessionResponse, WorkspaceState } from "@/types/session";
 console.log("[App.tsx] All imports complete");
+
+const ADMIN_MAINTENANCE_ACCESS_KEY = "maintenance-admin-access-until";
+const ADMIN_MAINTENANCE_SESSION_KEY = "maintenance-admin-session";
+const ADMIN_MAINTENANCE_ACCESS_TTL_MS = 60 * 60 * 1000;
+
+function setAdminMaintenanceAccess(): void {
+  try {
+    sessionStorage.setItem(
+      ADMIN_MAINTENANCE_ACCESS_KEY,
+      String(Date.now() + ADMIN_MAINTENANCE_ACCESS_TTL_MS),
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function hasAdminMaintenanceAccess(): boolean {
+  try {
+    const raw = sessionStorage.getItem(ADMIN_MAINTENANCE_ACCESS_KEY);
+    if (!raw) {
+      return false;
+    }
+    const until = Number(raw);
+    if (!Number.isFinite(until)) {
+      sessionStorage.removeItem(ADMIN_MAINTENANCE_ACCESS_KEY);
+      return false;
+    }
+    if (Date.now() > until) {
+      sessionStorage.removeItem(ADMIN_MAINTENANCE_ACCESS_KEY);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function storeAdminMaintenanceSession(session: SessionResponse): void {
+  try {
+    sessionStorage.setItem(
+      ADMIN_MAINTENANCE_SESSION_KEY,
+      JSON.stringify({
+        user: session.user,
+        workspace: session.workspace,
+        activeWorkspaceId: session.activeWorkspaceId ?? null,
+      }),
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function readAdminMaintenanceSession(): SessionResponse | null {
+  try {
+    const raw = sessionStorage.getItem(ADMIN_MAINTENANCE_SESSION_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as SessionResponse | null;
+    if (!parsed || parsed.user?.role !== "admin") {
+      return null;
+    }
+    if (!parsed.workspace?.active) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 // ErrorBoundary для перехвата ошибок рендеринга и предотвращения белого экрана
 interface ErrorBoundaryProps {
@@ -388,7 +458,7 @@ function LazyRouteWrapper({ children }: { children: React.ReactNode }) {
 function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
   return (
     <SidebarProvider>
-      <div className="flex h-screen w-full overflow-hidden">
+      <div className="flex min-h-0 flex-1 w-full overflow-hidden">
         <AdminSidebar user={user} workspace={workspace} />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex h-12 items-center px-2 md:hidden">
@@ -406,7 +476,7 @@ function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: Works
 function MainAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
   return (
     <SidebarProvider>
-      <div className="flex h-screen w-full overflow-hidden">
+      <div className="flex min-h-0 flex-1 w-full overflow-hidden">
         <MainSidebar showAdminLink={user.role === "admin"} user={user} workspace={workspace} />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex h-12 items-center px-2 md:hidden">
@@ -468,7 +538,22 @@ function AppContent() {
     }
   }, [sessionQuery.isFetching, initialFetchDone]);
 
-  const session = sessionQuery.data;
+  const cachedSession = queryClient.getQueryData<SessionResponse>(["/api/auth/session"]);
+  const isAdminMaintenanceRoute = location.startsWith("/admin/settings/maintenance");
+  const isMaintenanceSessionError =
+    isApiError(sessionQuery.error) && sessionQuery.error.code === "MAINTENANCE_MODE";
+  const storedAdminSession =
+    isAdminMaintenanceRoute && isMaintenanceSessionError ? readAdminMaintenanceSession() : null;
+  const session = sessionQuery.data ?? cachedSession ?? storedAdminSession ?? null;
+  const canAccessAdminDuringMaintenance =
+    isAdminMaintenanceRoute && (session?.user?.role === "admin" || hasAdminMaintenanceAccess());
+
+  useEffect(() => {
+    if (session?.user?.role === "admin") {
+      setAdminMaintenanceAccess();
+      storeAdminMaintenanceSession(session);
+    }
+  }, [session?.user?.role, session]);
 
   // Если уже авторизованы, но находитесь на /auth/*, отправляем на главную.
   useEffect(() => {
@@ -483,28 +568,27 @@ function AppContent() {
     return <LoadingScreen />;
   }
 
-  const isMaintenanceSessionError =
-    isApiError(sessionQuery.error) && sessionQuery.error.code === "MAINTENANCE_MODE";
-
-  if (sessionQuery.error && isMaintenanceSessionError) {
+  if (sessionQuery.error && isMaintenanceSessionError && !canAccessAdminDuringMaintenance) {
     return null;
   }
 
   // Если произошла ошибка при загрузке сессии - показываем AuthPage
-  if (sessionQuery.error) {
+  if (sessionQuery.error && !(isMaintenanceSessionError && canAccessAdminDuringMaintenance)) {
     console.error("Session query error:", sessionQuery.error);
     return (
-      <Switch>
-        <Route path="/auth/verify-email">
-          <VerifyEmailPage />
-        </Route>
-        <Route path="/invite/:token">
-          <AcceptInvitePage />
-        </Route>
-        <Route>
-          <AuthPage />
-        </Route>
-      </Switch>
+      <AppFrame>
+        <Switch>
+          <Route path="/auth/verify-email">
+            <VerifyEmailPage />
+          </Route>
+          <Route path="/invite/:token">
+            <AcceptInvitePage />
+          </Route>
+          <Route>
+            <AuthPage />
+          </Route>
+        </Switch>
+      </AppFrame>
     );
   }
 
@@ -512,17 +596,19 @@ function AppContent() {
   // Дополнительно проверяем workspace.active - если его нет, сессия невалидна
   if (!session || !session.user || !session.workspace?.active) {
     return (
-      <Switch>
-        <Route path="/auth/verify-email">
-          <VerifyEmailPage />
-        </Route>
-        <Route path="/invite/:token">
-          <AcceptInvitePage />
-        </Route>
-        <Route>
-          <AuthPage />
-        </Route>
-      </Switch>
+      <AppFrame>
+        <Switch>
+          <Route path="/auth/verify-email">
+            <VerifyEmailPage />
+          </Route>
+          <Route path="/invite/:token">
+            <AcceptInvitePage />
+          </Route>
+          <Route>
+            <AuthPage />
+          </Route>
+        </Switch>
+      </AppFrame>
     );
   }
 
@@ -534,7 +620,8 @@ function AppContent() {
   const workspaceId = workspace.active?.id ?? null;
 
   return (
-    <ErrorBoundary
+    <AppFrame>
+      <ErrorBoundary
       onError={(error) => {
         console.error("App render error, clearing cache:", error);
         // При ошибке рендеринга очищаем кэш сессии
@@ -552,7 +639,8 @@ function AppContent() {
           <MainAppShell user={user} workspace={workspace} />
         </Route>
       </Switch>
-    </ErrorBoundary>
+      </ErrorBoundary>
+    </AppFrame>
   );
 }
 
@@ -571,15 +659,62 @@ function App() {
 export default App;
 
 function MaintenanceLayer() {
+  const [location] = useLocation();
   const maintenance = useMaintenanceStatus();
-  const shouldShowBanner = maintenance.status === "scheduled" && Boolean(maintenance.data);
-  const shouldShowOverlay = maintenance.status === "active" || maintenance.status === "unknown";
+  const cachedSession = queryClient.getQueryData<SessionResponse>(["/api/auth/session"]);
+  const isAdminMaintenanceRoute = location.startsWith("/admin/settings/maintenance");
+  const canAccessAdminDuringMaintenance =
+    isAdminMaintenanceRoute && (cachedSession?.user?.role === "admin" || hasAdminMaintenanceAccess());
+  const shouldShowOverlay =
+    (maintenance.status === "active" || maintenance.status === "unknown") && !canAccessAdminDuringMaintenance;
   const safeMode = maintenance.status === "unknown";
 
   return (
     <>
-      {shouldShowBanner && maintenance.data ? <MaintenanceBanner status={maintenance.data} /> : null}
       {shouldShowOverlay ? <MaintenanceOverlay status={maintenance.data} safeMode={safeMode} /> : null}
     </>
+  );
+}
+
+function AppFrame({ children }: { children: ReactNode }) {
+  const maintenance = useMaintenanceStatus();
+  const shouldShowBanner = maintenance.status === "scheduled" && Boolean(maintenance.data);
+  const bannerRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+
+    if (!shouldShowBanner || !bannerRef.current) {
+      root.style.setProperty("--app-banner-offset", "0px");
+      return;
+    }
+
+    const updateOffset = () => {
+      if (!bannerRef.current) return;
+      const height = bannerRef.current.getBoundingClientRect().height;
+      root.style.setProperty("--app-banner-offset", `${Math.ceil(height)}px`);
+    };
+
+    updateOffset();
+    const observer = new ResizeObserver(updateOffset);
+    observer.observe(bannerRef.current);
+    window.addEventListener("resize", updateOffset);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateOffset);
+      root.style.setProperty("--app-banner-offset", "0px");
+    };
+  }, [shouldShowBanner, maintenance.data]);
+
+  return (
+    <div className="flex min-h-screen w-full flex-col">
+      {shouldShowBanner && maintenance.data ? (
+        <div ref={bannerRef}>
+          <MaintenanceBanner status={maintenance.data} />
+        </div>
+      ) : null}
+      <div className="flex min-h-0 w-full flex-1 flex-col">{children}</div>
+    </div>
   );
 }

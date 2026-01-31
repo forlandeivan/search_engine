@@ -23,7 +23,7 @@ export function MaintenanceBanner({ status }: MaintenanceBannerProps) {
 
   return (
     <div
-      className="sticky top-0 z-50 w-full border-b border-amber-500/40 bg-amber-500/10 backdrop-blur"
+      className="w-full border-b border-amber-500/40 bg-amber-500/10"
       data-testid="maintenance-banner"
     >
       <div className="mx-auto flex w-full max-w-6xl flex-wrap items-start justify-between gap-3 px-4 py-3 text-sm text-amber-950">

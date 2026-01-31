@@ -76,4 +76,25 @@ test.describe("maintenance mode UI", () => {
       await resetMaintenance(page);
     }
   });
+
+  test("allows admin to access maintenance settings during active mode", async ({ page }) => {
+    await login(page);
+
+    try {
+      await updateMaintenance(page, {
+        scheduledStartAt: null,
+        scheduledEndAt: null,
+        forceEnabled: true,
+        messageTitle: "Maintenance mode",
+        messageBody: "We are updating the system",
+        publicEta: "Later today",
+      });
+
+      await page.goto("/admin/settings/maintenance");
+      await expect(page.getByTestId("maintenance-overlay")).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Режим обслуживания" })).toBeVisible({ timeout: 15_000 });
+    } finally {
+      await resetMaintenance(page);
+    }
+  });
 });
