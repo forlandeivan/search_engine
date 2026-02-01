@@ -1,11 +1,16 @@
-﻿import type { MaintenanceModeStatusDto } from "@shared/maintenance-mode";
+import { Link } from "wouter";
+import { Wrench } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import type { MaintenanceModeStatusDto } from "@shared/maintenance-mode";
 
 export type MaintenanceOverlayProps = {
   status?: MaintenanceModeStatusDto | null;
   safeMode?: boolean;
+  isAdmin?: boolean;
 };
 
-export function MaintenanceOverlay({ status, safeMode = false }: MaintenanceOverlayProps) {
+export function MaintenanceOverlay({ status, safeMode = false, isAdmin = false }: MaintenanceOverlayProps) {
   const isActive = status?.status === "active";
   const title = safeMode
     ? "Сервис временно недоступен"
@@ -29,6 +34,16 @@ export function MaintenanceOverlay({ status, safeMode = false }: MaintenanceOver
         <p className="text-sm text-muted-foreground">
           Следите за обновлениями — мы скоро вернемся.
         </p>
+        {isAdmin ? (
+          <div className="pt-2">
+            <Button variant="outline" asChild>
+              <Link href="/admin/settings/maintenance">
+                <Wrench className="mr-2 h-4 w-4" />
+                Управление режимом обслуживания
+              </Link>
+            </Button>
+          </div>
+        ) : null}
         {!isActive && safeMode ? (
           <p className="text-xs text-muted-foreground">Если сообщение не исчезает, попробуйте обновить страницу позже.</p>
         ) : null}

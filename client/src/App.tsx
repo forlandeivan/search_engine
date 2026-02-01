@@ -128,6 +128,17 @@ function readAdminMaintenanceSession(): SessionResponse | null {
   }
 }
 
+function isStoredAdminRole(): boolean {
+  try {
+    const raw = sessionStorage.getItem(ADMIN_MAINTENANCE_SESSION_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as { user?: { role?: string } } | null;
+    return parsed?.user?.role === "admin";
+  } catch {
+    return false;
+  }
+}
+
 // ErrorBoundary для перехвата ошибок рендеринга и предотвращения белого экрана
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -668,10 +679,17 @@ function MaintenanceLayer() {
   const shouldShowOverlay =
     (maintenance.status === "active" || maintenance.status === "unknown") && !canAccessAdminDuringMaintenance;
   const safeMode = maintenance.status === "unknown";
+  const isAdmin =
+    cachedSession?.user?.role === "admin" ||
+    hasAdminMaintenanceAccess() ||
+    readAdminMaintenanceSession()?.user?.role === "admin" ||
+    isStoredAdminRole();
 
   return (
     <>
-      {shouldShowOverlay ? <MaintenanceOverlay status={maintenance.data} safeMode={safeMode} /> : null}
+      {shouldShowOverlay ? (
+        <MaintenanceOverlay status={maintenance.data} safeMode={safeMode} isAdmin={isAdmin} />
+      ) : null}
     </>
   );
 }

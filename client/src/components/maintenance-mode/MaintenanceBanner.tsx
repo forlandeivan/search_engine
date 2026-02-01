@@ -26,12 +26,12 @@ export function MaintenanceBanner({ status }: MaintenanceBannerProps) {
 
   return (
     <Alert
-      className="w-full rounded-none border-x-0 border-t-0 border-amber-200 bg-amber-50 text-amber-900 [&>svg]:text-amber-600 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-50 dark:[&>svg]:text-amber-400"
+      className="w-full rounded-none border-x-0 border-t-0 border-amber-200 bg-amber-50 py-3 text-amber-900 [&>svg]:left-4 [&>svg]:top-1/2 [&>svg]:-translate-y-1/2 [&>svg]:text-amber-600 [&>svg+div]:translate-y-0 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-50 dark:[&>svg]:text-amber-400"
       data-testid="maintenance-banner"
     >
-      <AlertTriangle className="h-4 w-4" />
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-wrap items-start justify-between gap-3 pr-4">
-        <div className="space-y-1">
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-wrap items-center justify-between gap-3 pr-4">
+        <div className="space-y-0.5">
           <AlertTitle className="mb-0">{title}</AlertTitle>
           {description ? (
             <AlertDescription className="text-amber-800 dark:text-amber-200">
