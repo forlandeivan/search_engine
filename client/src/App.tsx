@@ -708,13 +708,13 @@ function AppFrame({ children }: { children: ReactNode }) {
   }, [shouldShowBanner, maintenance.data]);
 
   return (
-    <div className="flex min-h-screen w-full flex-col">
+    <div className="flex h-screen w-full flex-col overflow-hidden">
       {shouldShowBanner && maintenance.data ? (
-        <div ref={bannerRef}>
+        <div ref={bannerRef} className="relative z-[11] shrink-0">
           <MaintenanceBanner status={maintenance.data} />
         </div>
       ) : null}
-      <div className="flex min-h-0 w-full flex-1 flex-col">{children}</div>
+      <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">{children}</div>
     </div>
   );
 }

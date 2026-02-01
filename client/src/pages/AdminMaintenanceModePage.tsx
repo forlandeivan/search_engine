@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@/lib/zod-resolver";
@@ -481,26 +481,31 @@ export default function AdminMaintenanceModePage() {
 
   if (isLoading) {
     return (
-      <div className="p-6 text-muted-foreground flex items-center gap-2">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Загружаем настройки режима обслуживания...
+      <div className="h-full min-h-0 overflow-y-auto">
+        <div className="p-6 text-muted-foreground flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Загружаем настройки режима обслуживания...
+        </div>
       </div>
     );
   }
 
   if (isError) {
     return (
-      <div className="p-6">
-        <Alert variant="destructive">
-          <AlertTitle>Ошибка загрузки</AlertTitle>
-          <AlertDescription>{(error as Error)?.message ?? "Не удалось загрузить настройки"}</AlertDescription>
-        </Alert>
+      <div className="h-full min-h-0 overflow-y-auto">
+        <div className="p-6">
+          <Alert variant="destructive">
+            <AlertTitle>Ошибка загрузки</AlertTitle>
+            <AlertDescription>{(error as Error)?.message ?? "Не удалось загрузить настройки"}</AlertDescription>
+          </Alert>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="h-full min-h-0 overflow-y-auto">
+      <div className="p-6 space-y-6">
       <header className="space-y-2">
         <div className="flex items-center gap-2">
           <CardTitle>Режим обслуживания</CardTitle>
@@ -871,6 +876,7 @@ export default function AdminMaintenanceModePage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }
