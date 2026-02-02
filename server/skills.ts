@@ -681,6 +681,9 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
   if (input.onTranscriptionAutoActionId !== undefined) {
     next.onTranscriptionAutoActionId = normalizeActionId(input.onTranscriptionAutoActionId);
   }
+  if (input.asrProviderId !== undefined) {
+    next.asrProviderId = normalizeNullableString(input.asrProviderId);
+  }
   if (input.noCodeEndpointUrl !== undefined) {
     next.noCodeEndpointUrl = normalizeNullableString(input.noCodeEndpointUrl);
   }
