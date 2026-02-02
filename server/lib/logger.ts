@@ -5,8 +5,13 @@ import { createWriteStream } from 'fs';
 const isDevelopment = process.env.NODE_ENV !== 'production';
 const logLevel = process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info');
 
-// dev.log is opt-in: set DEV_LOG=1 to enable file logging in development
-const enableDevLogFile = isDevelopment && process.env.DEV_LOG === '1';
+// dev.log:
+// - In development we want maximum observability by default (for debugging pipelines like ASR).
+// - You can disable file logging by setting DEV_LOG=0.
+// - In production file logging remains opt-in (DEV_LOG=1).
+const enableDevLogFile = isDevelopment
+  ? process.env.DEV_LOG !== '0'
+  : process.env.DEV_LOG === '1';
 
 const prettyTransport = isDevelopment
   ? pino.transport({

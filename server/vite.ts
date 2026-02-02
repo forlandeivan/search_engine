@@ -5,10 +5,16 @@ import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
 import viteConfig from "../vite.config";
 import { nanoid } from "nanoid";
+import { createLogger as createAppLogger } from "./lib/logger";
 
 const viteLogger = createLogger();
+const appLogger = createAppLogger("vite");
 
 export function log(message: string, source = "express") {
+  // Always duplicate to application logger so it can be persisted to dev.log.
+  // This is important for debugging server-side pipelines (e.g., ASR).
+  appLogger.info({ source }, message);
+
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
