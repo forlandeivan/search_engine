@@ -10,6 +10,8 @@ export function normalizeUnicaApiBaseUrl(baseUrl: string): string {
   return `${trimmed}/api`;
 }
 
+const UNICA_DEFAULT_LANGUAGE = "ru";
+
 async function readJsonOrThrow<T>(
   response: Response,
   meta: { url: string; label: string },
@@ -34,6 +36,60 @@ async function readJsonOrThrow<T>(
       response.status,
     );
   }
+}
+
+function buildStartRecognitionBodies(opts: {
+  filePath: string;
+  workspaceId: string;
+  language: string;
+}): { json: UnicaRecognitionRequest; form: URLSearchParams } {
+  const { filePath, workspaceId, language } = opts;
+  const json: UnicaRecognitionRequest = {
+    // Preferred (observed in validation error response)
+    filePath,
+    workspaceId,
+    processingOptions: {
+      language,
+    },
+    // Legacy/alternate casing
+    FilePath: filePath,
+    WorkspaceId: workspaceId,
+    ProcessingOptions: {
+      Language: language,
+    },
+  };
+
+  const form = new URLSearchParams();
+  form.set("filePath", filePath);
+  form.set("workspaceId", workspaceId);
+  form.set("processingOptions.language", language);
+
+  return { json, form };
+}
+
+function buildStartRecognitionUrl(opts: {
+  apiBaseUrl: string;
+  filePath: string;
+  workspaceId: string;
+  language: string;
+}): string {
+  const urlObj = new URL(`${opts.apiBaseUrl}/asr/SpeechRecognition/recognize/async`);
+  // Some deployments bind params from query/form rather than JSON body
+  urlObj.searchParams.set("filePath", opts.filePath);
+  urlObj.searchParams.set("workspaceId", opts.workspaceId);
+  urlObj.searchParams.set("processingOptions.language", opts.language);
+  return urlObj.toString();
+}
+
+function looksLikeUnicaMissingRequiredFieldsResponse(status: number, bodyText: string): boolean {
+  if (status !== 400) return false;
+  const text = bodyText ?? "";
+  // We specifically see: errors.filePath + errors.workspaceId + "required"
+  return (
+    (text.includes("\"filePath\"") || text.includes("filePath")) &&
+    (text.includes("\"workspaceId\"") || text.includes("workspaceId")) &&
+    (text.toLowerCase().includes("required") || text.includes("обяз"))
+  );
 }
 
 // Запрос на транскрибацию
@@ -148,27 +204,19 @@ export class UnicaAsrService {
     config: UnicaAsrConfig
   ): Promise<{ taskId: string; operationId: string }> {
     const apiBaseUrl = normalizeUnicaApiBaseUrl(config.baseUrl);
-    // Some deployments appear to bind parameters from query/form rather than JSON body.
-    // Send required fields in BOTH query string and JSON body for maximum compatibility.
-    const urlObj = new URL(`${apiBaseUrl}/asr/SpeechRecognition/recognize/async`);
-    urlObj.searchParams.set("filePath", filePath);
-    urlObj.searchParams.set("workspaceId", config.workspaceId);
-    urlObj.searchParams.set("processingOptions.language", "ru");
-    const url = urlObj.toString();
-
-    const body: UnicaRecognitionRequest = {
+    const language = UNICA_DEFAULT_LANGUAGE;
+    const url = buildStartRecognitionUrl({
+      apiBaseUrl,
       filePath,
       workspaceId: config.workspaceId,
-      processingOptions: {
-        language: "ru",
-      },
-      // legacy/alternate casing
-      FilePath: filePath,
-      WorkspaceId: config.workspaceId,
-      ProcessingOptions: {
-        Language: "ru",
-      },
-    };
+      language,
+    });
+
+    const bodies = buildStartRecognitionBodies({
+      filePath,
+      workspaceId: config.workspaceId,
+      language,
+    });
 
     log("[UnicaASR] ========== START RECOGNITION ==========");
     log("[UnicaASR] File path:", filePath);
@@ -180,7 +228,7 @@ export class UnicaAsrService {
       timeoutMs: config.timeoutMs,
     });
     log("[UnicaASR] POST", url);
-    log("[UnicaASR] Request body:", JSON.stringify(body, null, 2));
+    log("[UnicaASR] Request body:", JSON.stringify(bodies.json, null, 2));
 
     const jsonResponse = await fetchWithRetry(url, {
       method: "POST",
@@ -188,7 +236,7 @@ export class UnicaAsrService {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(bodies.json),
     });
 
     log("[UnicaASR] Response status:", jsonResponse.status, jsonResponse.statusText);
@@ -200,18 +248,7 @@ export class UnicaAsrService {
 
       // Some environments of Unica ASR appear to NOT bind JSON body (returns "required" for filePath/workspaceId).
       // As a compatibility fallback, retry with application/x-www-form-urlencoded payload.
-      const looksLikeMissingFields =
-        response.status === 400 &&
-        (errorText.includes("\"filePath\"") || errorText.includes("filePath")) &&
-        (errorText.includes("\"workspaceId\"") || errorText.includes("workspaceId")) &&
-        (errorText.toLowerCase().includes("required") || errorText.includes("обяз"));
-
-      if (looksLikeMissingFields) {
-        const form = new URLSearchParams();
-        form.set("filePath", filePath);
-        form.set("workspaceId", config.workspaceId);
-        form.set("processingOptions.language", "ru");
-
+      if (looksLikeUnicaMissingRequiredFieldsResponse(response.status, errorText)) {
         log("[UnicaASR] Retrying startRecognition as form-urlencoded");
 
         response = await fetchWithRetry(url, {
@@ -220,7 +257,7 @@ export class UnicaAsrService {
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
             Accept: "application/json",
           },
-          body: form.toString(),
+          body: bodies.form.toString(),
         });
 
         log("[UnicaASR] Form retry response status:", response.status, response.statusText);
@@ -274,7 +311,7 @@ export class UnicaAsrService {
     log("[UnicaASR] Task ID:", taskId);
     log("[UnicaASR] GET", url);
 
-    const response = await fetchWithRetry(url, { method: "GET" });
+    const response = await fetchWithRetry(url, { method: "GET", headers: { Accept: "application/json" } });
 
     log("[UnicaASR] Response status:", response.status, response.statusText);
 
@@ -308,7 +345,7 @@ export class UnicaAsrService {
     log("[UnicaASR] Version:", version);
     log("[UnicaASR] GET", url);
 
-    const response = await fetchWithRetry(url, { method: "GET" });
+    const response = await fetchWithRetry(url, { method: "GET", headers: { Accept: "application/json" } });
 
     log("[UnicaASR] Response status:", response.status, response.statusText);
 
