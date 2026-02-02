@@ -56,4 +56,5 @@ export const cacheKeys = {
   },
   skill: (workspaceId: string, skillId: string) => `skill:${workspaceId}:${skillId}`,
   corsHostnames: () => `cors:hostnames`,
+  maintenanceModeSettings: () => "maintenance:settings",
 } as const;

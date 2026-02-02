@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { registerUserSchema } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
+import { useMaintenanceStatus } from "@/hooks/use-maintenance-status";
 import { FcGoogle } from "react-icons/fc";
 import { FaYandex } from "react-icons/fa";
 
@@ -63,6 +64,11 @@ async function postJson<TInput extends Record<string, unknown>>(url: string, pay
 }
 
 export default function AuthPage() {
+  const maintenance = useMaintenanceStatus();
+  if (maintenance.status === "active" || maintenance.status === "unknown") {
+    return null;
+  }
+
   const [mode, setMode] = useState<AuthMode>("login");
   const [registerSuccess, setRegisterSuccess] = useState(false);
   const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);

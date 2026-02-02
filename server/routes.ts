@@ -510,6 +510,7 @@ import {
   resolveOptionalUser,
   WorkspaceContextError,
 } from "./auth";
+import { maintenanceModeGuard } from "./middleware/maintenance-mode";
 import { smtpSettingsService, SmtpSettingsError } from "./smtp-settings";
 import { updateSmtpSettingsSchema } from "@shared/smtp";
 import { smtpTestService } from "./smtp-test-service";
@@ -6067,6 +6068,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const isGoogleAuthEnabled = () => Boolean(app.get("googleAuthConfigured"));
   const isYandexAuthEnabled = () => Boolean(app.get("yandexAuthConfigured"));
 
+  // Maintenance mode guard must run before any route handlers
+  app.use(maintenanceModeGuard);
+
   // Register modular routes (migrated from this file)
   registerRouteModules(app);
 
@@ -7403,6 +7407,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       '/api/no-code/',
       '/api/public/',
       '/public/',
+      '/api/maintenance/',
       '/api/auth/', // auth endpoints handle their own auth
     ];
     const isPublic = publicPaths.some(path => fullPath.startsWith(path));

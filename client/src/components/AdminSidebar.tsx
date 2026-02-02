@@ -1,4 +1,4 @@
-import { Link, useLocation } from "wouter";
+﻿import { Link, useLocation } from "wouter";
 import {
   Sidebar,
   SidebarContent,
@@ -32,6 +32,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Users,
+  Wrench,
 } from "lucide-react";
 import type { PublicUser } from "@shared/schema";
 import type { WorkspaceState } from "@/types/session";
@@ -109,6 +110,7 @@ export default function AdminSidebar({ user, workspace }: AdminSidebarProps) {
       items: [
         { title: "Файловые провайдеры", url: "/admin/file-storage", icon: HardDrive },
         { title: "Правила индексации", url: "/admin/indexing-rules", icon: SlidersHorizontal },
+        { title: "Режим обслуживания", url: "/admin/settings/maintenance", icon: Wrench },
         { title: "SMTP", url: "/admin/settings/smtp", icon: Mail },
       ],
     },
@@ -119,7 +121,6 @@ export default function AdminSidebar({ user, workspace }: AdminSidebarProps) {
         { title: "ASR executions", url: "/admin/asr-executions", icon: Mic },
       ],
     },
-    
   ];
 
   return (
@@ -146,27 +147,16 @@ export default function AdminSidebar({ user, workspace }: AdminSidebarProps) {
                   return (
                     <SidebarMenuItem key={item.title}>
                       {item.locked ? (
-                        <SidebarMenuButton
-                          disabled
-                          tooltip="Секция в разработке"
-                          data-testid={testId}
-                        >
+                        <SidebarMenuButton disabled tooltip="Секция в разработке" data-testid={testId}>
                           {buttonContent}
                         </SidebarMenuButton>
                       ) : (
-                        <SidebarMenuButton
-                          asChild
-                          isActive={isActive}
-                          tooltip={item.title}
-                          data-testid={testId}
-                        >
+                        <SidebarMenuButton asChild isActive={isActive} tooltip={item.title} data-testid={testId}>
                           <Link href={item.url}>{buttonContent}</Link>
                         </SidebarMenuButton>
                       )}
                       {item.locked ? <SidebarMenuBadge>Скоро</SidebarMenuBadge> : null}
-                      {!item.locked && item.badge ? (
-                        <SidebarMenuBadge>{item.badge}</SidebarMenuBadge>
-                      ) : null}
+                      {!item.locked && item.badge ? <SidebarMenuBadge>{item.badge}</SidebarMenuBadge> : null}
                     </SidebarMenuItem>
                   );
                 })}
