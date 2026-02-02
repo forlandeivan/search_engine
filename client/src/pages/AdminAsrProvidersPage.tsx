@@ -34,6 +34,7 @@ export default function AdminAsrProvidersPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<AsrProvider | null>(null);
   const [newProvider, setNewProvider] = useState({
     displayName: "",
     baseUrl: "",
@@ -141,6 +142,31 @@ export default function AdminAsrProvidersPage() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: async (data: { id: string; displayName: string; config: AsrProvider["config"] }) => {
+      const response = await apiRequest("PATCH", `/api/admin/tts-stt/asr-providers/${data.id}`, {
+        displayName: data.displayName,
+        config: data.config,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-asr-providers"] });
+      setEditingProvider(null);
+      toast({
+        title: "Провайдер обновлен",
+        description: "Изменения сохранены",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Ошибка",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="container mx-auto py-6">
@@ -214,6 +240,13 @@ export default function AdminAsrProvidersPage() {
                 </Button>
                 <Button
                   size="sm"
+                  variant="outline"
+                  onClick={() => setEditingProvider(provider)}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="sm"
                   variant="destructive"
                   onClick={() => {
                     if (confirm("Вы уверены, что хотите удалить этот провайдер?")) {
@@ -229,6 +262,7 @@ export default function AdminAsrProvidersPage() {
         ))}
       </div>
 
+      {/* Dialog для создания */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
@@ -300,6 +334,97 @@ export default function AdminAsrProvidersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Dialog для редактирования */}
+      {editingProvider && (
+        <Dialog open={true} onOpenChange={() => setEditingProvider(null)}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>Редактировать провайдер</DialogTitle>
+              <DialogDescription>
+                {editingProvider.displayName}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-displayName">Название</Label>
+                <Input
+                  id="edit-displayName"
+                  value={editingProvider.displayName}
+                  onChange={(e) => setEditingProvider({ ...editingProvider, displayName: e.target.value })}
+                  placeholder="Например: Unica ASR Dev"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-baseUrl">Base URL</Label>
+                <Input
+                  id="edit-baseUrl"
+                  value={editingProvider.config.baseUrl || ""}
+                  onChange={(e) => setEditingProvider({
+                    ...editingProvider,
+                    config: { ...editingProvider.config, baseUrl: e.target.value }
+                  })}
+                  placeholder="https://aidev.hopper-it.ru/api"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-workspaceId">Workspace ID</Label>
+                <Input
+                  id="edit-workspaceId"
+                  value={editingProvider.config.workspaceId || ""}
+                  onChange={(e) => setEditingProvider({
+                    ...editingProvider,
+                    config: { ...editingProvider.config, workspaceId: e.target.value }
+                  })}
+                  placeholder="GENERAL"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-pollingIntervalMs">Polling Interval (мс)</Label>
+                  <Input
+                    id="edit-pollingIntervalMs"
+                    type="number"
+                    value={editingProvider.config.pollingIntervalMs || 5000}
+                    onChange={(e) => setEditingProvider({
+                      ...editingProvider,
+                      config: { ...editingProvider.config, pollingIntervalMs: parseInt(e.target.value) }
+                    })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-timeoutMs">Timeout (мс)</Label>
+                  <Input
+                    id="edit-timeoutMs"
+                    type="number"
+                    value={editingProvider.config.timeoutMs || 3600000}
+                    onChange={(e) => setEditingProvider({
+                      ...editingProvider,
+                      config: { ...editingProvider.config, timeoutMs: parseInt(e.target.value) }
+                    })}
+                  />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditingProvider(null)}>
+                Отмена
+              </Button>
+              <Button
+                onClick={() => updateMutation.mutate({
+                  id: editingProvider.id,
+                  displayName: editingProvider.displayName,
+                  config: editingProvider.config,
+                })}
+                disabled={!editingProvider.displayName || !editingProvider.config.baseUrl || !editingProvider.config.workspaceId || updateMutation.isPending}
+              >
+                {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Сохранить
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
