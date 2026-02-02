@@ -130,6 +130,13 @@ export class UnicaAsrService {
       config: UnicaAsrConfig;
       startedAt: Date;
       filePath: string;
+      finalResult?: {
+        done: boolean;
+        status: "pending" | "processing" | "completed" | "failed";
+        text?: string;
+        error?: string;
+        completedAt?: Date;
+      };
     }
   > = new Map();
 
@@ -175,22 +182,64 @@ export class UnicaAsrService {
     log("[UnicaASR] POST", url);
     log("[UnicaASR] Request body:", JSON.stringify(body, null, 2));
 
-    const response = await fetchWithRetry(url, {
+    const jsonResponse = await fetchWithRetry(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
       body: JSON.stringify(body),
     });
 
-    log("[UnicaASR] Response status:", response.status, response.statusText);
+    log("[UnicaASR] Response status:", jsonResponse.status, jsonResponse.statusText);
 
+    let response = jsonResponse;
     if (!response.ok) {
       const errorText = await response.text();
       log("[UnicaASR] ❌ Error response:", errorText);
-      throw new UnicaAsrError(
-        `Failed to start recognition: ${errorText}`,
-        "START_RECOGNITION_FAILED",
-        response.status
-      );
+
+      // Some environments of Unica ASR appear to NOT bind JSON body (returns "required" for filePath/workspaceId).
+      // As a compatibility fallback, retry with application/x-www-form-urlencoded payload.
+      const looksLikeMissingFields =
+        response.status === 400 &&
+        (errorText.includes("\"filePath\"") || errorText.includes("filePath")) &&
+        (errorText.includes("\"workspaceId\"") || errorText.includes("workspaceId")) &&
+        (errorText.toLowerCase().includes("required") || errorText.includes("обяз"));
+
+      if (looksLikeMissingFields) {
+        const form = new URLSearchParams();
+        form.set("filePath", filePath);
+        form.set("workspaceId", config.workspaceId);
+        form.set("processingOptions.language", "ru");
+
+        log("[UnicaASR] Retrying startRecognition as form-urlencoded");
+
+        response = await fetchWithRetry(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            Accept: "application/json",
+          },
+          body: form.toString(),
+        });
+
+        log("[UnicaASR] Form retry response status:", response.status, response.statusText);
+        if (!response.ok) {
+          const retryErrorText = await response.text();
+          log("[UnicaASR] ❌ Form retry error response:", retryErrorText);
+          throw new UnicaAsrError(
+            `Failed to start recognition: ${retryErrorText}`,
+            "START_RECOGNITION_FAILED",
+            response.status,
+          );
+        }
+      } else {
+        throw new UnicaAsrError(
+          `Failed to start recognition: ${errorText}`,
+          "START_RECOGNITION_FAILED",
+          response.status
+        );
+      }
     }
 
     const task: UnicaRecognitionTask = await readJsonOrThrow(response, { url, label: "startRecognition" });
@@ -303,6 +352,10 @@ export class UnicaAsrService {
       throw new UnicaAsrError(`Operation not found: ${operationId}`, "OPERATION_NOT_FOUND");
     }
 
+    if (cached.finalResult) {
+      return cached.finalResult;
+    }
+
     const { taskId, config, startedAt } = cached;
     const timeoutMs = config.timeoutMs || 3600000; // 60 минут по умолчанию
     const elapsedMs = Date.now() - startedAt.getTime();
@@ -341,7 +394,13 @@ export class UnicaAsrService {
       log("[UnicaASR] Result dataset ID:", task.resultDatasetId);
       
       const text = await this.getDatasetText(task.resultDatasetId, config);
-      this.operationsCache.delete(operationId);
+      cached.finalResult = {
+        done: true,
+        status: "completed",
+        text,
+        completedAt: new Date(),
+      };
+      this.operationsCache.set(operationId, cached);
       
       log("[UnicaASR] ✅ Transcription completed successfully");
       log("[UnicaASR] Final text length:", text.length, "chars");

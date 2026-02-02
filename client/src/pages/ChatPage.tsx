@@ -973,6 +973,11 @@ export default function ChatPage({ params }: ChatPageProps) {
                 const completeRes = await fetch(`/api/chat/transcribe/complete/${operationId}`, {
                   method: 'POST',
                   credentials: 'include',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    chatId: targetChatId,
+                    text: status?.result?.text ?? null,
+                  }),
                 });
                 
                 if (completeRes.ok) {

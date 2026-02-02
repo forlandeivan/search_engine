@@ -10,6 +10,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
+import crypto from 'crypto';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { storage } from '../storage';
@@ -305,14 +306,23 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         transcriptId: null,
         audioFileUrl: filePath,
         status: 'processing',
-        metadata: {
-          unicaOperationId,
-          taskId,
-          asrProviderType: 'unica',
-          fileProviderId,
-          filePath,
-          fileId: audioFile.id,
-        },
+        provider: 'unica',
+        mode: 'standard',
+        pipelineEvents: [
+          {
+            id: crypto.randomUUID(),
+            timestamp: new Date().toISOString(),
+            stage: 'asr_request_sent',
+            details: {
+              unicaOperationId,
+              taskId,
+              asrProviderType: 'unica',
+              fileProviderId,
+              filePath,
+              fileId: audioFile.id,
+            } as any,
+          },
+        ],
       });
       logger.info("[UNICA-ASR] ✅ ASR execution log created");
 
@@ -761,7 +771,7 @@ transcribeRouter.get('/operations/:operationId', asyncHandler(async (req, res) =
       logger.info("[UNICA-ASR] ========================================");
       
       return res.json({
-        status: status.done ? 'completed' : 'processing',
+        status: status.done ? (status.status === 'failed' ? 'failed' : 'completed') : 'processing',
         done: status.done,
         result: status.text ? { text: status.text } : undefined,
         error: status.error,
@@ -868,50 +878,71 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
     // Unica ASR операция
     logger.info({ operationId }, "[UNICA-ASR] ========== COMPLETE TRANSCRIPTION ==========");
     logger.info({ operationId }, "[UNICA-ASR] Processing Unica ASR operation completion");
+
+    const bodyText = typeof (req as any).body?.text === "string" ? String((req as any).body.text) : null;
+    const bodyChatId = typeof (req as any).body?.chatId === "string" ? String((req as any).body.chatId) : null;
+    const incomingText = bodyText && bodyText.trim().length > 0 ? bodyText.trim() : null;
+    const incomingChatId = bodyChatId && bodyChatId.trim().length > 0 ? bodyChatId.trim() : null;
+
+    if (incomingChatId) {
+      chatId = incomingChatId;
+    }
+
+    if (incomingText) {
+      transcriptText = incomingText;
+      logger.info({ operationId, textLength: transcriptText.length }, "[UNICA-ASR] Using transcript text from client");
+    } else {
+      const unicaStatus = await unicaAsrService.getOperationStatus(operationId);
     
-    const unicaStatus = await unicaAsrService.getOperationStatus(operationId);
-    
-    logger.info({
-      operationId,
-      done: unicaStatus.done,
-      status: unicaStatus.status,
-      hasText: Boolean(unicaStatus.text),
-      textLength: unicaStatus.text?.length,
-      error: unicaStatus.error,
-    }, "[UNICA-ASR] Final operation status");
-    
-    if (!unicaStatus.done || unicaStatus.status !== 'completed' || !unicaStatus.text) {
-      logger.warn({
+      logger.info({
         operationId,
+        done: unicaStatus.done,
         status: unicaStatus.status,
         hasText: Boolean(unicaStatus.text),
-      }, '[UNICA-ASR] ❌ Operation not ready for completion');
-      return res.status(400).json({ message: 'Операция не завершена или нет текста' });
-    }
+        textLength: unicaStatus.text?.length,
+        error: unicaStatus.error,
+      }, "[UNICA-ASR] Final operation status");
+    
+      if (!unicaStatus.done || unicaStatus.status !== 'completed' || !unicaStatus.text) {
+        logger.warn({
+          operationId,
+          status: unicaStatus.status,
+          hasText: Boolean(unicaStatus.text),
+        }, '[UNICA-ASR] ❌ Operation not ready for completion');
+        return res.status(400).json({ message: 'Операция не завершена или нет текста' });
+      }
 
-    transcriptText = unicaStatus.text;
-    logger.info({ operationId, textLength: transcriptText.length }, "[UNICA-ASR] ✅ Transcription text retrieved");
+      transcriptText = unicaStatus.text;
+      logger.info({ operationId, textLength: transcriptText.length }, "[UNICA-ASR] ✅ Transcription text retrieved");
+    }
     
     // Получить chatId и другие данные из ASR execution
-    logger.info({ operationId }, "[UNICA-ASR] Looking up ASR execution record...");
-    const executions = await asrExecutionLogService.listExecutions({});
-    const execution = executions.find(e => e.metadata?.unicaOperationId === operationId);
-    
-    if (!execution) {
-      logger.error({ operationId }, "[UNICA-ASR] ❌ Execution record not found");
-      return res.status(400).json({ message: 'Execution record не найден для операции' });
+    if (!chatId) {
+      logger.info({ operationId }, "[UNICA-ASR] Looking up ASR execution record...");
+      const executions = await asrExecutionLogService.listExecutions();
+      const taskId = operationId.slice("unica_".length);
+      const execution = executions.find((e) => {
+        if (!e.pipelineEvents) return false;
+        return e.pipelineEvents.some((evt) => {
+          const details: any = (evt as any)?.details ?? null;
+          return details?.unicaOperationId === operationId || details?.taskId === taskId;
+        });
+      });
+      
+      if (execution) {
+        chatId = execution.chatId ?? undefined;
+        transcriptId = execution.transcriptId ?? undefined;
+        executionId = execution.id;
+        logger.info({
+          operationId,
+          chatId,
+          transcriptId,
+          executionId,
+        }, "[UNICA-ASR] ✅ Execution record found");
+      } else {
+        logger.warn({ operationId }, "[UNICA-ASR] Execution record not found (continuing without it)");
+      }
     }
-    
-    chatId = execution.chatId;
-    transcriptId = execution.transcriptId || undefined;
-    executionId = execution.id;
-
-    logger.info({
-      operationId,
-      chatId,
-      transcriptId,
-      executionId,
-    }, "[UNICA-ASR] ✅ Execution record found");
 
     // Очистить операцию из кэша
     logger.info({ operationId }, "[UNICA-ASR] Clearing operation from cache");
