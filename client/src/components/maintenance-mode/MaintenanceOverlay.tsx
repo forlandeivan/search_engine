@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { Wrench } from "lucide-react";
 
@@ -10,30 +11,79 @@ export type MaintenanceOverlayProps = {
   isAdmin?: boolean;
 };
 
+const THEME_KEY = "theme";
+
+function useIsDarkMode(): boolean {
+  const readDark = (): boolean => {
+    if (typeof document === "undefined") return false;
+    if (document.documentElement.classList.contains("dark")) return true;
+    return localStorage.getItem(THEME_KEY) === "dark";
+  };
+  const [isDark, setIsDark] = useState(readDark);
+  useEffect(() => {
+    const el = document.documentElement;
+    const check = () => setIsDark(readDark());
+    const observer = new MutationObserver(check);
+    observer.observe(el, { attributes: true, attributeFilter: ["class"] });
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === THEME_KEY) setIsDark(readDark());
+    };
+    window.addEventListener("storage", onStorage);
+    check();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+  return isDark;
+}
+
 export function MaintenanceOverlay({ status, safeMode = false, isAdmin = false }: MaintenanceOverlayProps) {
+  const isDark = useIsDarkMode();
   const isActive = status?.status === "active";
   const title = safeMode
     ? "Сервис временно недоступен"
     : status?.messageTitle?.trim() || "Идут технические работы";
-  const description = safeMode
-    ? "Не удалось получить статус обслуживания. Мы уже разбираемся."
-    : status?.messageBody?.trim() || "Мы обновляем систему и скоро вернемся.";
-  const eta = status?.publicEta?.trim();
+  const description = safeMode ? null : (status?.messageBody?.trim() || null);
+  const publicEtaText = status?.publicEta?.trim();
+  const scheduledEndAtDate = status?.scheduledEndAt ? new Date(status.scheduledEndAt) : null;
+  const scheduledEndAtInPast =
+    scheduledEndAtDate && !Number.isNaN(scheduledEndAtDate.getTime()) && scheduledEndAtDate.getTime() < Date.now();
+  const scheduledEndAtFormatted =
+    scheduledEndAtDate && !Number.isNaN(scheduledEndAtDate.getTime())
+      ? scheduledEndAtDate.toLocaleString("ru-RU", { dateStyle: "medium", timeStyle: "short" })
+      : null;
+  const etaDisplay =
+    publicEtaText || (scheduledEndAtInPast ? null : scheduledEndAtFormatted) || null;
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex min-h-screen items-center justify-center bg-background/90 px-4 py-10 backdrop-blur"
+      className={`fixed inset-0 z-[100] flex min-h-screen items-center justify-center px-4 py-10 backdrop-blur bg-background/90 ${isDark ? "bg-black/90" : "bg-background/90"}`}
       data-testid="maintenance-overlay"
     >
-      <div className="w-full max-w-xl space-y-4 rounded-2xl border border-border/60 bg-background p-6 text-center shadow-lg">
-        <div className="text-2xl font-semibold text-foreground">{title}</div>
-        <p className="text-base text-muted-foreground">{description}</p>
-        {eta ? (
-          <div className="rounded-lg bg-muted px-4 py-2 text-sm text-foreground">Ожидаем восстановление: {eta}</div>
+      <div
+        className={`w-full max-w-xl space-y-4 p-6 text-center  ${
+          isDark ? "border-zinc-700 bg-zinc-900" : "border-border/60 bg-background"
+        }`}
+      >
+        <div
+          className={`text-2xl font-semibold ${isDark ? "text-white" : "text-foreground"}`}
+        >
+          {title}
+        </div>
+        {description ? (
+          <p className={`text-base ${isDark ? "text-zinc-200" : "text-foreground/90"}`}>
+            {description}
+          </p>
         ) : null}
-        <p className="text-sm text-muted-foreground">
-          Следите за обновлениями — мы скоро вернемся.
-        </p>
+        {etaDisplay ? (
+          <div
+            className={`text-sm ${isDark ? "text-white" : "text-foreground"}`}
+          >
+            Ожидаем восстановление: {etaDisplay}
+          </div>
+        ) : null}
+
         {isAdmin ? (
           <div className="pt-2">
             <Button variant="outline" asChild>
@@ -45,7 +95,9 @@ export function MaintenanceOverlay({ status, safeMode = false, isAdmin = false }
           </div>
         ) : null}
         {!isActive && safeMode ? (
-          <p className="text-xs text-muted-foreground">Если сообщение не исчезает, попробуйте обновить страницу позже.</p>
+          <p className={`text-xs ${isDark ? "text-zinc-400" : "text-foreground/70"}`}>
+            Если сообщение не исчезает, попробуйте обновить страницу позже.
+          </p>
         ) : null}
       </div>
     </div>

@@ -709,11 +709,10 @@ export default function AdminMaintenanceModePage() {
                   name="messageTitle"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Заголовок сообщения</FormLabel>
+                      <FormLabel>Заголовок для пользователей</FormLabel>
                       <FormControl>
-                        <Input placeholder="Идут технические работы" {...field} />
+                        <Input placeholder="Дополнительно" {...field} />
                       </FormControl>
-                      <FormDescription>Отображается в баннере и на экране обслуживания.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -723,11 +722,10 @@ export default function AdminMaintenanceModePage() {
                   name="publicEta"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>ETA восстановления</FormLabel>
+                      <FormLabel>Время восстановления</FormLabel>
                       <FormControl>
-                        <Input placeholder="Ожидаем восстановление к 23:30" {...field} />
+                        <Input placeholder="Дополнительно" {...field} />
                       </FormControl>
-                      <FormDescription>Краткий текст для публичного статуса.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -739,9 +737,9 @@ export default function AdminMaintenanceModePage() {
                 name="messageBody"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Описание</FormLabel>
+                    <FormLabel>Описание для страницы заглушки</FormLabel>
                     <FormControl>
-                      <Textarea placeholder="Мы обновляем систему. Скоро все заработает." {...field} />
+                      <Textarea placeholder="Дополнительно" {...field} />
                     </FormControl>
                     <FormDescription>Подробное описание для пользователей.</FormDescription>
                     <FormMessage />
