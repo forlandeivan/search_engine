@@ -141,7 +141,13 @@ export class UnicaAsrService {
     config: UnicaAsrConfig
   ): Promise<{ taskId: string; operationId: string }> {
     const apiBaseUrl = normalizeUnicaApiBaseUrl(config.baseUrl);
-    const url = `${apiBaseUrl}/asr/SpeechRecognition/recognize/async`;
+    // Some deployments appear to bind parameters from query/form rather than JSON body.
+    // Send required fields in BOTH query string and JSON body for maximum compatibility.
+    const urlObj = new URL(`${apiBaseUrl}/asr/SpeechRecognition/recognize/async`);
+    urlObj.searchParams.set("filePath", filePath);
+    urlObj.searchParams.set("workspaceId", config.workspaceId);
+    urlObj.searchParams.set("processingOptions.language", "ru");
+    const url = urlObj.toString();
 
     const body: UnicaRecognitionRequest = {
       filePath,
