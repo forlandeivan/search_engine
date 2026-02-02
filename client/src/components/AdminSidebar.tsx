@@ -1,4 +1,4 @@
-﻿import { Link, useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   Sidebar,
   SidebarContent,
@@ -118,6 +118,7 @@ export default function AdminSidebar({ user, workspace }: AdminSidebarProps) {
       label: "TTS&STT",
       items: [
         { title: "TTS&STT", url: "/admin/tts-stt", icon: Mic },
+        { title: "ASR провайдеры", url: "/admin/asr-providers", icon: Mic },
         { title: "ASR executions", url: "/admin/asr-executions", icon: Mic },
       ],
     },

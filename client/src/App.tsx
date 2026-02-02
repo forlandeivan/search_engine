@@ -250,6 +250,7 @@ const LlmExecutionsPage = lazyWithRetry(() => import("@/pages/LlmExecutionsPage"
 const AsrExecutionsPage = lazyWithRetry(() => import("@/pages/AsrExecutionsPage"));
 const TtsSttProvidersPage = lazyWithRetry(() => import("@/pages/TtsSttProvidersPage"));
 const SpeechProviderDetailsPage = lazyWithRetry(() => import("@/pages/SpeechProviderDetailsPage"));
+const AdminAsrProvidersPage = lazyWithRetry(() => import("@/pages/AdminAsrProvidersPage"));
 const AuthSettingsPage = lazyWithRetry(() => import("@/pages/AuthSettingsPage"));
 const AdminBillingPage = lazyWithRetry(() => import("@/pages/AdminBillingPage"));
 const AdminUsersPage = lazyWithRetry(() => import("@/pages/AdminUsersPage"));
@@ -315,6 +316,9 @@ function AdminRouter() {
       </Route>
       <Route path="/admin/tts-stt">
         <LazyRouteWrapper><TtsSttProvidersPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/asr-providers">
+        <LazyRouteWrapper><AdminAsrProvidersPage /></LazyRouteWrapper>
       </Route>
       <Route path="/admin/models">
         <LazyRouteWrapper><AdminModelsPage /></LazyRouteWrapper>
