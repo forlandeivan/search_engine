@@ -8,7 +8,7 @@ console.log("[main.tsx] Script started loading");
 const CHUNK_RELOAD_KEY = "chunk-reload-attempt";
 const CHUNK_RELOAD_COUNT_KEY = "chunk-reload-count";
 const CHUNK_RELOAD_TIMEOUT = 5000; // 5 секунд между попытками
-const MAX_RELOAD_ATTEMPTS = 2; // Максимум 2 автоматические попытки перезагрузки
+const MAX_RELOAD_ATTEMPTS = 5; // Максимум 5 автоматических попыток перезагрузки (увеличено для борьбы с каскадными Outdated Optimize Dep)
 
 /**
  * Проверяет, является ли ошибка ошибкой загрузки чанка

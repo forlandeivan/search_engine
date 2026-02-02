@@ -3,7 +3,7 @@ import { lazy, type ComponentType } from "react";
 // Ключ для предотвращения бесконечных перезагрузок
 const RELOAD_KEY = "chunk-reload-attempt";
 const RELOAD_COUNT_KEY = "chunk-reload-count";
-const MAX_RELOAD_ATTEMPTS = 2; // Максимум 2 автоматические попытки перезагрузки
+const MAX_RELOAD_ATTEMPTS = 5; // Максимум 5 автоматических попыток перезагрузки (синхронизировано с main.tsx)
 // Сбрасываем счетчик попыток, если ошибка произошла "давно".
 // Это нужно, чтобы не блокировать авто-рефреш навсегда в рамках одной sessionStorage-сессии.
 const RELOAD_RESET_AFTER_MS = 60_000; // 1 минута

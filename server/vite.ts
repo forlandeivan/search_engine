@@ -45,8 +45,7 @@ export async function setupVite(app: Express, server: Server) {
         strict: false,
         allow: [
           ...(viteConfig.server?.fs?.allow || []),
-          "C:/Users/frol_/search_engine",
-          "c:/Users/frol_/search_engine",
+          process.cwd(),
           path.resolve(import.meta.dirname, ".."),
           path.resolve(import.meta.dirname, "..", "client"),
           path.resolve(import.meta.dirname, "..", "client", "src"),
