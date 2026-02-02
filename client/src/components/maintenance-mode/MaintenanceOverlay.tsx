@@ -3,6 +3,14 @@ import { Link } from "wouter";
 import { Wrench } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { cn } from "@/lib/utils";
 import type { MaintenanceModeStatusDto } from "@shared/maintenance-mode";
 
 export type MaintenanceOverlayProps = {
@@ -61,45 +69,49 @@ export function MaintenanceOverlay({ status, safeMode = false, isAdmin = false }
       className={`fixed inset-0 z-[100] flex min-h-screen items-center justify-center px-4 py-10 backdrop-blur bg-background/90 ${isDark ? "bg-black/90" : "bg-background/90"}`}
       data-testid="maintenance-overlay"
     >
-      <div
-        className={`w-full max-w-xl space-y-4 p-6 text-center  ${
-          isDark ? "border-zinc-700 bg-zinc-900" : "border-border/60 bg-background"
-        }`}
+      <Empty
+
       >
-        <div
-          className={`text-2xl font-semibold ${isDark ? "text-white" : "text-foreground"}`}
+        <EmptyMedia
+          variant="icon"
+        >
+          <Wrench />
+        </EmptyMedia>
+        <EmptyTitle
+          className={isDark ? "text-white text-2xl font-semibold" : "text-2xl font-semibold"}
         >
           {title}
-        </div>
+        </EmptyTitle>
         {description ? (
-          <p className={`text-base ${isDark ? "text-zinc-200" : "text-foreground/90"}`}>
+          <EmptyDescription
+            className={isDark ? "text-zinc-200" : "text-foreground/90"}
+          >
             {description}
-          </p>
+          </EmptyDescription>
         ) : null}
         {etaDisplay ? (
-          <div
-            className={`text-sm ${isDark ? "text-white" : "text-foreground"}`}
+          <EmptyDescription
+            className={isDark ? "text-white" : "text-foreground"}
           >
             Ожидаем восстановление: {etaDisplay}
-          </div>
+          </EmptyDescription>
         ) : null}
-
-        {isAdmin ? (
-          <div className="pt-2">
+        <EmptyContent className="gap-4">
+          {isAdmin ? (
             <Button variant="outline" asChild>
               <Link href="/admin/settings/maintenance">
                 <Wrench className="mr-2 h-4 w-4" />
                 Управление режимом обслуживания
               </Link>
             </Button>
-          </div>
-        ) : null}
-        {!isActive && safeMode ? (
-          <p className={`text-xs ${isDark ? "text-zinc-400" : "text-foreground/70"}`}>
-            Если сообщение не исчезает, попробуйте обновить страницу позже.
-          </p>
-        ) : null}
-      </div>
+          ) : null}
+          {!isActive && safeMode ? (
+            <p className={cn("text-xs", isDark ? "text-zinc-400" : "text-foreground/70")}>
+              Если сообщение не исчезает, попробуйте обновить страницу позже.
+            </p>
+          ) : null}
+        </EmptyContent>
+      </Empty>
     </div>
   );
 }
