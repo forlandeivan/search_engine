@@ -139,7 +139,8 @@ adminTtsSttRouter.get('/providers/:id/secrets', asyncHandler(async (req, res) =>
  */
 adminTtsSttRouter.patch('/providers/:id', asyncHandler(async (req, res) => {
   try {
-    const detail = await speechProviderService.update(req.params.id, req.body);
+    const adminId = (req as any).user?.id ?? null;
+    const detail = await speechProviderService.update(req.params.id, req.body, adminId);
     
     // Get admin info if available
     let adminEmail: string | null = null;
@@ -369,6 +370,7 @@ const updateAsrProviderSchema = z.object({
 
 adminTtsSttRouter.patch('/asr-providers/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
+  const adminId = (req as any).user?.id ?? null;
 
   // Check provider exists
   const existing = await speechProviderService.getById(id);
@@ -426,7 +428,7 @@ adminTtsSttRouter.patch('/asr-providers/:id', asyncHandler(async (req, res) => {
       });
     }
     
-    const updated = await speechProviderService.update(id, updatePayload);
+    const updated = await speechProviderService.update(id, updatePayload, adminId);
     
     return res.json({
       id: updated.provider.id,

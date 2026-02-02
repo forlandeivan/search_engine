@@ -167,7 +167,7 @@ class SpeechProviderService {
 
   async updateProviderConfig(opts: {
     providerId: string;
-    actorAdminId: string;
+    actorAdminId: string | null;
     isEnabled?: boolean;
     configPatch?: Record<string, unknown>;
     secretsPatch?: SpeechProviderSecretsPatch;
@@ -189,9 +189,10 @@ class SpeechProviderService {
         })
       : ((provider.configJson as Record<string, unknown> | null) ?? {});
 
-    const updates: Partial<SpeechProviderInsert> = {
-      updatedByAdminId: opts.actorAdminId,
-    };
+    const updates: Partial<SpeechProviderInsert> = {};
+    if (opts.actorAdminId) {
+      updates.updatedByAdminId = opts.actorAdminId;
+    }
 
     if (hasConfigPatch) {
       configChanged = true;
@@ -233,7 +234,7 @@ class SpeechProviderService {
       }
     }
 
-    if (Object.keys(updates).length > 1) {
+    if (Object.keys(updates).length > 0) {
       await storage.updateSpeechProvider(provider.id, updates);
     }
 
@@ -261,10 +262,11 @@ class SpeechProviderService {
     return this.getProviderSecretValues(providerId);
   }
 
-  async update(providerId: string, payload: { isEnabled?: boolean; config?: Record<string, unknown>; secrets?: Record<string, string | null> }): Promise<SpeechProviderDetail> {
-    // Extract admin ID from request context - for now, use a default
-    const actorAdminId = 'admin'; // TODO: get from request context
-    
+  async update(
+    providerId: string,
+    payload: { isEnabled?: boolean; config?: Record<string, unknown>; secrets?: Record<string, string | null> },
+    actorAdminId?: string | null,
+  ): Promise<SpeechProviderDetail> {
     // Convert secrets object to array format expected by updateProviderConfig
     let secretsPatch: SpeechProviderSecretsPatch | undefined;
     if (payload.secrets) {
@@ -277,7 +279,7 @@ class SpeechProviderService {
     
     return this.updateProviderConfig({
       providerId,
-      actorAdminId,
+      actorAdminId: actorAdminId ?? null,
       isEnabled: payload.isEnabled,
       configPatch: payload.config,
       secretsPatch,

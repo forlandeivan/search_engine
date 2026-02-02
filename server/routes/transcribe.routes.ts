@@ -224,23 +224,21 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
 
     try {
       // 1. Создать запись файла в БД
-      const fileId = `audio_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-      
       logger.info({
-        fileId,
         fileName: file.originalname,
         fileSize: file.size,
         mimeType: file.mimetype,
       }, "[UNICA-ASR] Creating file record in DB");
 
       const audioFile = await storage.createFile({
-        id: fileId,
         workspaceId,
         name: file.originalname || 'audio.wav',
         kind: 'audio',
         sizeBytes: BigInt(file.size),
         mimeType: file.mimetype || 'audio/wav',
         status: 'uploading',
+        storageType: 'external_provider',
+        providerId: fileProviderId,
         skillId: skill.id,
         chatId,
         userId: user.id,
