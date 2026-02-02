@@ -630,18 +630,38 @@ export function SkillFormContent({
     }
 
     const fallbackLlmKey = effectiveLlmOptions.find((option) => !option.disabled)?.key ?? "";
-    const nextValues = { ...defaultFormValues, llmKey: fallbackLlmKey };
+    
+    // Find default ASR provider for new skills
+    const defaultAsrProvider = asrProviders?.find(p => p.isDefaultAsr);
+    const defaultAsrProviderId = defaultAsrProvider?.id ?? null;
+    
+    const nextValues = { 
+      ...defaultFormValues, 
+      llmKey: fallbackLlmKey,
+      asrProviderId: defaultAsrProviderId,
+    };
     form.reset(nextValues);
     lastSavedRef.current = nextValues;
-  }, [isOpen, skill, form, effectiveLlmOptions]);
+  }, [isOpen, skill, form, effectiveLlmOptions, asrProviders]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
     if (isSystemSkill) {
       return;
     }
     form.clearErrors();
+    
+    let hasValidationErrors = false;
+    
+    // Валидация стандартного режима транскрибации
+    if (values.transcriptionFlowMode === "standard" && !values.asrProviderId) {
+      form.setError("asrProviderId", {
+        type: "manual",
+        message: "Выберите ASR провайдер для стандартного режима транскрибации",
+      });
+      hasValidationErrors = true;
+    }
+    
     if (values.executionMode === "no_code") {
-      let hasValidationErrors = false;
       const endpoint = (values.noCodeEndpointUrl ?? "").trim();
       if (!endpoint) {
         form.setError("noCodeEndpointUrl", { type: "manual", message: "Укажите message URL для no-code" });
@@ -666,9 +686,19 @@ export function SkillFormContent({
           hasValidationErrors = true;
         }
       }
-      if (hasValidationErrors) {
-        return;
+    }
+    
+    if (hasValidationErrors) {
+      // Переключаемся на вкладку с ошибкой
+      if (form.formState.errors.asrProviderId) {
+        handleTabChange("transcription");
       }
+      toast({
+        title: "Ошибка валидации",
+        description: "Пожалуйста, заполните все обязательные поля",
+        variant: "destructive",
+      });
+      return;
     }
     try {
       // Автоматическое определение режима на основе баз знаний

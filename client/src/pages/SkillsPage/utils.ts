@@ -3,6 +3,7 @@
  */
 
 import { z } from "zod";
+import type { PublicModel } from "@/hooks/useModels";
 
 export type SkillFormValues = {
   name: string;
@@ -131,4 +132,4 @@ export function buildLlmKey(providerId: string, modelId: string): string {
   return `${providerId}::${modelId}`;
 }
 
-export const catalogModelMap = new Map();
+export const catalogModelMap = (models: PublicModel[]) => new Map(models.map((m) => [m.key, m]));

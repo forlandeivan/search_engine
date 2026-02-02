@@ -1612,6 +1612,7 @@ export const speechProviders = pgTable("speech_providers", {
   asrProviderType: text("asr_provider_type").$type<AsrProviderType>(),
   direction: text("direction").$type<SpeechProviderDirection>().notNull().default("audio_to_text"),
   isEnabled: boolean("is_enabled").notNull().default(false),
+  isDefaultAsr: boolean("is_default_asr").notNull().default(false),
   status: text("status").$type<SpeechProviderStatus>().notNull().default("Disabled"),
   lastStatusChangedAt: timestamp("last_status_changed_at"),
   lastValidationAt: timestamp("last_validation_at"),

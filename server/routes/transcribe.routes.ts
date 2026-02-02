@@ -726,6 +726,7 @@ transcribeRouter.get('/asr-providers', asyncHandler(async (req, res) => {
     displayName: p.provider.displayName,
     asrProviderType: p.provider.asrProviderType,
     isEnabled: p.provider.isEnabled,
+    isDefaultAsr: p.provider.isDefaultAsr ?? false,
     status: p.provider.status,
   })));
 }));

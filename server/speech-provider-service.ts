@@ -76,6 +76,7 @@ const emptyRecord: Record<string, unknown> = {};
 function mergeConfig(
   current: Record<string, unknown> | null | undefined,
   patch?: Record<string, unknown>,
+  opts?: { allowedKeys?: readonly string[] },
 ): Record<string, unknown> {
   if (!patch || Object.keys(patch).length === 0) {
     return current ?? {};
@@ -83,7 +84,7 @@ function mergeConfig(
 
   const result = { ...(current ?? {}) };
   for (const [key, value] of Object.entries(patch)) {
-    if (!BUILT_IN_CONFIG_KEYS.includes(key as (typeof BUILT_IN_CONFIG_KEYS)[number])) {
+    if (opts?.allowedKeys && !opts.allowedKeys.includes(key)) {
       continue;
     }
     if (value === null) {
@@ -145,18 +146,19 @@ class SpeechProviderService {
     if (!provider) {
       throw new SpeechProviderNotFoundError();
     }
-    if (!provider.isBuiltIn) {
-      throw new SpeechProviderServiceError("Only built-in provider 'Yandex SpeechKit' secrets can be exposed", 400);
-    }
 
     const secrets = await storage.getSpeechProviderSecrets(providerId);
     const values: Record<string, string> = {};
     for (const entry of secrets) {
-      if (!BUILT_IN_SECRET_KEYS.includes(entry.secretKey as (typeof BUILT_IN_SECRET_KEYS)[number])) {
-        continue;
+      if (provider.isBuiltIn) {
+        if (!BUILT_IN_SECRET_KEYS.includes(entry.secretKey as (typeof BUILT_IN_SECRET_KEYS)[number])) {
+          continue;
+        }
+        const key = entry.secretKey as (typeof BUILT_IN_SECRET_KEYS)[number];
+        values[key] = entry.secretValue;
+      } else {
+        values[entry.secretKey] = entry.secretValue;
       }
-      const key = entry.secretKey as (typeof BUILT_IN_SECRET_KEYS)[number];
-      values[key] = entry.secretValue;
     }
 
     return values;
@@ -174,9 +176,6 @@ class SpeechProviderService {
     if (!provider) {
       throw new SpeechProviderNotFoundError();
     }
-    if (!provider.isBuiltIn) {
-      throw new SpeechProviderServiceError("Only built-in provider 'Yandex SpeechKit' is allowed in current version", 400);
-    }
 
     const now = new Date();
     let configChanged = false;
@@ -184,7 +183,9 @@ class SpeechProviderService {
 
     const hasConfigPatch = Boolean(opts.configPatch && Object.keys(opts.configPatch).length > 0);
     const nextConfig = hasConfigPatch
-      ? mergeConfig(provider.configJson as Record<string, unknown> | null, opts.configPatch)
+      ? mergeConfig(provider.configJson as Record<string, unknown> | null, opts.configPatch, {
+          allowedKeys: provider.isBuiltIn ? [...BUILT_IN_CONFIG_KEYS] : undefined,
+        })
       : ((provider.configJson as Record<string, unknown> | null) ?? {});
 
     const updates: Partial<SpeechProviderInsert> = {

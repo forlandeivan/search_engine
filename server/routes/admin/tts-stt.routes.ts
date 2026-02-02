@@ -13,7 +13,9 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
+import { sql } from 'drizzle-orm';
 import { storage } from '../../storage';
+import { speechProviders } from '../../../shared/schema';
 import { createLogger } from '../../lib/logger';
 import { asyncHandler } from '../../middleware/async-handler';
 import { speechProviderService, SpeechProviderServiceError } from '../../speech-provider-service';
@@ -244,8 +246,10 @@ adminTtsSttRouter.get('/asr-providers', asyncHandler(async (req, res) => {
         return {
           id: p.id,
           displayName: detail.provider.displayName,
+          providerType: detail.provider.providerType,
           asrProviderType: detail.provider.asrProviderType || 'yandex',
           isEnabled: p.isEnabled,
+          isDefaultAsr: detail.provider.isDefaultAsr ?? false,
           status: p.status,
           config: detail.config,
           createdAt: detail.provider.createdAt,
@@ -352,6 +356,7 @@ adminTtsSttRouter.post('/asr-providers', asyncHandler(async (req, res) => {
 const updateAsrProviderSchema = z.object({
   displayName: z.string().min(1).optional(),
   isEnabled: z.boolean().optional(),
+  isDefaultAsr: z.boolean().optional(),
   config: z.object({
     baseUrl: z.string().url().optional(),
     workspaceId: z.string().min(1).optional(),
@@ -385,6 +390,20 @@ adminTtsSttRouter.patch('/asr-providers/:id', asyncHandler(async (req, res) => {
       updatePayload.isEnabled = validation.data.isEnabled;
     }
     
+    // Handle isDefaultAsr toggle - ensure only one default at a time
+    if (validation.data.isDefaultAsr !== undefined) {
+      if (validation.data.isDefaultAsr === true) {
+        // Unset all other defaults first
+        await storage.db
+          .update(speechProviders)
+          .set({ isDefaultAsr: false })
+          .where(sql`asr_provider_type IS NOT NULL`);
+      }
+
+      // Set current provider default flag explicitly (SpeechProviderService.update ignores unknown fields)
+      await storage.updateSpeechProvider(id, { isDefaultAsr: validation.data.isDefaultAsr });
+    }
+    
     if (validation.data.config) {
       // Merge with existing config
       updatePayload.config = {
@@ -406,6 +425,7 @@ adminTtsSttRouter.patch('/asr-providers/:id', asyncHandler(async (req, res) => {
       id: updated.provider.id,
       displayName: updated.provider.displayName,
       isEnabled: updated.provider.isEnabled,
+      isDefaultAsr: updated.provider.isDefaultAsr,
       message: 'Provider updated successfully',
     });
   } catch (error) {

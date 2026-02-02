@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -17,6 +18,7 @@ type AsrProvider = {
   displayName: string;
   asrProviderType: string;
   isEnabled: boolean;
+  isDefaultAsr: boolean;
   status: string;
   config: {
     baseUrl?: string;
@@ -117,6 +119,28 @@ export default function AdminAsrProvidersPage() {
     },
   });
 
+  const toggleDefaultMutation = useMutation({
+    mutationFn: async ({ id, nextIsDefaultAsr }: { id: string; nextIsDefaultAsr: boolean }) => {
+      await apiRequest("PATCH", `/api/admin/tts-stt/asr-providers/${id}`, {
+        isDefaultAsr: nextIsDefaultAsr,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-asr-providers"] });
+      toast({
+        title: "Провайдер по умолчанию обновлен",
+        description: "Изменения сохранены",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Ошибка",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="container mx-auto py-6">
@@ -167,6 +191,16 @@ export default function AdminAsrProvidersPage() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Workspace:</span>
                   <span className="font-mono text-xs">{provider.config.workspaceId}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">По умолчанию:</span>
+                  <Switch
+                    checked={provider.isDefaultAsr}
+                    onCheckedChange={(checked) =>
+                      toggleDefaultMutation.mutate({ id: provider.id, nextIsDefaultAsr: checked })
+                    }
+                    disabled={toggleDefaultMutation.isPending}
+                  />
                 </div>
               </div>
               <div className="flex gap-2">

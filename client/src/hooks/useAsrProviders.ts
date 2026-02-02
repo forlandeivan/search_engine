@@ -6,6 +6,7 @@ export type AsrProvider = {
   displayName: string;
   asrProviderType: string;
   isEnabled: boolean;
+  isDefaultAsr: boolean;
   status: string;
 };
 
