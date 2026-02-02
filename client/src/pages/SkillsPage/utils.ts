@@ -5,4 +5,7 @@
  * This file exists only to keep legacy imports (`./SkillsPage/utils`) working.
  */
 
-export * from "./utils";
+// IMPORTANT: There is also `utils.ts` (this file) and `utils/` folder.
+// Some bundlers can resolve `./utils` to this file, creating a cycle.
+// Always export explicitly from the folder index.
+export * from "./utils/index";
