@@ -26,6 +26,7 @@ export const skillFormSchema = z.object({
     .or(z.literal("")),
   icon: z.string().optional().or(z.literal("")),
   transcriptionFlowMode: z.enum(["standard", "no_code"]).default("standard"),
+  asrProviderId: z.string().optional().or(z.literal("")).nullable(),
   onTranscriptionMode: z.enum(["raw_only", "auto_action"]),
   onTranscriptionAutoActionId: z.string().optional().or(z.literal("")),
   noCodeEndpointUrl: z
@@ -72,6 +73,7 @@ export const defaultFormValues: SkillFormValues = {
   systemPrompt: "",
   icon: "",
   transcriptionFlowMode: "standard",
+  asrProviderId: null,
   onTranscriptionMode: "raw_only",
   onTranscriptionAutoActionId: "",
   noCodeEndpointUrl: "",

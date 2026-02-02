@@ -644,22 +644,23 @@ export function SkillFormContent({
     lastSavedRef.current = nextValues;
   }, [isOpen, skill, form, effectiveLlmOptions, asrProviders]);
 
-  const handleSubmit = form.handleSubmit(async (values) => {
-    if (isSystemSkill) {
-      return;
-    }
-    form.clearErrors();
-    
-    let hasValidationErrors = false;
-    
-    // Валидация стандартного режима транскрибации
-    if (values.transcriptionFlowMode === "standard" && !values.asrProviderId) {
-      form.setError("asrProviderId", {
-        type: "manual",
-        message: "Выберите ASR провайдер для стандартного режима транскрибации",
-      });
-      hasValidationErrors = true;
-    }
+  const handleSubmit = form.handleSubmit(
+    async (values) => {
+      if (isSystemSkill) {
+        return;
+      }
+      form.clearErrors();
+      
+      let hasValidationErrors = false;
+      
+      // Валидация стандартного режима транскрибации
+      if (values.transcriptionFlowMode === "standard" && !values.asrProviderId) {
+        form.setError("asrProviderId", {
+          type: "manual",
+          message: "Выберите ASR провайдер для стандартного режима транскрибации",
+        });
+        hasValidationErrors = true;
+      }
     
     if (values.executionMode === "no_code") {
       const endpoint = (values.noCodeEndpointUrl ?? "").trim();
@@ -781,7 +782,20 @@ export function SkillFormContent({
     } catch {
       // Ошибка обрабатывается в родителе через toast, оставляем форму dirty.
     }
+  },
+  (errors) => {
+    // Показываем первую ошибку, чтобы было понятно что чинить (вместо "тишины").
+    const firstKey = Object.keys(errors ?? {})[0];
+    const firstMessage =
+      firstKey && (errors as any)?.[firstKey]?.message ? String((errors as any)[firstKey].message) : null;
+    const description = firstMessage ?? "Проверьте правильность заполнения полей формы";
+    toast({
+      title: "Ошибка валидации",
+      description,
+      variant: "destructive",
+    });
   });
+
 
   const selectedKnowledgeBasesDisabled = sortedKnowledgeBases.length === 0;
   const llmDisabled = effectiveLlmOptions.length === 0;
@@ -1801,35 +1815,39 @@ export function SkillFormContent({
                       <FormField
                         control={form.control}
                         name="asrProviderId"
-                        render={({ field }) => (
-                          <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
-                            <FormLabel className="pt-2.5 text-sm font-medium">Провайдер</FormLabel>
-                            <div className="space-y-2">
-                              <FormControl>
-                                <Select
-                                  value={field.value ?? ""}
-                                  onValueChange={field.onChange}
-                                  disabled={controlsDisabled}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Выберите ASR провайдер..." />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {asrProviders?.map((provider) => (
-                                      <SelectItem key={provider.id} value={provider.id}>
-                                        {provider.displayName} ({provider.asrProviderType})
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </FormControl>
-                              <p className="text-sm text-muted-foreground">
-                                Провайдер для распознавания речи. Обязателен для стандартного режима транскрибации.
-                              </p>
-                              <FormMessage className="text-xs text-destructive leading-tight" />
-                            </div>
-                          </FormItem>
-                        )}
+                        render={({ field }) => {
+                          return (
+                            <FormItem className="grid grid-cols-[200px_1fr] gap-4 items-start">
+                              <FormLabel className="pt-2.5 text-sm font-medium">Провайдер</FormLabel>
+                              <div className="space-y-2">
+                                <FormControl>
+                                  <Select
+                                    value={field.value ?? ""}
+                                    onValueChange={(value) => {
+                                      field.onChange(value || null);
+                                    }}
+                                    disabled={controlsDisabled}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Выберите ASR провайдер..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {asrProviders?.map((provider) => (
+                                        <SelectItem key={provider.id} value={provider.id}>
+                                          {provider.displayName} ({provider.asrProviderType})
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </FormControl>
+                                <p className="text-sm text-muted-foreground">
+                                  Провайдер для распознавания речи. Обязателен для стандартного режима транскрибации.
+                                </p>
+                                <FormMessage className="text-xs text-destructive leading-tight" />
+                              </div>
+                            </FormItem>
+                          );
+                        }}
                       />
                     </div>
                   )}

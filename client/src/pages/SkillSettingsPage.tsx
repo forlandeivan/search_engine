@@ -367,6 +367,8 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       modelId: resolvedModel.key,
       ragConfig: isNoCodeMode ? undefined : ragConfig,
       transcriptionFlowMode: values.transcriptionFlowMode,
+      asrProviderId:
+        values.transcriptionFlowMode === "standard" && values.asrProviderId ? values.asrProviderId : null,
       onTranscriptionMode: values.onTranscriptionMode,
       onTranscriptionAutoActionId: autoActionId,
       noCodeEndpointUrl,
