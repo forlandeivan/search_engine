@@ -19,6 +19,7 @@ import { speechProviders } from '../../../shared/schema';
 import { createLogger } from '../../lib/logger';
 import { asyncHandler } from '../../middleware/async-handler';
 import { speechProviderService, SpeechProviderServiceError } from '../../speech-provider-service';
+import { normalizeUnicaApiBaseUrl } from '../../unica-asr-service';
 
 const logger = createLogger('admin-tts-stt');
 
@@ -505,7 +506,8 @@ adminTtsSttRouter.post('/asr-providers/test', asyncHandler(async (req, res) => {
   try {
     // Simple health check - try to get status of non-existent task
     // Expect 404, which confirms API is working
-    const testUrl = `${config.baseUrl}/asr/SpeechRecognition/recognition-task/test-connection?workSpaceId=${config.workspaceId}`;
+    const apiBaseUrl = normalizeUnicaApiBaseUrl(config.baseUrl);
+    const testUrl = `${apiBaseUrl}/asr/SpeechRecognition/recognition-task/test-connection?workSpaceId=${config.workspaceId}`;
     
     const response = await fetch(testUrl, { method: 'GET' });
     

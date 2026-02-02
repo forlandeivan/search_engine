@@ -1,11 +1,55 @@
 import { log } from "./vite";
 import type { UnicaAsrConfig } from "../shared/schema";
 
+export function normalizeUnicaApiBaseUrl(baseUrl: string): string {
+  const trimmed = (baseUrl ?? "").trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  if (trimmed.endsWith("/api")) return trimmed;
+  const idx = trimmed.indexOf("/api/");
+  if (idx !== -1) return trimmed.slice(0, idx + "/api".length);
+  return `${trimmed}/api`;
+}
+
+async function readJsonOrThrow<T>(
+  response: Response,
+  meta: { url: string; label: string },
+): Promise<T> {
+  const contentType = response.headers.get("content-type") ?? "";
+  const text = await response.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const preview = text.slice(0, 400);
+    log("[UnicaASR] ❌ Non-JSON response", {
+      label: meta.label,
+      url: meta.url,
+      status: response.status,
+      statusText: response.statusText,
+      contentType,
+      preview,
+    });
+    throw new UnicaAsrError(
+      `Non-JSON response from Unica API (${response.status}): ${preview}`,
+      "NON_JSON_RESPONSE",
+      response.status,
+    );
+  }
+}
+
 // Запрос на транскрибацию
+// NOTE: Unica API on some environments expects camelCase keys (filePath/workspaceId/processingOptions).
+// We send both camelCase and PascalCase to stay compatible.
 export interface UnicaRecognitionRequest {
-  FilePath: string;
-  WorkspaceId: string;
-  ProcessingOptions: {
+  // Preferred (observed in validation error response)
+  filePath: string;
+  workspaceId: string;
+  processingOptions: {
+    language: string; // "ru"
+  };
+  // Legacy/alternate
+  FilePath?: string;
+  WorkspaceId?: string;
+  ProcessingOptions?: {
     Language: string; // "ru"
   };
 }
@@ -96,9 +140,16 @@ export class UnicaAsrService {
     filePath: string,
     config: UnicaAsrConfig
   ): Promise<{ taskId: string; operationId: string }> {
-    const url = `${config.baseUrl}/asr/SpeechRecognition/recognize/async`;
+    const apiBaseUrl = normalizeUnicaApiBaseUrl(config.baseUrl);
+    const url = `${apiBaseUrl}/asr/SpeechRecognition/recognize/async`;
 
     const body: UnicaRecognitionRequest = {
+      filePath,
+      workspaceId: config.workspaceId,
+      processingOptions: {
+        language: "ru",
+      },
+      // legacy/alternate casing
       FilePath: filePath,
       WorkspaceId: config.workspaceId,
       ProcessingOptions: {
@@ -110,6 +161,7 @@ export class UnicaAsrService {
     log("[UnicaASR] File path:", filePath);
     log("[UnicaASR] Config:", {
       baseUrl: config.baseUrl,
+      apiBaseUrl,
       workspaceId: config.workspaceId,
       pollingIntervalMs: config.pollingIntervalMs,
       timeoutMs: config.timeoutMs,
@@ -135,7 +187,7 @@ export class UnicaAsrService {
       );
     }
 
-    const task: UnicaRecognitionTask = await response.json();
+    const task: UnicaRecognitionTask = await readJsonOrThrow(response, { url, label: "startRecognition" });
     log("[UnicaASR] ✅ Response body:", JSON.stringify(task, null, 2));
 
     // Генерируем operationId для совместимости с существующей архитектурой
@@ -160,7 +212,8 @@ export class UnicaAsrService {
    * Получить статус задачи транскрибации
    */
   async getTaskStatus(taskId: string, config: UnicaAsrConfig): Promise<UnicaRecognitionTask> {
-    const url = `${config.baseUrl}/asr/SpeechRecognition/recognition-task/${taskId}?workSpaceId=${config.workspaceId}`;
+    const apiBaseUrl = normalizeUnicaApiBaseUrl(config.baseUrl);
+    const url = `${apiBaseUrl}/asr/SpeechRecognition/recognition-task/${taskId}?workSpaceId=${config.workspaceId}`;
 
     log("[UnicaASR] ========== GET TASK STATUS ==========");
     log("[UnicaASR] Task ID:", taskId);
@@ -180,7 +233,7 @@ export class UnicaAsrService {
       );
     }
 
-    const task = await response.json();
+    const task = await readJsonOrThrow<UnicaRecognitionTask>(response, { url, label: "getTaskStatus" });
     log("[UnicaASR] ✅ Task status:", task.status);
     log("[UnicaASR] Response body:", JSON.stringify(task, null, 2));
     log("[UnicaASR] ========================================");
@@ -192,7 +245,8 @@ export class UnicaAsrService {
    * Получить текст из датасета
    */
   async getDatasetText(datasetId: string, config: UnicaAsrConfig, version: number = 1): Promise<string> {
-    const url = `${config.baseUrl}/datamanagement/Datasets/${datasetId}?workspaceId=${config.workspaceId}&version=${version}`;
+    const apiBaseUrl = normalizeUnicaApiBaseUrl(config.baseUrl);
+    const url = `${apiBaseUrl}/datamanagement/Datasets/${datasetId}?workspaceId=${config.workspaceId}&version=${version}`;
 
     log("[UnicaASR] ========== GET DATASET TEXT ==========");
     log("[UnicaASR] Dataset ID:", datasetId);
@@ -213,7 +267,7 @@ export class UnicaAsrService {
       );
     }
 
-    const data: UnicaDatasetResponse = await response.json();
+    const data: UnicaDatasetResponse = await readJsonOrThrow(response, { url, label: "getDatasetText" });
     const text = data.dataset.text;
     
     log("[UnicaASR] ✅ Dataset retrieved");
