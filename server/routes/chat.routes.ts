@@ -210,7 +210,6 @@ chatRouter.post('/sessions', asyncHandler(async (req, res) => {
     resolvedSkillId = systemSkill.id;
   }
 
-
   const skill = await getSkillById(workspaceId, resolvedSkillId);
   if (!skill) {
     return res.status(404).json({ message: 'Навык не найден' });
@@ -218,6 +217,22 @@ chatRouter.post('/sessions', asyncHandler(async (req, res) => {
   if (skill.status === 'archived') {
     return res.status(403).json({ message: 'Навык архивирован, новые чаты создавать нельзя' });
   }
+
+  // dev.log observability for chat creation / skill selection
+  logger.info(
+    {
+      workspaceId,
+      userId: user.id,
+      payloadSkillId: payload.skillId ?? null,
+      resolvedSkillId,
+      skillIsSystem: Boolean(skill.isSystem),
+      skillSystemKey: skill.systemKey ?? null,
+      llmProviderConfigId: skill.llmProviderConfigId ?? null,
+      modelId: skill.modelId ?? null,
+      asrProviderId: (skill as unknown as { asrProviderId?: string | null }).asrProviderId ?? null,
+    },
+    "[CHAT] session create",
+  );
 
   const chat = await createChat({
     workspaceId,
@@ -646,6 +661,21 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
     if (skillForChat && skillForChat.status === 'archived') {
       return res.status(403).json({ message: 'Навык архивирован, чат доступен только для чтения' });
     }
+
+    logger.info(
+      {
+        workspaceId,
+        userId: user.id,
+        chatId: req.params.chatId,
+        operationId,
+        skillId: chat.skillId,
+        llmProviderConfigId: skillForChat?.llmProviderConfigId ?? null,
+        modelId: skillForChat?.modelId ?? null,
+        wantsStream,
+        contentLength: payload.content.length,
+      },
+      "[CHAT] incoming llm message",
+    );
 
     await safeStartExecution({
       workspaceId,

@@ -636,8 +636,11 @@ export default function ChatPage({ params }: ChatPageProps) {
       setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
       return;
     }
-    await handleCreateChatForSkill(defaultSkill.id);
-  }, [defaultSkill, handleCreateChatForSkill]);
+    // Preserve current skill when creating a new chat from an existing chat.
+    // Otherwise we silently fall back to UNICA_CHAT and users see "wrong provider / wrong behavior".
+    const nextSkillId = activeChat?.skillId ?? defaultSkill.id;
+    await handleCreateChatForSkill(nextSkillId);
+  }, [defaultSkill, handleCreateChatForSkill, activeChat?.skillId]);
 
   const handleSend = useCallback(
     async (content: string) => {

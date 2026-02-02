@@ -502,6 +502,13 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
           return true;
         }
 
+        // For some ASR providers (e.g. Unica) we intentionally skip pre-upload
+        // and do upload+start in a single call on Send.
+        if (result.status === "skip_preupload") {
+          console.log("[ChatInput] Pre-upload skipped by server, will use handleUploadAudio on send", result);
+          return true;
+        }
+
         if (result.status === "uploaded" && result.s3Uri) {
           console.log("[ChatInput] File pre-uploaded to S3", {
             s3Uri: result.s3Uri,

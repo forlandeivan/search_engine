@@ -147,7 +147,7 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
 
   // Получить ASR провайдер для навыка
   let asrProvider = null;
-  let asrType: string = "yandex"; // default
+  let asrType: string | null = null;
 
   if (chat.skillId) {
     const skill = await getSkillById(workspaceId, chat.skillId);
@@ -162,6 +162,15 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
           asrProviderId: asrProvider.provider.id,
           asrType,
         }, '[TRANSCRIBE-STEP] ASR provider selected');
+      } else {
+        logger.error(
+          { operationId, chatId, workspaceId, skillId: skill.id },
+          '[TRANSCRIBE-ERROR] ASR provider is not configured for this skill',
+        );
+        return res.status(400).json({
+          message: 'Выберите ASR провайдер в настройках навыка для стандартного режима транскрибации',
+          code: 'ASR_PROVIDER_REQUIRED',
+        });
       }
     }
   }
@@ -180,7 +189,11 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
     logger.info({ skillId: skill.id, skillName: skill.name }, "[UNICA-ASR] Skill loaded");
 
     const config = asrProvider.config as unknown as UnicaAsrConfig;
-    const fileProviderId = skill.noCodeConnection?.fileStorageProviderId;
+    const fileProviderId =
+      skill.noCodeConnection?.effectiveFileStorageProvider?.id ??
+      skill.noCodeConnection?.fileStorageProviderId ??
+      null;
+    const fileProviderSource = skill.noCodeConnection?.effectiveFileStorageProviderSource ?? null;
 
     logger.info({
       config: {
@@ -190,12 +203,14 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         timeoutMs: config.timeoutMs,
       },
       fileProviderId,
+      fileProviderSource,
     }, "[UNICA-ASR] Configuration");
 
     if (!fileProviderId) {
       logger.error("[UNICA-ASR] ❌ No file provider configured for skill");
       return res.status(400).json({
-        message: 'Для Unica ASR необходимо настроить файловый провайдер в навыке',
+        message: 'Для Unica ASR необходимо настроить файловый провайдер (в навыке или дефолт в воркспейсе)',
+        code: 'FILE_PROVIDER_REQUIRED',
       });
     }
 
@@ -489,6 +504,53 @@ transcribeRouter.post('/upload', upload.single('audio'), asyncHandler(async (req
     }
   }
 
+  // Upload-only flow is currently supported only for Yandex async STT.
+  // For other ASR providers (e.g. Unica) we intentionally skip pre-upload and let the client
+  // use the single-call `/api/chat/transcribe` flow on "Send" (so provider selection is respected).
+  if (chat.skillId) {
+    const skill = await getSkillById(workspaceId, chat.skillId);
+    if (skill) {
+      let asrProviderId: string | null = null;
+      let asrType: string | null = null;
+      try {
+        const asrProvider = await speechProviderService.getAsrProviderForSkill(skill.id);
+        if (asrProvider) {
+          asrProviderId = asrProvider.provider.id;
+          asrType = speechProviderService.getAsrProviderType(asrProvider.provider);
+        }
+      } catch (e) {
+        // If provider is disabled/misconfigured, still skip preupload to avoid "attachment failed" UX.
+        logger.warn({ err: e, chatId, skillId: skill.id }, "[UPLOAD-ONLY] Failed to resolve ASR provider; skipping preupload");
+      }
+
+      if (asrType && asrType !== "yandex") {
+        logger.info(
+          { chatId, skillId: skill.id, asrProviderId, asrType },
+          "[UPLOAD-ONLY] Skipping preupload for non-yandex ASR provider",
+        );
+        return res.json({
+          status: "skip_preupload",
+          asrType,
+          asrProviderId,
+          message: "Pre-upload is supported only for Yandex STT. Will upload on Send.",
+        });
+      }
+
+      if (!asrType) {
+        logger.info(
+          { chatId, skillId: skill.id },
+          "[UPLOAD-ONLY] ASR provider not configured; skipping preupload",
+        );
+        return res.json({
+          status: "skip_preupload",
+          asrType: null,
+          asrProviderId: null,
+          message: "ASR provider is not configured for this skill. Will validate on Send.",
+        });
+      }
+    }
+  }
+
   try {
     const result = await yandexSttAsyncService.uploadAudioOnly({
       audioBuffer: file.buffer,
@@ -568,6 +630,26 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
   }
 
   const workspaceId = chat.workspaceId;
+
+  // Guard: /start is only valid for Yandex upload-only flow.
+  if (chat.skillId) {
+    const skill = await getSkillById(workspaceId, chat.skillId);
+    if (skill) {
+      try {
+        const asrProvider = await speechProviderService.getAsrProviderForSkill(skill.id);
+        const asrType = asrProvider ? speechProviderService.getAsrProviderType(asrProvider.provider) : null;
+        if (asrType && asrType !== "yandex") {
+          logger.warn({ chatId, skillId: skill.id, asrType }, "[START-TRANSCRIBE] Called for non-yandex ASR provider");
+          return res.status(400).json({
+            message: "Upload-only start is supported only for Yandex STT. Please use standard transcribe endpoint.",
+            code: "UPLOAD_ONLY_NOT_SUPPORTED",
+          });
+        }
+      } catch (e) {
+        logger.warn({ err: e, chatId, skillId: skill.id }, "[START-TRANSCRIBE] Failed to resolve ASR provider");
+      }
+    }
+  }
 
   try {
     const result = await yandexSttAsyncService.startAsyncTranscription({
@@ -707,8 +789,27 @@ transcribeRouter.get('/operations/:operationId', asyncHandler(async (req, res) =
  * Check transcription service health
  */
 transcribeRouter.get('/status', asyncHandler(async (_req, res) => {
-  const health = await yandexSttService.checkHealth();
-  res.json(health);
+  // UI availability: if at least one ASR provider is enabled, show audio attach.
+  const providers = await speechProviderService.getAvailableAsrProviders();
+  const anyEnabled = providers.some((p) => p.provider.isEnabled);
+
+  // Keep legacy Yandex health details (best-effort; Yandex may be absent on some envs).
+  let yandexHealth: unknown = null;
+  try {
+    yandexHealth = await yandexSttService.checkHealth();
+  } catch (err) {
+    logger.warn({ err }, "[TRANSCRIBE-STATUS] Failed to check Yandex STT health");
+  }
+
+  res.json({
+    available: anyEnabled,
+    providers: providers.map((p) => ({
+      id: p.provider.id,
+      asrProviderType: p.provider.asrProviderType ?? null,
+      isEnabled: p.provider.isEnabled,
+    })),
+    yandex: yandexHealth,
+  });
 }));
 
 /**

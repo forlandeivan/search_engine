@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import fetch, { Headers, type Response as FetchResponse } from "node-fetch";
 import type { LlmProvider } from "@shared/schema";
+import { createLogger } from "./lib/logger";
 import {
   buildLlmRequestBody,
   mergeLlmResponseConfig,
@@ -17,6 +18,8 @@ import {
 } from "./http-utils";
 import { fetchAccessToken, clearProviderAccessTokenCache, type OAuthProviderConfig } from "./llm-access-token";
 
+const llmLogger = createLogger("llm-client");
+
 function parseEnvPositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -30,7 +33,7 @@ const LLM_COMPLETION_MAX_ATTEMPTS = parseEnvPositiveInt(process.env.LLM_COMPLETI
 const LLM_COMPLETION_RETRY_DELAY_MS = parseEnvPositiveInt(process.env.LLM_COMPLETION_RETRY_DELAY_MS, 1500);
 
 if (USE_MOCK_LLM) {
-  console.warn("[llm] MOCK_LLM_RESPONSES enabled: using mock completions");
+  llmLogger.warn("[llm] MOCK_LLM_RESPONSES enabled: using mock completions");
 }
 
 export interface LlmCompletionResult {
@@ -791,8 +794,9 @@ export function executeLlmCompletion(
   const wantsStream = body.stream === true;
 
   if (USE_MOCK_LLM) {
-    console.info(
-      `[llm] provider=${provider.id} stream=${wantsStream ? "yes" : "no"} mock response`,
+    llmLogger.info(
+      { providerId: provider.id, providerType: provider.providerType, stream: wantsStream },
+      "[llm] mock response",
     );
     return createMockLlmCompletion(provider, body, wantsStream);
   }
@@ -815,8 +819,14 @@ export function executeLlmCompletion(
 
   const streamController = wantsStream ? createAsyncStreamController<LlmStreamEvent>() : null;
 
-  console.info(
-    `[llm] provider=${provider.id} stream=${wantsStream ? "yes" : "no"} request started`,
+  llmLogger.info(
+    {
+      providerId: provider.id,
+      providerType: provider.providerType,
+      stream: wantsStream,
+      url: provider.completionUrl,
+    },
+    "[llm] request started",
   );
 
   const completionPromise = (async () => {
@@ -843,10 +853,15 @@ export function executeLlmCompletion(
         maxAttempts: LLM_COMPLETION_MAX_ATTEMPTS,
         retryDelayMs: LLM_COMPLETION_RETRY_DELAY_MS,
       });
-      console.info(
-        `[llm] provider=${provider.id} response status=${completionResponse.status} content-type=${completionResponse.headers.get(
-          "content-type",
-        ) ?? "unknown"}`,
+      llmLogger.info(
+        {
+          providerId: provider.id,
+          providerType: provider.providerType,
+          url: provider.completionUrl,
+          status: completionResponse.status,
+          contentType: completionResponse.headers.get("content-type") ?? "unknown",
+        },
+        "[llm] response received",
       );
     } catch (error) {
       streamController?.fail(error);

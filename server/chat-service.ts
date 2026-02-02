@@ -38,6 +38,9 @@ import { searchSkillFileVectors } from "./skill-file-vector-store";
 import { embedTextWithProvider } from "./skill-file-embeddings";
 import { getHttpStatus, getErrorCode } from "./types/errors";
 import type { SyncFinalResult } from "./no-code-events";
+import { createLogger } from "./lib/logger";
+
+const chatLlmLogger = createLogger("chat-llm");
 
 export class ChatServiceError extends Error {
   public status: number;
@@ -1102,6 +1105,37 @@ export async function buildChatLlmContext(
       effectiveMaxTokens: requestConfig.maxTokens ?? null,
     },
   });
+
+  // Also log to dev.log for infra debugging (without secrets).
+  chatLlmLogger.info(
+    {
+      chatId,
+      workspaceId,
+      userId,
+      skillId: skill.id,
+      skillType: skillType,
+      providerSource,
+      provider: {
+        id: configuredProvider.id,
+        name: configuredProvider.name,
+        providerType: configuredProvider.providerType,
+        completionUrl: configuredProvider.completionUrl ?? null,
+        tokenUrl: configuredProvider.tokenUrl ?? null,
+      },
+      model: {
+        key: resolvedModelKey ?? null,
+        id: modelInfo?.id ?? null,
+        providerId: modelInfo?.providerId ?? null,
+        providerType: modelInfo?.providerType ?? null,
+      },
+      overrides: {
+        maxTokens: requestConfig.maxTokens ?? null,
+        temperature: requestConfig.temperature ?? null,
+        topP: requestConfig.topP ?? null,
+      },
+    },
+    "[CHAT_LLM] resolved provider/model",
+  );
 
   const chatMessages = await storage.listChatMessages(chatId);
   
