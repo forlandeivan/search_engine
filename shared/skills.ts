@@ -94,6 +94,7 @@ const skillEditableFieldsSchema = z.object({
   onTranscriptionMode: z.enum(skillTranscriptionModes).optional(),
   onTranscriptionAutoActionId: optionalString(200),
   transcriptionFlowMode: z.enum(skillTranscriptionFlowModes).optional(),
+  asrProviderId: optionalString(200),
   noCodeEndpointUrl: noCodeEndpointUrlSchema.optional(),
   noCodeFileEventsUrl: noCodeEndpointUrlSchema.optional(),
   noCodeAuthType: z.enum(noCodeAuthTypes).optional(),
@@ -147,6 +148,7 @@ export type SkillDto = {
   transcriptionFlowMode: SkillTranscriptionFlowMode;
   onTranscriptionMode: SkillTranscriptionMode;
   onTranscriptionAutoActionId: string | null;
+  asrProviderId?: string | null;
   icon?: string | null;
   noCodeConnection: SkillNoCodeConnection;
   sharedChatFiles: boolean;

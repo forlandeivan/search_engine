@@ -63,6 +63,7 @@ type EditableSkillColumns = Pick<
   | "transcriptionFlowMode"
   | "onTranscriptionMode"
   | "onTranscriptionAutoActionId"
+  | "asrProviderId"
   | "noCodeEndpointUrl"
   | "noCodeFileEventsUrl"
   | "noCodeAuthType"
@@ -564,6 +565,7 @@ function mapSkillRow(
     transcriptionFlowMode: normalizeTranscriptionFlowMode(row.transcriptionFlowMode),
     onTranscriptionMode: normalizeTranscriptionMode(row.onTranscriptionMode),
     onTranscriptionAutoActionId: row.onTranscriptionAutoActionId ?? null,
+    asrProviderId: row.asrProviderId ?? null,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   };
@@ -934,6 +936,7 @@ export async function createSkill(
       transcriptionFlowMode,
       onTranscriptionMode: transcriptionMode,
       onTranscriptionAutoActionId: transcriptionAutoActionId,
+      asrProviderId: normalized.asrProviderId,
       noCodeEndpointUrl: normalizedEndpointUrl,
       noCodeFileEventsUrl: submittedNoCodeFileEvents,
       noCodeFileStorageProviderId: selectedFileStorageProviderId,
