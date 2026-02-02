@@ -13,6 +13,12 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
+type FileStorageProvider = {
+  id: string;
+  name: string;
+  isActive: boolean;
+};
+
 type AsrProvider = {
   id: string;
   displayName: string;
@@ -25,6 +31,7 @@ type AsrProvider = {
     workspaceId?: string;
     pollingIntervalMs?: number;
     timeoutMs?: number;
+    fileStorageProviderId?: string | null;
   };
   createdAt: string;
   updatedAt: string;
@@ -41,6 +48,7 @@ export default function AdminAsrProvidersPage() {
     workspaceId: "",
     pollingIntervalMs: 5000,
     timeoutMs: 3600000,
+    fileStorageProviderId: "",
   });
 
   const { data: providers, isLoading } = useQuery({
@@ -52,6 +60,18 @@ export default function AdminAsrProvidersPage() {
     },
   });
 
+  const { data: fileStorageProviders } = useQuery({
+    queryKey: ["admin-file-storage-providers"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/admin/file-storage/providers");
+      const data = await response.json();
+      return (data.providers ?? []) as FileStorageProvider[];
+    },
+  });
+
+  const activeFileStorageProviders = (fileStorageProviders ?? []).filter((p) => p.isActive);
+  const fileProviderNameById = new Map(activeFileStorageProviders.map((p) => [p.id, p.name]));
+
   const createMutation = useMutation({
     mutationFn: async (data: typeof newProvider) => {
       const response = await apiRequest("POST", "/api/admin/tts-stt/asr-providers", {
@@ -61,6 +81,7 @@ export default function AdminAsrProvidersPage() {
           workspaceId: data.workspaceId,
           pollingIntervalMs: data.pollingIntervalMs,
           timeoutMs: data.timeoutMs,
+          fileStorageProviderId: data.fileStorageProviderId?.trim() ? data.fileStorageProviderId.trim() : undefined,
         },
       });
       return response.json();
@@ -74,6 +95,7 @@ export default function AdminAsrProvidersPage() {
         workspaceId: "",
         pollingIntervalMs: 5000,
         timeoutMs: 3600000,
+        fileStorageProviderId: "",
       });
       toast({
         title: "Провайдер создан",
@@ -146,7 +168,10 @@ export default function AdminAsrProvidersPage() {
     mutationFn: async (data: { id: string; displayName: string; config: AsrProvider["config"] }) => {
       const response = await apiRequest("PATCH", `/api/admin/tts-stt/asr-providers/${data.id}`, {
         displayName: data.displayName,
-        config: data.config,
+        config: {
+          ...data.config,
+          fileStorageProviderId: data.config.fileStorageProviderId ? data.config.fileStorageProviderId : null,
+        },
       });
       return response.json();
     },
@@ -217,6 +242,15 @@ export default function AdminAsrProvidersPage() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Workspace:</span>
                   <span className="font-mono text-xs">{provider.config.workspaceId}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Файловый провайдер:</span>
+                  <span className="text-xs">
+                    {provider.config.fileStorageProviderId
+                      ? (fileProviderNameById.get(provider.config.fileStorageProviderId) ??
+                        provider.config.fileStorageProviderId)
+                      : "—"}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">По умолчанию:</span>
@@ -319,6 +353,28 @@ export default function AdminAsrProvidersPage() {
                 />
               </div>
             </div>
+            <div className="space-y-2">
+              <Label>Файловый провайдер (для Unica)</Label>
+              <Select
+                value={newProvider.fileStorageProviderId}
+                onValueChange={(value) => setNewProvider({ ...newProvider, fileStorageProviderId: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Не выбрано" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Не выбрано</SelectItem>
+                  {activeFileStorageProviders.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">
+                Используется как fallback, если в навыке/воркспейсе не выбран файловый провайдер.
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
@@ -404,6 +460,33 @@ export default function AdminAsrProvidersPage() {
                     })}
                   />
                 </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Файловый провайдер (для Unica)</Label>
+                <Select
+                  value={(editingProvider.config.fileStorageProviderId ?? "") || ""}
+                  onValueChange={(value) =>
+                    setEditingProvider({
+                      ...editingProvider,
+                      config: { ...editingProvider.config, fileStorageProviderId: value || null },
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Не выбрано" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Не выбрано</SelectItem>
+                    {activeFileStorageProviders.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">
+                  Используется как fallback, если в навыке/воркспейсе не выбран файловый провайдер.
+                </p>
               </div>
             </div>
             <DialogFooter>

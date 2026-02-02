@@ -189,11 +189,18 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
     logger.info({ skillId: skill.id, skillName: skill.name }, "[UNICA-ASR] Skill loaded");
 
     const config = asrProvider.config as unknown as UnicaAsrConfig;
-    const fileProviderId =
+    const fileProviderFromSkill =
       skill.noCodeConnection?.effectiveFileStorageProvider?.id ??
       skill.noCodeConnection?.fileStorageProviderId ??
       null;
+    const fileProviderFromAsrConfig = config.fileStorageProviderId ?? null;
+    const fileProviderId = fileProviderFromSkill ?? fileProviderFromAsrConfig ?? null;
     const fileProviderSource = skill.noCodeConnection?.effectiveFileStorageProviderSource ?? null;
+    const resolvedFileProviderSource = fileProviderFromSkill
+      ? `skill:${fileProviderSource ?? 'unknown'}`
+      : fileProviderFromAsrConfig
+        ? 'asr_provider_config'
+        : 'none';
 
     logger.info({
       config: {
@@ -201,15 +208,16 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         workspaceId: config.workspaceId,
         pollingIntervalMs: config.pollingIntervalMs,
         timeoutMs: config.timeoutMs,
+        fileStorageProviderId: fileProviderFromAsrConfig,
       },
       fileProviderId,
-      fileProviderSource,
+      fileProviderSource: resolvedFileProviderSource,
     }, "[UNICA-ASR] Configuration");
 
     if (!fileProviderId) {
       logger.error("[UNICA-ASR] ❌ No file provider configured for skill");
       return res.status(400).json({
-        message: 'Для Unica ASR необходимо настроить файловый провайдер (в навыке или дефолт в воркспейсе)',
+        message: 'Для Unica ASR необходимо настроить файловый провайдер (в навыке/дефолт в воркспейсе/в настройках ASR провайдера)',
         code: 'FILE_PROVIDER_REQUIRED',
       });
     }

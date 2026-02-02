@@ -317,6 +317,7 @@ const createUnicaAsrProviderSchema = z.object({
     workspaceId: z.string().min(1, 'Укажите Workspace ID'),
     pollingIntervalMs: z.number().min(1000).max(60000).optional(),
     timeoutMs: z.number().min(60000).max(7200000).optional(),
+    fileStorageProviderId: z.string().min(1).optional(),
   }),
 });
 
@@ -362,6 +363,7 @@ const updateAsrProviderSchema = z.object({
     workspaceId: z.string().min(1).optional(),
     pollingIntervalMs: z.number().min(1000).max(60000).optional(),
     timeoutMs: z.number().min(60000).max(7200000).optional(),
+    fileStorageProviderId: z.string().min(1).nullable().optional(),
   }).optional(),
 });
 

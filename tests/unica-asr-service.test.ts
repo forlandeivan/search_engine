@@ -10,12 +10,12 @@ vi.mock("../server/storage", () => ({
     deleteSpeechProvider: vi.fn(),
     upsertSpeechProviderSecret: vi.fn(),
     deleteSpeechProviderSecret: vi.fn(),
-    getSkillById: vi.fn(),
     getUser: vi.fn(),
     db: {
       query: {
         skills: {
           findMany: vi.fn(),
+          findFirst: vi.fn(),
         },
       },
     },
@@ -87,7 +87,7 @@ describe("SpeechProviderService - ASR Provider Management", () => {
         name: "Test Skill",
       };
 
-      vi.mocked(storage.getSkillById).mockResolvedValueOnce(mockSkill as any);
+      vi.mocked(storage.db.query.skills.findFirst).mockResolvedValueOnce(mockSkill as any);
       vi.mocked(storage.getSpeechProvider).mockResolvedValueOnce(unicaProvider);
       vi.mocked(storage.getSpeechProviderSecrets).mockResolvedValueOnce([]);
 
@@ -106,7 +106,7 @@ describe("SpeechProviderService - ASR Provider Management", () => {
         name: "Test Skill",
       };
 
-      vi.mocked(storage.getSkillById).mockResolvedValueOnce(mockSkill as any);
+      vi.mocked(storage.db.query.skills.findFirst).mockResolvedValueOnce(mockSkill as any);
 
       const result = await speechProviderService.getAsrProviderForSkill("skill-1");
 
@@ -123,7 +123,7 @@ describe("SpeechProviderService - ASR Provider Management", () => {
 
       const disabledProvider = { ...unicaProvider, isEnabled: false };
 
-      vi.mocked(storage.getSkillById).mockResolvedValueOnce(mockSkill as any);
+      vi.mocked(storage.db.query.skills.findFirst).mockResolvedValueOnce(mockSkill as any);
       vi.mocked(storage.getSpeechProvider).mockResolvedValueOnce(disabledProvider);
       vi.mocked(storage.getSpeechProviderSecrets).mockResolvedValueOnce([]);
 
@@ -133,7 +133,7 @@ describe("SpeechProviderService - ASR Provider Management", () => {
     });
 
     it("should return null if skill not found", async () => {
-      vi.mocked(storage.getSkillById).mockResolvedValueOnce(null);
+      vi.mocked(storage.db.query.skills.findFirst).mockResolvedValueOnce(null as any);
 
       const result = await speechProviderService.getAsrProviderForSkill("skill-1");
 

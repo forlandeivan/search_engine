@@ -2942,6 +2942,11 @@ export interface UnicaAsrConfig {
   workspaceId: string;
   pollingIntervalMs?: number;
   timeoutMs?: number;
+  /**
+   * Optional file storage provider to use for Unica ASR.
+   * Used as fallback when skill/workspace default file provider is not configured.
+   */
+  fileStorageProviderId?: string;
 }
 
 export type LlmProvider = typeof llmProviders.$inferSelect;
