@@ -412,6 +412,11 @@ adminTtsSttRouter.patch('/asr-providers/:id', asyncHandler(async (req, res) => {
         ...existing.config,
         ...validation.data.config,
       };
+
+      // If client explicitly clears optional fields with null, remove them from config JSON.
+      if (updatePayload.config.fileStorageProviderId === null) {
+        delete updatePayload.config.fileStorageProviderId;
+      }
     }
     
     if (validation.data.displayName) {

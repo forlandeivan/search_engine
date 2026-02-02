@@ -38,6 +38,8 @@ type AsrProvider = {
 };
 
 export default function AdminAsrProvidersPage() {
+  const SELECT_NONE = "__none__";
+
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -356,14 +358,19 @@ export default function AdminAsrProvidersPage() {
             <div className="space-y-2">
               <Label>Файловый провайдер (для Unica)</Label>
               <Select
-                value={newProvider.fileStorageProviderId}
-                onValueChange={(value) => setNewProvider({ ...newProvider, fileStorageProviderId: value })}
+                value={newProvider.fileStorageProviderId ? newProvider.fileStorageProviderId : SELECT_NONE}
+                onValueChange={(value) =>
+                  setNewProvider({
+                    ...newProvider,
+                    fileStorageProviderId: value === SELECT_NONE ? "" : value,
+                  })
+                }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Не выбрано" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Не выбрано</SelectItem>
+                  <SelectItem value={SELECT_NONE}>Не выбрано</SelectItem>
                   {activeFileStorageProviders.map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       {p.name}
@@ -464,11 +471,14 @@ export default function AdminAsrProvidersPage() {
               <div className="space-y-2">
                 <Label>Файловый провайдер (для Unica)</Label>
                 <Select
-                  value={(editingProvider.config.fileStorageProviderId ?? "") || ""}
+                  value={editingProvider.config.fileStorageProviderId ? editingProvider.config.fileStorageProviderId : SELECT_NONE}
                   onValueChange={(value) =>
                     setEditingProvider({
                       ...editingProvider,
-                      config: { ...editingProvider.config, fileStorageProviderId: value || null },
+                      config: {
+                        ...editingProvider.config,
+                        fileStorageProviderId: value === SELECT_NONE ? null : value,
+                      },
                     })
                   }
                 >
@@ -476,7 +486,7 @@ export default function AdminAsrProvidersPage() {
                     <SelectValue placeholder="Не выбрано" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Не выбрано</SelectItem>
+                    <SelectItem value={SELECT_NONE}>Не выбрано</SelectItem>
                     {activeFileStorageProviders.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         {p.name}
