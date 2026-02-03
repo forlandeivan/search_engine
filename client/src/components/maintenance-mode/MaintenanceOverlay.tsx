@@ -1,7 +1,16 @@
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { Wrench } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { cn } from "@/lib/utils";
 import type { MaintenanceModeStatusDto } from "@shared/maintenance-mode";
 
 export type MaintenanceOverlayProps = {
@@ -10,44 +19,99 @@ export type MaintenanceOverlayProps = {
   isAdmin?: boolean;
 };
 
+const THEME_KEY = "theme";
+
+function useIsDarkMode(): boolean {
+  const readDark = (): boolean => {
+    if (typeof document === "undefined") return false;
+    if (document.documentElement.classList.contains("dark")) return true;
+    return localStorage.getItem(THEME_KEY) === "dark";
+  };
+  const [isDark, setIsDark] = useState(readDark);
+  useEffect(() => {
+    const el = document.documentElement;
+    const check = () => setIsDark(readDark());
+    const observer = new MutationObserver(check);
+    observer.observe(el, { attributes: true, attributeFilter: ["class"] });
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === THEME_KEY) setIsDark(readDark());
+    };
+    window.addEventListener("storage", onStorage);
+    check();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+  return isDark;
+}
+
 export function MaintenanceOverlay({ status, safeMode = false, isAdmin = false }: MaintenanceOverlayProps) {
+  const isDark = useIsDarkMode();
   const isActive = status?.status === "active";
   const title = safeMode
     ? "Сервис временно недоступен"
     : status?.messageTitle?.trim() || "Идут технические работы";
-  const description = safeMode
-    ? "Не удалось получить статус обслуживания. Мы уже разбираемся."
-    : status?.messageBody?.trim() || "Мы обновляем систему и скоро вернемся.";
-  const eta = status?.publicEta?.trim();
+  const description = safeMode ? null : (status?.messageBody?.trim() || null);
+  const publicEtaText = status?.publicEta?.trim();
+  const scheduledEndAtDate = status?.scheduledEndAt ? new Date(status.scheduledEndAt) : null;
+  const scheduledEndAtInPast =
+    scheduledEndAtDate && !Number.isNaN(scheduledEndAtDate.getTime()) && scheduledEndAtDate.getTime() < Date.now();
+  const scheduledEndAtFormatted =
+    scheduledEndAtDate && !Number.isNaN(scheduledEndAtDate.getTime())
+      ? scheduledEndAtDate.toLocaleString("ru-RU", { dateStyle: "medium", timeStyle: "short" })
+      : null;
+  const etaDisplay =
+    publicEtaText || (scheduledEndAtInPast ? null : scheduledEndAtFormatted) || null;
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex min-h-screen items-center justify-center bg-background/90 px-4 py-10 backdrop-blur"
+      className={`fixed inset-0 z-[100] flex min-h-screen items-center justify-center px-4 py-10 backdrop-blur bg-background/90 ${isDark ? "bg-black/90" : "bg-background/90"}`}
       data-testid="maintenance-overlay"
     >
-      <div className="w-full max-w-xl space-y-4 rounded-2xl border border-border/60 bg-background p-6 text-center shadow-lg">
-        <div className="text-2xl font-semibold text-foreground">{title}</div>
-        <p className="text-base text-muted-foreground">{description}</p>
-        {eta ? (
-          <div className="rounded-lg bg-muted px-4 py-2 text-sm text-foreground">Ожидаем восстановление: {eta}</div>
+      <Empty
+
+      >
+        <EmptyMedia
+          variant="icon"
+        >
+          <Wrench />
+        </EmptyMedia>
+        <EmptyTitle
+          className={isDark ? "text-white text-2xl font-semibold" : "text-2xl font-semibold"}
+        >
+          {title}
+        </EmptyTitle>
+        {description ? (
+          <EmptyDescription
+            className={isDark ? "text-zinc-200" : "text-foreground/90"}
+          >
+            {description}
+          </EmptyDescription>
         ) : null}
-        <p className="text-sm text-muted-foreground">
-          Следите за обновлениями — мы скоро вернемся.
-        </p>
-        {isAdmin ? (
-          <div className="pt-2">
+        {etaDisplay ? (
+          <EmptyDescription
+            className={isDark ? "text-white" : "text-foreground"}
+          >
+            Ожидаем восстановление: {etaDisplay}
+          </EmptyDescription>
+        ) : null}
+        <EmptyContent className="gap-4">
+          {isAdmin ? (
             <Button variant="outline" asChild>
               <Link href="/admin/settings/maintenance">
                 <Wrench className="mr-2 h-4 w-4" />
                 Управление режимом обслуживания
               </Link>
             </Button>
-          </div>
-        ) : null}
-        {!isActive && safeMode ? (
-          <p className="text-xs text-muted-foreground">Если сообщение не исчезает, попробуйте обновить страницу позже.</p>
-        ) : null}
-      </div>
+          ) : null}
+          {!isActive && safeMode ? (
+            <p className={cn("text-xs", isDark ? "text-zinc-400" : "text-foreground/70")}>
+              Если сообщение не исчезает, попробуйте обновить страницу позже.
+            </p>
+          ) : null}
+        </EmptyContent>
+      </Empty>
     </div>
   );
 }
