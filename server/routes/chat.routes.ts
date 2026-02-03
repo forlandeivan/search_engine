@@ -695,7 +695,15 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
     try {
       userMessageRecord = await addUserMessage(req.params.chatId, workspaceId, user.id, payload.content);
       await safeLogStep('WRITE_USER_MESSAGE', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { input: { chatId: req.params.chatId, contentLength: payload.content.length }, output: { messageId: userMessageRecord.id } });
-      scheduleChatTitleGenerationIfNeeded({ chatId: req.params.chatId, workspaceId, userId: user.id, messageText: payload.content, messageMetadata: userMessageRecord?.metadata ?? {}, chatTitle: chat.title });
+      scheduleChatTitleGenerationIfNeeded({
+        chatId: req.params.chatId,
+        workspaceId,
+        userId: user.id,
+        messageText: payload.content,
+        messageMetadata: userMessageRecord?.metadata ?? {},
+        chatTitle: chat.title,
+        executionId: executionId,
+      });
     } catch (messageError) {
       await safeLogStep('WRITE_USER_MESSAGE', SKILL_EXECUTION_STEP_STATUS.ERROR, { input: { chatId: req.params.chatId }, errorCode: messageError instanceof ChatServiceError ? `${messageError.status}` : undefined, errorMessage: messageError instanceof Error ? messageError.message : 'Failed to save user message' });
       throw messageError;
@@ -1586,6 +1594,8 @@ chatRouter.post('/sessions/:chatId/messages/file', fileUpload.single('file'), as
       messageText: fileName,
       messageMetadata,
       chatTitle: chat.title,
+      // executionId is not explicitly available here as it's a file upload request, 
+      // but we could pass null or try to find it. For now leaving as is or passing null.
     });
 
     // Upload file to provider

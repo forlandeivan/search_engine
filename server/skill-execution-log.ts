@@ -116,6 +116,7 @@ export type SkillExecutionStepType =
   | "STREAM_TO_CLIENT_START"
   | "STREAM_TO_CLIENT_FINISH"
   | "WRITE_ASSISTANT_MESSAGE"
+  | "UPDATE_CHAT_TITLE"
   | "FINALIZE_EXECUTION";
 
 /**

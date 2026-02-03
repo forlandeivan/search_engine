@@ -1,5 +1,7 @@
 import { chatTitleGeneratorService } from "./chat-title-generator";
 import { storage } from "./storage";
+import { skillExecutionLogService } from "./skill-execution-log-context";
+import { SKILL_EXECUTION_STEP_STATUS } from "./skill-execution-log";
 
 type ScheduleArgs = {
   chatId: string;
@@ -8,6 +10,7 @@ type ScheduleArgs = {
   messageText: string;
   messageMetadata?: Record<string, unknown> | null;
   chatTitle?: string | null;
+  executionId?: string | null;
 };
 
 type JobPayload = {
@@ -15,6 +18,7 @@ type JobPayload = {
   workspaceId: string;
   userId: string;
   messageText: string;
+  executionId?: string | null;
 };
 
 const pendingChatTitleJobs = new Set<string>();
@@ -68,12 +72,28 @@ export function scheduleChatTitleGenerationIfNeeded(args: ScheduleArgs): void {
         const updated = await storage.updateChatTitleIfEmpty(args.chatId, title);
         if (updated) {
           console.info(`[chat-title-job] chat=${args.chatId} title set from audio file: ${title}`);
+          if (args.executionId) {
+            await skillExecutionLogService.logStepSuccess({
+              executionId: args.executionId,
+              type: 'UPDATE_CHAT_TITLE',
+              input: { chatId: args.chatId, source: 'audio_file', title },
+              output: { updated: true }
+            }).catch(() => {});
+          }
         }
       } catch (error) {
         console.warn(
           `[chat-title-job] failed to set audio title for chat=${args.chatId}:`,
           error instanceof Error ? error : String(error),
         );
+        if (args.executionId) {
+          await skillExecutionLogService.logStepError({
+            executionId: args.executionId,
+            type: 'UPDATE_CHAT_TITLE',
+            input: { chatId: args.chatId, source: 'audio_file' },
+            errorMessage: error instanceof Error ? error.message : String(error)
+          }).catch(() => {});
+        }
       }
     })();
     return;
@@ -94,6 +114,7 @@ export function scheduleChatTitleGenerationIfNeeded(args: ScheduleArgs): void {
         workspaceId: args.workspaceId,
         userId: args.userId,
         messageText: trimmedMessage,
+        executionId: args.executionId,
       });
     } catch (error) {
       console.warn(
@@ -146,12 +167,35 @@ async function runChatTitleGenerationJob(payload: JobPayload) {
   });
 
   if (!generatedTitle) {
+    if (payload.executionId) {
+      await skillExecutionLogService.logStepError({
+        executionId: payload.executionId,
+        type: 'UPDATE_CHAT_TITLE',
+        input: { chatId: payload.chatId, source: 'ai_generator' },
+        errorMessage: 'AI generator returned empty title'
+      }).catch(() => {});
+    }
     return;
   }
 
   const updated = await storage.updateChatTitleIfEmpty(payload.chatId, generatedTitle);
   if (updated) {
     console.info(`[chat-title-job] chat=${payload.chatId} title generated`);
+    if (payload.executionId) {
+      await skillExecutionLogService.logStepSuccess({
+        executionId: payload.executionId,
+        type: 'UPDATE_CHAT_TITLE',
+        input: { chatId: payload.chatId, source: 'ai_generator', title: generatedTitle },
+        output: { updated: true }
+      }).catch(() => {});
+    }
+  } else if (payload.executionId) {
+    await skillExecutionLogService.logStepSuccess({
+      executionId: payload.executionId,
+      type: 'UPDATE_CHAT_TITLE',
+      input: { chatId: payload.chatId, source: 'ai_generator', title: generatedTitle },
+      output: { updated: false, reason: 'title already set' }
+    }).catch(() => {});
   }
 }
 

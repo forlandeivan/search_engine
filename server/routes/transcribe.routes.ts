@@ -352,6 +352,7 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         messageText: file.originalname || 'audio',
         messageMetadata: { type: 'audio', fileName: file.originalname || 'audio' },
         chatTitle: chat.title,
+        executionId: executionId,
       });
 
       logger.info("[UNICA-ASR] ========== UNICA ASR FLOW COMPLETED ==========");
@@ -434,6 +435,7 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
       messageText: file.originalname || 'audio',
       messageMetadata: { type: 'audio', fileName: file.originalname || 'audio' },
       chatTitle: chat.title,
+      executionId: executionId,
     });
 
     res.json({
@@ -707,6 +709,8 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
       messageText: fileName || 'audio',
       messageMetadata: { type: 'audio', fileName: fileName || 'audio' },
       chatTitle: chat.title,
+      // executionId is not explicitly available in this flow's body, 
+      // but we could try to pass it if we had it.
     });
 
     res.json({
