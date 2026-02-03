@@ -1116,6 +1116,16 @@ export function executeLlmCompletion(
       );
 
       return {
+        answer: aggregatedAnswer,
+        usageTokens,
+        rawResponse: rawEvents,
+        request: {
+          url: provider.completionUrl,
+          headers: sanitizeHeadersForLog(llmHeaders),
+          body,
+        },
+      };
+    }
 
     const rawBodyText = await completionResponse.text();
     const parsedBody = parseJson(rawBodyText);
