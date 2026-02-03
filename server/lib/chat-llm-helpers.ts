@@ -9,6 +9,7 @@
  */
 
 import type { Response } from 'express';
+import { createLogger } from '../lib/logger';
 import { ChatServiceError } from '../chat-service';
 import { assertSufficientWorkspaceCredits, InsufficientCreditsError } from '../credits-precheck';
 import { IdempotencyKeyReusedError } from '../idempotent-charge-service';
@@ -21,6 +22,8 @@ import type { Model, ModelConsumptionUnit } from '@shared/schema';
 // ============================================================================
 // Types
 // ============================================================================
+
+const streamLogger = createLogger('chat-stream');
 
 export type NoCodeFlowFailureReason = 'NOT_CONFIGURED' | 'DELIVERY_FAILED';
 
@@ -58,12 +61,17 @@ export function createNoCodeFlowError(reason: NoCodeFlowFailureReason): ChatServ
 }
 
 /**
- * Sends an SSE (Server-Sent Events) event to the response stream
+ * Sends an SSE (Server-Sent Events) event to the response stream.
+ * Flushes after each event so the client receives chunks immediately (no buffering).
  */
 export function sendSseEvent(res: Response, eventName: string, data?: unknown): void {
   const body = typeof data === 'string' || data === undefined ? data ?? '' : JSON.stringify(data);
   res.write(`event: ${eventName}\n`);
   res.write(`data: ${body}\n\n`);
+  const flusher = (res as Response & { flush?: () => void }).flush;
+  if (typeof flusher === 'function') {
+    flusher.call(res);
+  }
 }
 
 /**
@@ -162,25 +170,35 @@ export function forwardLlmStreamEvents(
     for await (const entry of iterator) {
       chunkCount++;
       const currentTime = Date.now();
-      
+
       if (firstChunkTime === null) {
         firstChunkTime = currentTime;
         const timeToFirstChunk = currentTime - startTime;
-        console.log(`[RAG STREAM] First chunk received after ${timeToFirstChunk}ms`);
+        streamLogger.info(
+          { timeToFirstChunkMs: timeToFirstChunk, chunkIndex: chunkCount },
+          '[STREAM] First chunk received',
+        );
       }
-      
+
       const timeSinceLastChunk = currentTime - lastChunkTime;
       lastChunkTime = currentTime;
-      
-      console.log(`[RAG STREAM] Chunk #${chunkCount} (Δ${timeSinceLastChunk}ms):`, 
-        JSON.stringify(entry.data).slice(0, 100));
-      
+
+      if (chunkCount <= 3 || chunkCount % 50 === 0 || timeSinceLastChunk > 1000) {
+        streamLogger.debug(
+          { chunkIndex: chunkCount, deltaMs: timeSinceLastChunk, dataPreview: JSON.stringify(entry.data).slice(0, 80) },
+          `[STREAM] Chunk #${chunkCount}`,
+        );
+      }
+
       const eventName = entry.event || 'delta';
       emit(eventName, entry.data);
     }
-    
+
     const totalTime = Date.now() - startTime;
-    console.log(`[RAG STREAM] Stream completed: ${chunkCount} chunks in ${totalTime}ms`);
+    streamLogger.info(
+      { chunkCount, totalMs: totalTime, firstChunkMs: firstChunkTime !== null ? firstChunkTime - startTime : null },
+      '[STREAM] Stream completed',
+    );
   })();
 }
 

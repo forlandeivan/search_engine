@@ -184,6 +184,8 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     // Unica file provider:
     fileId?: string;
     providerFileId?: string;
+    // ASR execution log:
+    executionId?: string;
   } | null>(null);
   const attachInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -537,12 +539,14 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
           console.log("[ChatInput] File pre-uploaded to provider (Unica)", {
             fileId: result.fileId,
             providerFileId: result.providerFileId,
+            executionId: result.executionId,
           });
           
           setPreUploadedFile({
             fileName: file.name,
             fileId: result.fileId,
             providerFileId: result.providerFileId,
+            executionId: result.executionId,
             durationSeconds: null,
             chatId: targetChatId,
           });
@@ -596,6 +600,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
             // Unica file provider:
             fileId: preUploadedFile.fileId,
             providerFileId: preUploadedFile.providerFileId,
+            executionId: preUploadedFile.executionId,
             // Common:
             durationSeconds: preUploadedFile.durationSeconds,
             operationId,

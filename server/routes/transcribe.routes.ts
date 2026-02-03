@@ -647,6 +647,41 @@ transcribeRouter.post('/upload', upload.single('audio'), asyncHandler(async (req
             elapsed: Date.now() - startTime,
           }, '[UPLOAD-ONLY-UNICA] File pre-uploaded successfully');
 
+          // Create ASR execution record with file_uploaded event
+          let executionId: string | null = null;
+          try {
+            const execution = await asrExecutionLogService.createExecution({
+              workspaceId,
+              chatId,
+              skillId: skill.id,
+              provider: 'unica',
+              mode: 'pre_upload',
+              status: 'pending',
+              fileName: file.originalname || 'audio.wav',
+              fileSizeBytes: file.size,
+              startedAt: new Date(),
+              pipelineEvents: [
+                {
+                  id: crypto.randomUUID(),
+                  timestamp: new Date().toISOString(),
+                  stage: 'file_uploaded',
+                  details: {
+                    fileId: audioFile.id,
+                    providerFileId,
+                    fileProviderId,
+                    mimeType: file.mimetype,
+                    sizeBytes: file.size,
+                    elapsed: Date.now() - startTime,
+                  } as any,
+                },
+              ],
+            });
+            executionId = execution.id;
+            logger.info({ executionId, fileId: audioFile.id }, '[UPLOAD-ONLY-UNICA] ASR execution log created');
+          } catch (logError) {
+            logger.warn({ error: logError, fileId: audioFile.id }, '[UPLOAD-ONLY-UNICA] Failed to create ASR execution log');
+          }
+
           return res.json({
             status: 'uploaded',
             fileId: audioFile.id,
@@ -654,6 +689,7 @@ transcribeRouter.post('/upload', upload.single('audio'), asyncHandler(async (req
             fileName: file.originalname,
             asrType: 'unica',
             asrProviderId,
+            executionId,
             message: 'Файл загружен. Нажмите "Отправить" для начала транскрибации.',
           });
         } catch (error) {
@@ -761,7 +797,7 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
-  const { chatId, s3Uri, objectKey, durationSeconds, operationId: clientOperationId, fileName, fileId, providerFileId } = req.body;
+  const { chatId, s3Uri, objectKey, durationSeconds, operationId: clientOperationId, fileName, fileId, providerFileId, executionId: clientExecutionId } = req.body;
 
   // Validate required fields - either Yandex (s3Uri) or Unica (providerFileId)
   if (!chatId) {
@@ -828,20 +864,56 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
         elapsed: Date.now() - startTime,
       }, '[START-TRANSCRIBE-UNICA] Recognition started successfully');
 
-      // Create ASR execution log
+      // Update or create ASR execution log
       try {
-        await asrExecutionLogService.create({
-          operationId: unicaOperationId,
-          chatId,
-          userId: user.id,
-          workspaceId,
-          skillId: skill.id,
-          asrProviderId: asrProvider.provider.id,
-          filePath: providerFileId,
-          status: 'processing',
-        });
+        if (clientExecutionId) {
+          // Update existing execution record from pre-upload
+          await asrExecutionLogService.addEvent(
+            clientExecutionId,
+            {
+              stage: 'asr_request_sent',
+              details: {
+                unicaOperationId,
+                taskId,
+                asrProviderId: asrProvider.provider.id,
+                providerFileId,
+                fileId,
+                elapsed: Date.now() - startTime,
+              },
+            },
+            'processing',
+          );
+          logger.info({ executionId: clientExecutionId, unicaOperationId }, '[START-TRANSCRIBE-UNICA] ASR execution log updated');
+        } else {
+          // Create new execution record (fallback for old clients)
+          await asrExecutionLogService.createExecution({
+            workspaceId,
+            chatId,
+            skillId: skill.id,
+            provider: 'unica',
+            mode: 'standard',
+            status: 'processing',
+            fileName: fileName || 'audio',
+            startedAt: new Date(),
+            pipelineEvents: [
+              {
+                id: crypto.randomUUID(),
+                timestamp: new Date().toISOString(),
+                stage: 'asr_request_sent',
+                details: {
+                  unicaOperationId,
+                  taskId,
+                  asrProviderId: asrProvider.provider.id,
+                  providerFileId,
+                  fileId,
+                } as any,
+              },
+            ],
+          });
+          logger.info({ unicaOperationId }, '[START-TRANSCRIBE-UNICA] ASR execution log created');
+        }
       } catch (logError) {
-        logger.warn({ error: logError, operationId: unicaOperationId }, '[START-TRANSCRIBE-UNICA] Failed to create execution log');
+        logger.warn({ error: logError, operationId: unicaOperationId }, '[START-TRANSCRIBE-UNICA] Failed to update/create execution log');
       }
 
       // Create BotAction to show processing indicator

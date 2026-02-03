@@ -85,6 +85,8 @@ type FormValues = {
   topP: string;
   presencePenalty: string;
   frequencyPenalty: string;
+  /** Для Unica: JSON с дополнительными полями тела запроса (workspace_id, top_k, seed и т.д.) */
+  additionalBodyFieldsJson: string;
 };
 
 const emptyFormValues: FormValues = {
@@ -107,6 +109,7 @@ const emptyFormValues: FormValues = {
   topP: "",
   presencePenalty: "",
   frequencyPenalty: "",
+  additionalBodyFieldsJson: "",
 };
 
 const gigachatModelOptions: FormValues["availableModels"] = [
@@ -188,6 +191,7 @@ const llmTemplates: Partial<Record<FormValues["providerType"], LlmTemplateFactor
       : "1024",
     topP: "100",
     allowSelfSignedCertificate: false,
+    additionalBodyFieldsJson: '{\n  "workspace_id": "GENERAL"\n}',
   }),
 };
 
@@ -275,6 +279,10 @@ const mapProviderToFormValues = (provider: PublicLlmProvider): FormValues => {
     topP: toStringOrEmpty(requestConfig.topP),
     presencePenalty: toStringOrEmpty(requestConfig.presencePenalty),
     frequencyPenalty: toStringOrEmpty(requestConfig.frequencyPenalty),
+    additionalBodyFieldsJson:
+      typeof requestConfig.additionalBodyFields === "object" && requestConfig.additionalBodyFields !== null
+        ? JSON.stringify(requestConfig.additionalBodyFields, null, 2)
+        : "{}",
   } satisfies FormValues;
 };
 
@@ -521,17 +529,33 @@ export default function LlmProvidersPage() {
       !selectedProvider?.hasAuthorizationKey &&
       trimmedAuthorizationKey.length === 0;
 
-    // Для unica провайдера workspace_id хранится в additionalBodyFields
+    // Для unica провайдера расширенные параметры (workspace_id, top_k, seed и т.д.) в additionalBodyFields
     const additionalBodyFields: Record<string, string | number | boolean | any[] | Record<string, any> | null> = {};
     if (values.providerType === "unica") {
-      // Получаем workspace_id из существующего провайдера или используем дефолт
       const existingRequestConfig = selectedProvider?.requestConfig;
       const existingAdditionalFields =
         existingRequestConfig && typeof existingRequestConfig === "object"
           ? (existingRequestConfig as { additionalBodyFields?: Record<string, unknown> }).additionalBodyFields
           : undefined;
-      additionalBodyFields.workspace_id =
-        (existingAdditionalFields?.workspace_id as string | undefined) ?? "GENERAL";
+      const defaultWorkspaceId = (existingAdditionalFields?.workspace_id as string | undefined) ?? "GENERAL";
+      const jsonTrimmed = values.additionalBodyFieldsJson?.trim();
+      if (jsonTrimmed) {
+        try {
+          const parsed = JSON.parse(jsonTrimmed) as Record<string, unknown>;
+          if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+            Object.assign(additionalBodyFields, parsed);
+          }
+        } catch {
+          // при ошибке парсинга используем только workspace_id из существующего
+        }
+      }
+      if (
+        !("workspace_id" in additionalBodyFields) ||
+        additionalBodyFields.workspace_id === undefined ||
+        additionalBodyFields.workspace_id === null
+      ) {
+        additionalBodyFields.workspace_id = defaultWorkspaceId;
+      }
     }
 
     const sharedFields = {
@@ -664,6 +688,7 @@ export default function LlmProvidersPage() {
       "topP",
       "presencePenalty",
       "frequencyPenalty",
+      "additionalBodyFieldsJson",
       "name",
       "description",
       "isActive",
@@ -1675,6 +1700,25 @@ export default function LlmProvidersPage() {
                           </FormItem>
                         )}
                       />
+
+                      {isUnicaProvider && (
+                        <FormField
+                          control={form.control}
+                          name="additionalBodyFieldsJson"
+                          render={({ field }) => (
+                            <FormItem className="md:col-span-2">
+                              <FormLabel>Расширенные параметры запроса (JSON)</FormLabel>
+                              <FormControl>
+                                <Textarea {...field} rows={6} placeholder='{"workspace_id": "GENERAL", "top_k": 40}' />
+                              </FormControl>
+                              <FormDescription>
+                                Дополнительные поля тела запроса к Unica AI (workspace_id обязателен). Пример: top_k, seed, repeat_penalty, format и т.д.
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
                     </div>
 
                     <FormField

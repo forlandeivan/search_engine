@@ -1,0 +1,8 @@
+{
+  "workspace_id": "GENERAL",
+  "temperature": 0.25,
+  "top_p": 0.85,
+  "top_k": 50,
+  "repeat_penalty": 1.12,
+  "max_tokens": 6144
+}

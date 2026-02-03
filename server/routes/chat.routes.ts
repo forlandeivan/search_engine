@@ -991,6 +991,10 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
+      const flushHeaders = (res as Response & { flushHeaders?: () => void }).flushHeaders;
+      if (typeof flushHeaders === 'function') {
+        flushHeaders.call(res);
+      }
 
       // Send user message info so client can sync createdAt (fixes client/server clock skew)
       if (userMessageRecord) {
