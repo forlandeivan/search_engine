@@ -1,4 +1,5 @@
 import { log } from "./vite";
+import https from "https";
 import type { UnicaAsrConfig } from "../shared/schema";
 
 export function normalizeUnicaApiBaseUrl(baseUrl: string): string {
@@ -150,10 +151,13 @@ export class UnicaAsrError extends Error {
   }
 }
 
-// Retry механизм для fetch
+// HTTPS Agent для игнорирования SSL ошибок
+const insecureAgent = new https.Agent({ rejectUnauthorized: false });
+
+// Retry механизм для fetch с поддержкой skipSslVerify
 async function fetchWithRetry(
   url: string,
-  options: RequestInit,
+  options: RequestInit & { agent?: https.Agent },
   maxRetries: number = 3,
   delayMs: number = 1000
 ): Promise<Response> {
@@ -161,7 +165,7 @@ async function fetchWithRetry(
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const response = await fetch(url, options);
+      const response = await fetch(url, options as RequestInit);
       if (response.ok || response.status < 500) {
         return response;
       }
@@ -230,6 +234,9 @@ export class UnicaAsrService {
     log("[UnicaASR] POST", url);
     log("[UnicaASR] Request body:", JSON.stringify(bodies.json, null, 2));
 
+    // Используем insecureAgent если skipSslVerify включен
+    const agent = config.skipSslVerify ? insecureAgent : undefined;
+
     const jsonResponse = await fetchWithRetry(url, {
       method: "POST",
       headers: {
@@ -237,7 +244,8 @@ export class UnicaAsrService {
         Accept: "application/json",
       },
       body: JSON.stringify(bodies.json),
-    });
+      agent,
+    } as RequestInit & { agent?: https.Agent });
 
     log("[UnicaASR] Response status:", jsonResponse.status, jsonResponse.statusText);
 
@@ -258,7 +266,8 @@ export class UnicaAsrService {
             Accept: "application/json",
           },
           body: bodies.form.toString(),
-        });
+          agent,
+        } as RequestInit & { agent?: https.Agent });
 
         log("[UnicaASR] Form retry response status:", response.status, response.statusText);
         if (!response.ok) {
@@ -311,7 +320,8 @@ export class UnicaAsrService {
     log("[UnicaASR] Task ID:", taskId);
     log("[UnicaASR] GET", url);
 
-    const response = await fetchWithRetry(url, { method: "GET", headers: { Accept: "application/json" } });
+    const agent = config.skipSslVerify ? insecureAgent : undefined;
+    const response = await fetchWithRetry(url, { method: "GET", headers: { Accept: "application/json" }, agent } as RequestInit & { agent?: https.Agent });
 
     log("[UnicaASR] Response status:", response.status, response.statusText);
 
@@ -345,7 +355,8 @@ export class UnicaAsrService {
     log("[UnicaASR] Version:", version);
     log("[UnicaASR] GET", url);
 
-    const response = await fetchWithRetry(url, { method: "GET", headers: { Accept: "application/json" } });
+    const agent = config.skipSslVerify ? insecureAgent : undefined;
+    const response = await fetchWithRetry(url, { method: "GET", headers: { Accept: "application/json" }, agent } as RequestInit & { agent?: https.Agent });
 
     log("[UnicaASR] Response status:", response.status, response.statusText);
 

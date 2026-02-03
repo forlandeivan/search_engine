@@ -1,6 +1,7 @@
 import fetch, { type BodyInit, type Response } from "node-fetch";
 import FormData from "form-data";
 import { randomUUID } from "crypto";
+import https from "https";
 import { createLogger } from "./lib/logger";
 import { buildPathFromTemplate } from "./file-storage-path";
 
@@ -21,6 +22,7 @@ export type ProviderClientOptions = {
     responseFileIdPath?: string;
     defaultTimeoutMs?: number | null;
     bucket?: string | null;
+    skipSslVerify?: boolean;
   };
 };
 
@@ -116,6 +118,8 @@ export class FileStorageProviderClient {
   private readonly metadataFieldName: string | null;
   private readonly responseFileIdPath: string;
   private readonly bucket: string | null;
+  private readonly skipSslVerify: boolean;
+  private readonly httpsAgent: https.Agent | undefined;
 
   // Future extension point: signed download link
   async getDownloadLink(
@@ -144,6 +148,11 @@ export class FileStorageProviderClient {
     this.responseFileIdPath = cfg.responseFileIdPath ?? "fileUri";
     this.defaultTimeoutMs = cfg.defaultTimeoutMs ?? options.defaultTimeoutMs ?? 15_000;
     this.bucket = cfg.bucket ?? null;
+    this.skipSslVerify = cfg.skipSslVerify ?? false;
+    // Создаём HTTPS Agent с отключенной проверкой сертификата, если указано skipSslVerify
+    this.httpsAgent = this.skipSslVerify
+      ? new https.Agent({ rejectUnauthorized: false })
+      : undefined;
   }
 
   private buildUrl(input: FileUploadInput): string {
@@ -238,6 +247,7 @@ export class FileStorageProviderClient {
           headers,
           body: form as unknown as BodyInit,
           signal: timeoutSignal,
+          agent: this.httpsAgent,
         });
       } catch (error: unknown) {
         const errorObj = error as { name?: string; message?: string };

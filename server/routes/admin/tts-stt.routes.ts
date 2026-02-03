@@ -320,6 +320,7 @@ const createUnicaAsrProviderSchema = z.object({
     pollingIntervalMs: z.number().min(1000).max(60000).optional(),
     timeoutMs: z.number().min(60000).max(7200000).optional(),
     fileStorageProviderId: z.string().min(1).optional(),
+    skipSslVerify: z.boolean().optional().default(true), // По умолчанию включено для новых провайдеров
   }),
 });
 
@@ -366,6 +367,7 @@ const updateAsrProviderSchema = z.object({
     pollingIntervalMs: z.number().min(1000).max(60000).optional(),
     timeoutMs: z.number().min(60000).max(7200000).optional(),
     fileStorageProviderId: z.string().min(1).nullable().optional(),
+    skipSslVerify: z.boolean().optional(),
   }).optional(),
 });
 

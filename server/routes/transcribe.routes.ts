@@ -565,6 +565,117 @@ transcribeRouter.post('/upload', upload.single('audio'), asyncHandler(async (req
         logger.warn({ err: e, chatId, skillId: skill.id }, "[UPLOAD-ONLY] Failed to resolve ASR provider; skipping preupload");
       }
 
+      // Handle Unica ASR pre-upload
+      if (asrType === "unica") {
+        logger.info(
+          { chatId, skillId: skill.id, asrProviderId, asrType },
+          "[UPLOAD-ONLY] Starting Unica pre-upload to file provider",
+        );
+
+        const asrProvider = await speechProviderService.getAsrProviderForSkill(skill.id);
+        if (!asrProvider) {
+          return res.status(400).json({
+            message: 'ASR провайдер не настроен для этого навыка',
+            code: 'ASR_PROVIDER_REQUIRED',
+          });
+        }
+
+        const config = asrProvider.config as unknown as UnicaAsrConfig;
+        const fileProviderFromSkill =
+          skill.noCodeConnection?.effectiveFileStorageProvider?.id ??
+          skill.noCodeConnection?.fileStorageProviderId ??
+          null;
+        const fileProviderFromAsrConfig = config.fileStorageProviderId ?? null;
+        const fileProviderId = fileProviderFromSkill ?? fileProviderFromAsrConfig ?? null;
+
+        if (!fileProviderId) {
+          return res.status(400).json({
+            message: 'Для Unica ASR необходимо настроить файловый провайдер',
+            code: 'FILE_PROVIDER_REQUIRED',
+          });
+        }
+
+        try {
+          // Create file record in DB
+          const audioFile = await storage.createFile({
+            workspaceId,
+            name: file.originalname || 'audio.wav',
+            kind: 'audio',
+            sizeBytes: BigInt(file.size),
+            mimeType: file.mimetype || 'audio/wav',
+            status: 'uploading',
+            storageType: 'external_provider',
+            providerId: fileProviderId,
+            skillId: skill.id,
+            chatId,
+            userId: user.id,
+            metadata: {
+              originalName: file.originalname,
+              uploadedAt: new Date().toISOString(),
+              preUpload: true,
+            },
+          });
+
+          logger.info({ fileId: audioFile.id, fileProviderId }, "[UPLOAD-ONLY-UNICA] File record created, uploading to provider");
+
+          // Upload to file provider
+          const uploadedFile = await uploadFileToProvider({
+            fileId: audioFile.id,
+            providerId: fileProviderId,
+            data: file.buffer,
+            fileName: file.originalname || 'audio.wav',
+            mimeType: file.mimetype || 'audio/wav',
+            sizeBytes: file.size,
+            context: {
+              workspaceId,
+              skillId: skill.id,
+              chatId,
+              userId: user.id,
+            },
+          });
+
+          const providerFileId = uploadedFile.providerFileId;
+          if (!providerFileId) {
+            logger.error({ uploadedFile }, "[UPLOAD-ONLY-UNICA] Provider did not return file path");
+            throw new Error('Provider did not return file path');
+          }
+
+          logger.info({
+            chatId,
+            fileId: audioFile.id,
+            providerFileId,
+            elapsed: Date.now() - startTime,
+          }, '[UPLOAD-ONLY-UNICA] File pre-uploaded successfully');
+
+          return res.json({
+            status: 'uploaded',
+            fileId: audioFile.id,
+            providerFileId,
+            fileName: file.originalname,
+            asrType: 'unica',
+            asrProviderId,
+            message: 'Файл загружен. Нажмите "Отправить" для начала транскрибации.',
+          });
+        } catch (error) {
+          logger.error({
+            error,
+            chatId,
+            elapsed: Date.now() - startTime,
+          }, '[UPLOAD-ONLY-UNICA] Pre-upload failed');
+
+          if (error instanceof FileUploadToProviderError) {
+            return res.status(error.status).json({
+              message: error.message,
+              code: 'FILE_UPLOAD_ERROR',
+              details: error.details,
+            });
+          }
+
+          throw error;
+        }
+      }
+
+      // Skip preupload for other non-yandex ASR providers
       if (asrType && asrType !== "yandex") {
         logger.info(
           { chatId, skillId: skill.id, asrProviderId, asrType },
@@ -650,10 +761,14 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
-  const { chatId, s3Uri, objectKey, durationSeconds, operationId: clientOperationId, fileName } = req.body;
+  const { chatId, s3Uri, objectKey, durationSeconds, operationId: clientOperationId, fileName, fileId, providerFileId } = req.body;
 
-  if (!chatId || !s3Uri) {
-    return res.status(400).json({ message: 'chatId и s3Uri обязательны' });
+  // Validate required fields - either Yandex (s3Uri) or Unica (providerFileId)
+  if (!chatId) {
+    return res.status(400).json({ message: 'chatId обязателен' });
+  }
+  if (!s3Uri && !providerFileId) {
+    return res.status(400).json({ message: 'Необходим s3Uri (Yandex) или providerFileId (Unica)' });
   }
 
   const operationId = clientOperationId || `asr-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -662,6 +777,8 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
     operationId,
     chatId,
     s3Uri,
+    providerFileId,
+    fileId,
     durationSeconds,
     userId: user.id,
   }, '[START-TRANSCRIBE] Starting transcription for pre-uploaded file');
@@ -673,24 +790,125 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
 
   const workspaceId = chat.workspaceId;
 
-  // Guard: /start is only valid for Yandex upload-only flow.
+  // Determine ASR provider type
+  let asrProvider = null;
+  let asrType: string | null = null;
   if (chat.skillId) {
     const skill = await getSkillById(workspaceId, chat.skillId);
     if (skill) {
       try {
-        const asrProvider = await speechProviderService.getAsrProviderForSkill(skill.id);
-        const asrType = asrProvider ? speechProviderService.getAsrProviderType(asrProvider.provider) : null;
-        if (asrType && asrType !== "yandex") {
-          logger.warn({ chatId, skillId: skill.id, asrType }, "[START-TRANSCRIBE] Called for non-yandex ASR provider");
-          return res.status(400).json({
-            message: "Upload-only start is supported only for Yandex STT. Please use standard transcribe endpoint.",
-            code: "UPLOAD_ONLY_NOT_SUPPORTED",
-          });
-        }
+        asrProvider = await speechProviderService.getAsrProviderForSkill(skill.id);
+        asrType = asrProvider ? speechProviderService.getAsrProviderType(asrProvider.provider) : null;
       } catch (e) {
         logger.warn({ err: e, chatId, skillId: skill.id }, "[START-TRANSCRIBE] Failed to resolve ASR provider");
       }
     }
+  }
+
+  // Handle Unica ASR start
+  if (asrType === "unica" && providerFileId && asrProvider) {
+    logger.info({ chatId, providerFileId, fileId }, "[START-TRANSCRIBE-UNICA] Starting Unica ASR recognition");
+
+    const skill = await getSkillById(workspaceId, chat.skillId!);
+    if (!skill) {
+      return res.status(404).json({ message: 'Навык не найден' });
+    }
+
+    const config = asrProvider.config as unknown as UnicaAsrConfig;
+
+    try {
+      const { taskId, operationId: unicaOperationId } = await unicaAsrService.startRecognition(
+        providerFileId,
+        config
+      );
+
+      logger.info({
+        taskId,
+        operationId: unicaOperationId,
+        elapsed: Date.now() - startTime,
+      }, '[START-TRANSCRIBE-UNICA] Recognition started successfully');
+
+      // Create ASR execution log
+      try {
+        await asrExecutionLogService.create({
+          operationId: unicaOperationId,
+          chatId,
+          userId: user.id,
+          workspaceId,
+          skillId: skill.id,
+          asrProviderId: asrProvider.provider.id,
+          filePath: providerFileId,
+          status: 'processing',
+        });
+      } catch (logError) {
+        logger.warn({ error: logError, operationId: unicaOperationId }, '[START-TRANSCRIBE-UNICA] Failed to create execution log');
+      }
+
+      // Create BotAction to show processing indicator
+      try {
+        await upsertBotActionForChat({
+          workspaceId,
+          chatId,
+          actionId: `transcribe-${unicaOperationId}`,
+          actionType: 'transcribe_audio',
+          status: 'processing',
+          displayText: `Распознаём речь: ${fileName || 'audio'}`,
+          userId: user.id,
+        });
+      } catch (botActionError) {
+        logger.warn({ error: botActionError, operationId: unicaOperationId }, '[START-TRANSCRIBE-UNICA] Failed to create bot action');
+      }
+
+      // Schedule chat title generation
+      scheduleChatTitleGenerationIfNeeded({
+        chatId,
+        workspaceId,
+        userId: user.id,
+        messageText: fileName || 'audio',
+        messageMetadata: { type: 'audio', fileName: fileName || 'audio' },
+        chatTitle: chat.title,
+      });
+
+      return res.json({
+        status: 'started',
+        operationId: unicaOperationId,
+        taskId,
+        message: 'Транскрибация началась',
+      });
+    } catch (error) {
+      logger.error({
+        error,
+        chatId,
+        providerFileId,
+        elapsed: Date.now() - startTime,
+      }, '[START-TRANSCRIBE-UNICA] Failed to start recognition');
+
+      if (error instanceof UnicaAsrError) {
+        return res.status(error.statusCode || 500).json({
+          message: error.message,
+          code: error.code,
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  // Guard: Yandex flow requires s3Uri
+  if (!s3Uri) {
+    return res.status(400).json({ 
+      message: 'Для Yandex STT необходим s3Uri',
+      code: 'S3_URI_REQUIRED',
+    });
+  }
+
+  // Guard: Only Yandex is supported for s3Uri flow
+  if (asrType && asrType !== "yandex" && asrType !== "unica") {
+    logger.warn({ chatId, asrType }, "[START-TRANSCRIBE] Called for unsupported ASR provider");
+    return res.status(400).json({
+      message: "Upload-only start is supported only for Yandex STT and Unica ASR.",
+      code: "UPLOAD_ONLY_NOT_SUPPORTED",
+    });
   }
 
   try {

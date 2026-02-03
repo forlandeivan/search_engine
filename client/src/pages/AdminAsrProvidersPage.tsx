@@ -32,6 +32,7 @@ type AsrProvider = {
     pollingIntervalMs?: number;
     timeoutMs?: number;
     fileStorageProviderId?: string | null;
+    skipSslVerify?: boolean;
   };
   createdAt: string;
   updatedAt: string;
@@ -51,6 +52,7 @@ export default function AdminAsrProvidersPage() {
     pollingIntervalMs: 5000,
     timeoutMs: 3600000,
     fileStorageProviderId: "",
+    skipSslVerify: true, // По умолчанию включено для новых провайдеров
   });
 
   const { data: providers, isLoading } = useQuery({
@@ -84,6 +86,7 @@ export default function AdminAsrProvidersPage() {
           pollingIntervalMs: data.pollingIntervalMs,
           timeoutMs: data.timeoutMs,
           fileStorageProviderId: data.fileStorageProviderId?.trim() ? data.fileStorageProviderId.trim() : undefined,
+          skipSslVerify: data.skipSslVerify,
         },
       });
       return response.json();
@@ -98,6 +101,7 @@ export default function AdminAsrProvidersPage() {
         pollingIntervalMs: 5000,
         timeoutMs: 3600000,
         fileStorageProviderId: "",
+        skipSslVerify: true,
       });
       toast({
         title: "Провайдер создан",
@@ -382,6 +386,19 @@ export default function AdminAsrProvidersPage() {
                 Используется как fallback, если в навыке/воркспейсе не выбран файловый провайдер.
               </p>
             </div>
+            <div className="flex items-center gap-3 pt-2">
+              <Switch
+                id="skipSslVerify"
+                checked={newProvider.skipSslVerify}
+                onCheckedChange={(checked) => setNewProvider({ ...newProvider, skipSslVerify: checked })}
+              />
+              <div className="grid gap-0.5">
+                <Label htmlFor="skipSslVerify">Игнорировать ошибки SSL</Label>
+                <p className="text-xs text-muted-foreground">
+                  Отключает проверку SSL сертификата. Используйте для серверов с самоподписанными сертификатами.
+                </p>
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
@@ -497,6 +514,24 @@ export default function AdminAsrProvidersPage() {
                 <p className="text-sm text-muted-foreground">
                   Используется как fallback, если в навыке/воркспейсе не выбран файловый провайдер.
                 </p>
+              </div>
+              <div className="flex items-center gap-3 pt-2">
+                <Switch
+                  id="editSkipSslVerify"
+                  checked={editingProvider.config.skipSslVerify ?? false}
+                  onCheckedChange={(checked) =>
+                    setEditingProvider({
+                      ...editingProvider,
+                      config: { ...editingProvider.config, skipSslVerify: checked },
+                    })
+                  }
+                />
+                <div className="grid gap-0.5">
+                  <Label htmlFor="editSkipSslVerify">Игнорировать ошибки SSL</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Отключает проверку SSL сертификата. Используйте для серверов с самоподписанными сертификатами.
+                  </p>
+                </div>
               </div>
             </div>
             <DialogFooter>

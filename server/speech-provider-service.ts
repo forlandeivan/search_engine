@@ -45,6 +45,7 @@ export const unicaAsrConfigSchema = z.object({
   pollingIntervalMs: z.number().min(1000).max(60000).optional().default(5000),
   timeoutMs: z.number().min(60000).max(7200000).optional().default(3600000), // 60 минут по умолчанию, макс 2 часа
   fileStorageProviderId: z.string().min(1).optional(),
+  skipSslVerify: z.boolean().optional().default(true), // По умолчанию отключаем проверку SSL для новых провайдеров
 });
 
 export type SpeechProviderSummary = Pick<

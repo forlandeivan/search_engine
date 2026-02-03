@@ -57,6 +57,7 @@ type ProviderFormState = {
   responseFileIdPath: string;
   defaultTimeoutMs: string;
   bucket: string;
+  skipSslVerify: boolean;
 };
 
 const defaultState: ProviderFormState = {
@@ -72,6 +73,7 @@ const defaultState: ProviderFormState = {
   responseFileIdPath: "fileUri",
   defaultTimeoutMs: "15000",
   bucket: "",
+  skipSslVerify: true, // По умолчанию включено для новых провайдеров
 };
 
 interface Props {
@@ -118,6 +120,7 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
             ? String(provider.config.defaultTimeoutMs)
             : defaultState.defaultTimeoutMs,
         bucket: provider.config?.bucket ?? defaultState.bucket,
+        skipSslVerify: provider.config?.skipSslVerify ?? false, // Для существующих провайдеров по умолчанию false
       });
     }
   }, [provider]);
@@ -161,6 +164,7 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
           responseFileIdPath: form.responseFileIdPath.trim(),
           defaultTimeoutMs: timeoutValue,
           bucket: form.bucket.trim() === "" ? null : form.bucket.trim(),
+          skipSslVerify: form.skipSslVerify,
         },
       };
       if (isCreate) {
@@ -438,6 +442,20 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
         <div className="flex items-center gap-3">
           <Switch checked={form.isActive} onCheckedChange={(value) => handleChange("isActive", value)} id="isActive" />
           <Label htmlFor="isActive">Активен</Label>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Switch
+            checked={form.skipSslVerify}
+            onCheckedChange={(value) => handleChange("skipSslVerify", value)}
+            id="skipSslVerify"
+          />
+          <div className="grid gap-0.5">
+            <Label htmlFor="skipSslVerify">Игнорировать ошибки SSL</Label>
+            <p className="text-xs text-muted-foreground">
+              Отключает проверку SSL сертификата. Используйте для серверов с самоподписанными сертификатами.
+            </p>
+          </div>
         </div>
       </div>
 

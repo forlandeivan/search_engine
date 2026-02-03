@@ -29,6 +29,7 @@ const providerConfigSchema = z
     responseFileIdPath: z.string().trim().min(1, "responseFileIdPath is required").max(200).optional(),
     defaultTimeoutMs: z.number().int().min(0).max(600_000).optional(), // 0 — без таймаута, до 10 минут
     bucket: z.string().trim().max(200).nullable().optional(),
+    skipSslVerify: z.boolean().optional(), // Отключить проверку SSL сертификата
   })
   .optional();
 
@@ -74,6 +75,7 @@ export const defaultProviderConfig = {
   responseFileIdPath: "fileUri",
   defaultTimeoutMs: 15000,
   bucket: null,
+  skipSslVerify: true, // По умолчанию отключаем проверку SSL для новых провайдеров
 } as const;
 
 export function normalizeFileProviderConfig(input: z.infer<typeof providerConfigSchema> | undefined | null) {
@@ -95,6 +97,7 @@ export function normalizeFileProviderConfig(input: z.infer<typeof providerConfig
     responseFileIdPath: cfg.responseFileIdPath ?? defaultProviderConfig.responseFileIdPath,
     defaultTimeoutMs: hasTimeout ? cfg.defaultTimeoutMs : defaultProviderConfig.defaultTimeoutMs,
     bucket: cfg.bucket ?? defaultProviderConfig.bucket,
+    skipSslVerify: cfg.skipSslVerify ?? defaultProviderConfig.skipSslVerify,
   };
 }
 

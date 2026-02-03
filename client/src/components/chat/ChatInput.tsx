@@ -172,14 +172,18 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     category: FileCategory;
   } | null>(null);
   const [pendingTranscribe, setPendingTranscribe] = useState<TranscribePayload | null>(null);
-  // Pre-uploaded file info (uploaded to S3, waiting for user to press Send)
+  // Pre-uploaded file info (uploaded to S3/provider, waiting for user to press Send)
   const [preUploadedFile, setPreUploadedFile] = useState<{
     fileName: string;
-    s3Uri: string;
-    objectKey: string;
-    bucketName: string;
-    durationSeconds: number | null;
     chatId: string;
+    durationSeconds: number | null;
+    // Yandex S3:
+    s3Uri?: string;
+    objectKey?: string;
+    bucketName?: string;
+    // Unica file provider:
+    fileId?: string;
+    providerFileId?: string;
   } | null>(null);
   const attachInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -502,15 +506,16 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
           return true;
         }
 
-        // For some ASR providers (e.g. Unica) we intentionally skip pre-upload
+        // For some ASR providers we intentionally skip pre-upload
         // and do upload+start in a single call on Send.
         if (result.status === "skip_preupload") {
           console.log("[ChatInput] Pre-upload skipped by server, will use handleUploadAudio on send", result);
           return true;
         }
 
+        // Yandex: file pre-uploaded to S3
         if (result.status === "uploaded" && result.s3Uri) {
-          console.log("[ChatInput] File pre-uploaded to S3", {
+          console.log("[ChatInput] File pre-uploaded to S3 (Yandex)", {
             s3Uri: result.s3Uri,
             objectKey: result.objectKey,
             durationSeconds: result.durationSeconds,
@@ -522,6 +527,23 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
             objectKey: result.objectKey,
             bucketName: result.bucketName,
             durationSeconds: result.durationSeconds ?? null,
+            chatId: targetChatId,
+          });
+          return true;
+        }
+
+        // Unica: file pre-uploaded to file provider
+        if (result.status === "uploaded" && result.providerFileId) {
+          console.log("[ChatInput] File pre-uploaded to provider (Unica)", {
+            fileId: result.fileId,
+            providerFileId: result.providerFileId,
+          });
+          
+          setPreUploadedFile({
+            fileName: file.name,
+            fileId: result.fileId,
+            providerFileId: result.providerFileId,
+            durationSeconds: null,
             chatId: targetChatId,
           });
           return true;
@@ -568,8 +590,13 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
           },
           body: JSON.stringify({
             chatId: preUploadedFile.chatId,
+            // Yandex S3:
             s3Uri: preUploadedFile.s3Uri,
             objectKey: preUploadedFile.objectKey,
+            // Unica file provider:
+            fileId: preUploadedFile.fileId,
+            providerFileId: preUploadedFile.providerFileId,
+            // Common:
             durationSeconds: preUploadedFile.durationSeconds,
             operationId,
             fileName: preUploadedFile.fileName,
