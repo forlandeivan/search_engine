@@ -169,41 +169,68 @@ async function requestTitleFromUnicaChat(
   const accessToken = await fetchAccessToken(provider);
   const messagesField = requestConfig.messagesField;
   const modelField = requestConfig.modelField;
+  const effectiveModel = modelOverride && modelOverride.trim().length > 0 ? modelOverride.trim() : provider.model;
 
-  const messages: Array<{ role: string; content: string }> = [
-    { role: "system", content: TITLE_SYSTEM_PROMPT },
-    {
-      role: "user",
-      content: `Сообщение пользователя:\n"""${snippet}"""\n\nПридумай название (до ${CHAT_TITLE_MAX_WORDS} слов).`,
-    },
-  ];
+  let body: Record<string, unknown>;
 
-  const body: Record<string, unknown> = {
-    [modelField]: modelOverride && modelOverride.trim().length > 0 ? modelOverride.trim() : provider.model,
-    [messagesField]: messages,
-    temperature: CHAT_TITLE_GENERATION_TEMPERATURE,
-  };
+  if (provider.providerType === "unica") {
+    // Специальный формат для Unica AI: {system, prompt}
+    body = {
+      model: effectiveModel,
+      system: TITLE_SYSTEM_PROMPT,
+      prompt: `Сообщение пользователя:\n"""${snippet}"""\n\nПридумай название (до ${CHAT_TITLE_MAX_WORDS} слов).`,
+      temperature: CHAT_TITLE_GENERATION_TEMPERATURE,
+    };
 
-  if (requestConfig.maxTokens !== undefined) {
-    body.max_tokens = requestConfig.maxTokens;
-  }
-  if (requestConfig.topP !== undefined) {
-    body.top_p = requestConfig.topP;
-  }
-  if (requestConfig.presencePenalty !== undefined) {
-    body.presence_penalty = requestConfig.presencePenalty;
-  }
-  if (requestConfig.frequencyPenalty !== undefined) {
-    body.frequency_penalty = requestConfig.frequencyPenalty;
-  }
-
-  const additionalFields = requestConfig.additionalBodyFields ?? {};
-  for (const [key, value] of Object.entries(additionalFields)) {
-    if (key === "stream") {
-      continue;
+    // Добавляем workspace_id из additionalBodyFields (обязателен для Unica AI)
+    const additionalFields = requestConfig.additionalBodyFields ?? {};
+    if (typeof additionalFields.workspace_id === "string") {
+      body.workspace_id = additionalFields.workspace_id;
     }
-    if (body[key] === undefined) {
-      body[key] = value;
+
+    // Добавляем остальные поля, кроме stream (Unica AI всегда стримит)
+    for (const [key, value] of Object.entries(additionalFields)) {
+      if (key !== "workspace_id" && key !== "stream" && body[key] === undefined) {
+        body[key] = value;
+      }
+    }
+  } else {
+    // Стандартный формат: {model, messages}
+    const messages: Array<{ role: string; content: string }> = [
+      { role: "system", content: TITLE_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: `Сообщение пользователя:\n"""${snippet}"""\n\nПридумай название (до ${CHAT_TITLE_MAX_WORDS} слов).`,
+      },
+    ];
+
+    body = {
+      [modelField]: effectiveModel,
+      [messagesField]: messages,
+      temperature: CHAT_TITLE_GENERATION_TEMPERATURE,
+    };
+
+    if (requestConfig.maxTokens !== undefined) {
+      body.max_tokens = requestConfig.maxTokens;
+    }
+    if (requestConfig.topP !== undefined) {
+      body.top_p = requestConfig.topP;
+    }
+    if (requestConfig.presencePenalty !== undefined) {
+      body.presence_penalty = requestConfig.presencePenalty;
+    }
+    if (requestConfig.frequencyPenalty !== undefined) {
+      body.frequency_penalty = requestConfig.frequencyPenalty;
+    }
+
+    const additionalFields = requestConfig.additionalBodyFields ?? {};
+    for (const [key, value] of Object.entries(additionalFields)) {
+      if (key === "stream") {
+        continue;
+      }
+      if (body[key] === undefined) {
+        body[key] = value;
+      }
     }
   }
 

@@ -602,8 +602,10 @@ async function executeUnicaCompletion(
   headers.set("Content-Type", "application/json");
   headers.set("Accept", "text/event-stream");
 
-  // Для Unica AI аутентификация не требуется
-  // accessToken будет пустой строкой, так как у провайдера нет tokenUrl
+  // Передаем Authorization если есть accessToken (API-ключ)
+  if (accessToken && accessToken.trim().length > 0) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
 
   for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
     headers.set(key, value);
@@ -672,9 +674,28 @@ async function executeUnicaCompletion(
       try {
         const json = JSON.parse(payload) as Record<string, unknown>;
 
-        if (eventName === "token") {
-          // Формат: {"index":0,"delta":"текст","model":"имя"}
-          const delta = typeof json.delta === "string" ? json.delta : "";
+        // Поддержка различных форматов событий (Unica специфичный "token" или стандартный "message"/"delta")
+        if (eventName === "token" || eventName === "message" || eventName === "delta") {
+          let delta = "";
+          
+          if (typeof json.delta === "string") {
+            // Формат Unica: {"delta":"..."}
+            delta = json.delta;
+          } else if (typeof json.text === "string") {
+            // Альтернативный формат: {"text":"..."}
+            delta = json.text;
+          } else if (
+            Array.isArray(json.choices) &&
+            json.choices[0]?.delta &&
+            typeof json.choices[0].delta?.content === "string"
+          ) {
+            // OpenAI формат: {"choices":[{"delta":{"content":"..."}}]}
+            delta = json.choices[0].delta.content;
+          } else if (typeof json.content === "string") {
+            // Еще один вариант: {"content":"..."}
+            delta = json.content;
+          }
+
           if (delta) {
             aggregatedAnswer += delta;
             streamController.push({ event: "delta", data: { text: delta } });
