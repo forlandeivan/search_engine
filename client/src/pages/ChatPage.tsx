@@ -1264,7 +1264,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             </div>
           </div>
         )}
-        <div className="flex min-h-0 flex-col flex-1 overflow-hidden">
+        <div className="flex h-full min-h-0 flex-col flex-1 overflow-hidden">
           <ChatMessagesArea
               chatTitle={chatTitle}
               skillName={skillLabel}
@@ -1315,8 +1315,8 @@ export default function ChatPage({ params }: ChatPageProps) {
               onRenameChat={effectiveChatId ? async (title: string) => {
                 await renameChat({ chatId: effectiveChatId, title });
               } : undefined}
-            />
-          <div className="shrink-0">
+            >
+          <div className="shrink-0 py-2">
             <BotActionIndicatorRow action={currentBotAction} otherActiveCount={otherActiveCount > 0 ? otherActiveCount : undefined} />
           <ChatInput
             ref={chatInputRef}
@@ -1360,6 +1360,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             disableAudioTranscription={false}
           />
           </div>
+            </ChatMessagesArea>
         </div>
         {openTranscript?.id && (
           <div className="flex-1 min-w-0 overflow-hidden">

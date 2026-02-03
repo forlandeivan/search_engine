@@ -6,7 +6,9 @@ import { maintenanceModeAuditLog, type MaintenanceModeAuditLog } from "@shared/s
 export type MaintenanceAuditLogEventType =
   | "enabled"
   | "disabled"
+  | "schedule_created"
   | "schedule_updated"
+  | "schedule_deleted"
   | "message_updated";
 
 type CreateAuditLogInput = {

@@ -592,6 +592,50 @@ export const maintenanceModeSettings = pgTable("maintenance_mode_settings", {
 export type MaintenanceModeSettings = typeof maintenanceModeSettings.$inferSelect;
 export type MaintenanceModeSettingsInsert = typeof maintenanceModeSettings.$inferInsert;
 
+export const maintenanceModeSchedules = pgTable(
+  "maintenance_mode_schedules",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    scheduledStartAt: timestamp("scheduled_start_at").notNull(),
+    scheduledEndAt: timestamp("scheduled_end_at").notNull(),
+    createdByAdminId: varchar("created_by_admin_id").references(() => users.id, { onDelete: "set null" }),
+    updatedByAdminId: varchar("updated_by_admin_id").references(() => users.id, { onDelete: "set null" }),
+    messageTitle: varchar("message_title", { length: 120 }).notNull().default(""),
+    messageBody: text("message_body").notNull().default(""),
+    publicEta: text("public_eta"),
+    createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    scheduledStartIdx: index("maintenance_mode_schedules_start_idx").on(table.scheduledStartAt),
+    scheduledEndIdx: index("maintenance_mode_schedules_end_idx").on(table.scheduledEndAt),
+  }),
+);
+export type MaintenanceModeSchedule = typeof maintenanceModeSchedules.$inferSelect;
+export type MaintenanceModeScheduleInsert = typeof maintenanceModeSchedules.$inferInsert;
+
+export const maintenanceModeForceSessions = pgTable(
+  "maintenance_mode_force_sessions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    startedAt: timestamp("started_at").notNull(),
+    endedAt: timestamp("ended_at"),
+    createdByAdminId: varchar("created_by_admin_id").references(() => users.id, { onDelete: "set null" }),
+    endedByAdminId: varchar("ended_by_admin_id").references(() => users.id, { onDelete: "set null" }),
+    messageTitle: varchar("message_title", { length: 120 }).notNull().default(""),
+    messageBody: text("message_body").notNull().default(""),
+    publicEta: text("public_eta"),
+    createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    startedIdx: index("maintenance_mode_force_sessions_started_idx").on(table.startedAt),
+    endedIdx: index("maintenance_mode_force_sessions_ended_idx").on(table.endedAt),
+  }),
+);
+export type MaintenanceModeForceSession = typeof maintenanceModeForceSessions.$inferSelect;
+export type MaintenanceModeForceSessionInsert = typeof maintenanceModeForceSessions.$inferInsert;
+
 export const maintenanceModeAuditLog = pgTable(
   "maintenance_mode_audit_log",
   {

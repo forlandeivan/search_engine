@@ -497,8 +497,10 @@ function MainAppShell({ user, workspace }: { user: PublicUser; workspace: Worksp
           <div className="flex h-12 items-center px-2 md:hidden">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
           </div>
-          <main className="app-main flex-1 min-h-0 overflow-auto">
-            <MainRouter />
+          <main className="app-main flex min-h-0 flex-1 flex-col overflow-auto">
+            <div className="flex min-h-0 flex-1 flex-col">
+              <MainRouter />
+            </div>
           </main>
         </div>
       </div>
