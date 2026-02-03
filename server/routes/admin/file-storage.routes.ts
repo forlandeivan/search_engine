@@ -32,6 +32,7 @@ function mapFileStorageProvider(provider: FileStorageProvider) {
     description: provider.description ?? null,
     authType: provider.authType ?? null,
     isActive: provider.isActive,
+    config: provider.config ?? {},
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
   };
@@ -60,7 +61,7 @@ adminFileStorageRouter.get('/providers/:id', asyncHandler(async (req, res) => {
     if (!provider) {
       return res.status(404).json({ message: 'Provider not found' });
     }
-    res.json(mapFileStorageProvider(provider));
+    res.json({ provider: mapFileStorageProvider(provider) });
   } catch (error) {
     if (error instanceof FileStorageProviderServiceError) {
       return res.status(error.status).json({ message: error.message });
@@ -75,7 +76,7 @@ adminFileStorageRouter.get('/providers/:id', asyncHandler(async (req, res) => {
 adminFileStorageRouter.post('/providers', asyncHandler(async (req, res) => {
   try {
     const provider = await fileStorageProviderService.create(req.body);
-    res.status(201).json(mapFileStorageProvider(provider));
+    res.status(201).json({ provider: mapFileStorageProvider(provider) });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid provider data', details: error.issues });
@@ -93,7 +94,7 @@ adminFileStorageRouter.post('/providers', asyncHandler(async (req, res) => {
 adminFileStorageRouter.patch('/providers/:id', asyncHandler(async (req, res) => {
   try {
     const provider = await fileStorageProviderService.update(req.params.id, req.body);
-    res.json(mapFileStorageProvider(provider));
+    res.json({ provider: mapFileStorageProvider(provider) });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid provider data', details: error.issues });

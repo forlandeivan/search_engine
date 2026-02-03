@@ -104,7 +104,7 @@ export default function FileStorageProvidersPage() {
                 <TableCell>{formatDateTime(provider.updatedAt)}</TableCell>
                 <TableCell className="flex justify-end gap-2">
                   <Button size="sm" variant="outline" onClick={() => navigate(`/admin/file-storage/providers/${provider.id}`)}>
-                    Открыть
+                    Редактировать
                   </Button>
                   <Button size="icon" variant="ghost" onClick={() => handleDelete(provider)}>
                     <Trash2 className="h-4 w-4 text-destructive" />
