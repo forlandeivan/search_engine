@@ -509,10 +509,11 @@ export default function ChatPage({ params }: ChatPageProps) {
       }
       debugLog("[chat] streamMessage start", { chatId: targetChatId, workspaceId });
     const userMessage = buildLocalMessage("user", targetChatId, content);
-    // Создаём временный ассистентский bubble только если будем реально стримить дельты.
-    const assistantMessage = buildLocalMessage("assistant", targetChatId, "");
     setLocalChatId(targetChatId);
-    setLocalMessages([userMessage, assistantMessage]);
+    setLocalMessages([userMessage]);
+    
+    // Создаём assistantMessage только при первой delta (ленивая инициализация)
+    let assistantMessageCreated = false;
     setIsStreaming(true);
 
       try {
@@ -522,11 +523,23 @@ export default function ChatPage({ params }: ChatPageProps) {
           content,
           handlers: {
             onDelta: (delta) => {
-              setLocalMessages((prev) =>
-                prev.map((message) =>
-                  message.id === assistantMessage.id ? { ...message, content: `${message.content}${delta}` } : message,
-                ),
-              );
+              setLocalMessages((prev) => {
+                // Создаём assistantMessage при первой delta для плавного UX
+                if (!assistantMessageCreated) {
+                  assistantMessageCreated = true;
+                  // Добавляем 1мс к timestamp, чтобы гарантировать порядок после user
+                  const assistantTimestamp = new Date(new Date(userMessage.createdAt).getTime() + 1);
+                  const assistantMessage = buildLocalMessage("assistant", targetChatId, delta, assistantTimestamp);
+                  return [...prev, assistantMessage];
+                }
+                
+                // Обновляем существующий assistantMessage
+                return prev.map((message) =>
+                  message.role === "assistant" && message.id.startsWith("local-")
+                    ? { ...message, content: `${message.content}${delta}` }
+                    : message,
+                );
+              });
             },
             onDone: async (payload) => {
               // Извлечь citations из payload (если есть)
@@ -536,7 +549,6 @@ export default function ChatPage({ params }: ChatPageProps) {
                 : [];
 
               debugLog("[CHAT RAG] onDone payload received", {
-                messageId: assistantMessage.id,
                 hasRagPayload: !!ragPayload?.rag,
                 citationsInPayload: citations.length,
                 payloadKeys: ragPayload ? Object.keys(ragPayload) : [],
@@ -552,7 +564,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               if (citations.length > 0) {
                 setLocalMessages((prev) =>
                   prev.map((message) =>
-                    message.id === assistantMessage.id
+                    message.role === "assistant" && message.id.startsWith("local-")
                       ? {
                           ...message,
                           metadata: { ...message.metadata, citations },
@@ -561,7 +573,6 @@ export default function ChatPage({ params }: ChatPageProps) {
                   )
                 );
                 debugLog("[CHAT RAG] Updated local message with citations", { 
-                  messageId: assistantMessage.id, 
                   citationsCount: citations.length,
                   citations: citations.slice(0, 2).map((c: any) => ({
                     chunk_id: c.chunk_id,
@@ -571,14 +582,13 @@ export default function ChatPage({ params }: ChatPageProps) {
                 });
               } else {
                 debugLog("[CHAT RAG] No citations in payload", {
-                  messageId: assistantMessage.id,
                   payload: ragPayload,
                 });
               }
 
               // После завершения стрима убираем локальный ассистентский placeholder,
               // чтобы не осталось пустого bubble: сервер отдаст финальный ответ через refetch.
-              setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
+              setLocalMessages((prev) => prev.filter((m) => !(m.role === "assistant" && m.id.startsWith("local-"))));
               await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
               await queryClient.invalidateQueries({ queryKey: ["chats"] });
               debugLog("[chat] streamMessage finished", { chatId: targetChatId });
@@ -588,7 +598,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               const archiveMessage = resolveArchiveErrorMessage(error);
               setStreamError(archiveMessage ?? formatApiErrorMessage(error));
               // При ошибке тоже удаляем placeholder, чтобы не было фантома.
-              setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
+              setLocalMessages((prev) => prev.filter((m) => !(m.role === "assistant" && m.id.startsWith("local-"))));
             },
           },
         });
@@ -601,12 +611,12 @@ export default function ChatPage({ params }: ChatPageProps) {
         } else {
           setStreamError(formatApiErrorMessage(error));
         }
-        setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
+        setLocalMessages((prev) => prev.filter((m) => !(m.role === "assistant" && m.id.startsWith("local-"))));
       } finally {
         setIsStreaming(false);
       }
     },
-    [queryClient, workspaceId],
+    [queryClient, workspaceId, toast, resolveArchiveErrorMessage],
   );
 
   const handleCreateChatForSkill = useCallback(

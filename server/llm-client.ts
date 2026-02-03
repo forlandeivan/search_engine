@@ -617,6 +617,16 @@ async function executeUnicaCompletion(
     body,
   });
 
+  llmLogger.info(
+    {
+      providerId: provider.id,
+      providerType: provider.providerType,
+      url: streamUrl,
+      body: JSON.stringify(body, null, 2),
+    },
+    "[LLM REQUEST] Unica AI full request body",
+  );
+
   const streamController = createAsyncStreamController<LlmStreamEvent>();
   const streamPromise = (async () => {
     let response: FetchResponse;
@@ -776,19 +786,28 @@ async function executeUnicaCompletion(
       throw new Error(`Ошибка чтения SSE от Unica AI: ${message}`);
     }
 
-    streamController.finish();
+      streamController.finish();
 
-    return {
-      answer: aggregatedAnswer,
-      usageTokens,
-      rawResponse: rawEvents,
-      request: {
-        url: streamUrl,
-        headers: sanitizeHeadersForLog(headers),
-        body,
-      },
-    };
-  })();
+      llmLogger.info(
+        {
+          providerId: provider.id,
+          answer: aggregatedAnswer,
+          usageTokens,
+        },
+        "[LLM RESPONSE] Unica AI full response",
+      );
+
+      return {
+        answer: aggregatedAnswer,
+        usageTokens,
+        rawResponse: rawEvents,
+        request: {
+          url: streamUrl,
+          headers: sanitizeHeadersForLog(headers),
+          body,
+        },
+      };
+    })();
 
   return Object.assign(streamPromise, { streamIterator: streamController.iterator }) as LlmCompletionPromise;
 }
@@ -868,6 +887,16 @@ export function executeLlmCompletion(
         headers: sanitizeHeadersForLog(llmHeaders),
         body,
       });
+
+      llmLogger.info(
+        {
+          providerId: provider.id,
+          providerType: provider.providerType,
+          url: provider.completionUrl,
+          body: JSON.stringify(body, null, 2),
+        },
+        "[LLM REQUEST] Full request body",
+      );
 
       completionResponse = await fetchWithRetries(provider.completionUrl, requestOptions, {
         providerId: provider.id,
@@ -1076,17 +1105,17 @@ export function executeLlmCompletion(
 
       streamController?.finish();
       console.info(`[llm] provider=${provider.id} SSE stream completed`);
-      return {
-        answer: aggregatedAnswer,
-        usageTokens,
-        rawResponse: rawEvents,
-        request: {
-          url: provider.completionUrl,
-          headers: sanitizeHeadersForLog(llmHeaders),
-          body,
+
+      llmLogger.info(
+        {
+          providerId: provider.id,
+          answer: aggregatedAnswer,
+          usageTokens,
         },
-      };
-    }
+        "[LLM RESPONSE] Full streaming response",
+      );
+
+      return {
 
     const rawBodyText = await completionResponse.text();
     const parsedBody = parseJson(rawBodyText);
@@ -1138,6 +1167,15 @@ export function executeLlmCompletion(
 
     streamController?.finish();
     console.info(`[llm] provider=${provider.id} sync completion ready`);
+
+    llmLogger.info(
+      {
+        providerId: provider.id,
+        answer: answer,
+        usageTokens,
+      },
+      "[LLM RESPONSE] Full sync response",
+    );
 
     return {
       answer,

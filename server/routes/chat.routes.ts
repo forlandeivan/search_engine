@@ -755,18 +755,27 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
           res.setHeader('X-Accel-Buffering', 'no');
         }
         
-        ragResult = await callRagForSkillChat({ 
-          req, 
-          skill: context.skillConfig, 
-          workspaceId, 
-          userMessage: payload.content,
-          chatId: req.params.chatId, // Передаем chatId для получения истории
-          excludeMessageId: userMessageRecord?.id, // Исключаем текущее сообщение из истории
-          runPipeline: runKnowledgeBaseRagPipeline, 
-          stream: streamHandler
-        }) as KnowledgeBaseRagPipelineResponse;
-        
-        logger.info({
+      ragResult = await callRagForSkillChat({ 
+        req, 
+        skill: context.skillConfig, 
+        workspaceId, 
+        userMessage: payload.content,
+        chatId: req.params.chatId, // Передаем chatId для получения истории
+        excludeMessageId: userMessageRecord?.id, // Исключаем текущее сообщение из истории
+        runPipeline: runKnowledgeBaseRagPipeline, 
+        stream: streamHandler
+      }) as KnowledgeBaseRagPipelineResponse;
+
+      logger.info({
+        component: 'RAG_PIPELINE',
+        step: 'full_result',
+        chatId: req.params.chatId,
+        answer: ragResult.response.answer,
+        citations: ragResult.response.citations,
+        chunks: ragResult.response.chunks,
+      }, "[RAG PIPELINE] Full RAG result");
+      
+      logger.info({
           component: 'RAG_PIPELINE',
           step: "rag_pipeline_complete",
           chatId: req.params.chatId,
@@ -876,6 +885,14 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
     
     const requestBody = buildChatCompletionRequestBody(context, { stream: wantsStream });
     const step1Duration = performance.now() - stepStartTime;
+    
+    logger.info({
+      component: 'LLM_PIPELINE',
+      step: 'request_body_full',
+      chatId: req.params.chatId,
+      body: requestBody,
+    }, `[LLM PIPELINE] Full request body for chat=${req.params.chatId}`);
+
     logger.info({
       component: 'LLM_PIPELINE',
       step: '1_build_request_body',
