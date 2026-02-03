@@ -12,6 +12,9 @@ import {
   defaultProviderConfig,
 } from "./file-storage-provider-service";
 import { decryptSecret } from "./secret-storage";
+import { createLogger } from "./lib/logger";
+
+const logger = createLogger("file-storage-provider-upload");
 
 export class FileUploadToProviderError extends Error {
   constructor(message: string, public status: number = 500, public details?: unknown) {
@@ -70,6 +73,18 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
     providerId: params.providerId,
     status: "uploading",
   });
+
+  logger.info(
+    {
+      fileId: params.fileId,
+      providerId: params.providerId,
+      providerName: provider.name,
+      baseUrl: provider.baseUrl,
+      fileName: params.fileName ?? file.name,
+      sizeBytes: params.sizeBytes ?? Number(file.sizeBytes ?? 0),
+    },
+    "[FILE-UPLOAD] Starting upload to provider",
+  );
 
   try {
     const bearerToken =
@@ -134,12 +149,28 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
     });
 
     if (error instanceof ProviderUploadError) {
+      logger.error(
+        {
+          fileId: params.fileId,
+          providerId: params.providerId,
+          providerName: provider.name,
+          baseUrl: provider.baseUrl,
+          status: error.status,
+          code: error.code,
+          message: error.message,
+          details: error.details,
+        },
+        "[FILE-UPLOAD] Provider upload failed",
+      );
       // Обертываем ProviderUploadError в FileUploadToProviderError с дополнительной информацией о провайдере
       const providerName = provider.name ?? null;
-      const enhancedDetails: Record<string, unknown> = {};
-      if (providerName) {
-        enhancedDetails.providerName = providerName;
-      }
+      const originalDetails = error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {};
+      const enhancedDetails: Record<string, unknown> = {
+        ...originalDetails,
+        providerName,
+        baseUrl: provider.baseUrl,
+        code: error.code,
+      };
       throw new FileUploadToProviderError(error.message, error.status, enhancedDetails);
     }
     const providerName = provider.name ?? null;
@@ -147,6 +178,15 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
     if (providerName) {
       errorDetails.providerName = providerName;
     }
+    logger.error(
+      {
+        fileId: params.fileId,
+        providerId: params.providerId,
+        providerName: provider.name,
+        cause: message,
+      },
+      "[FILE-UPLOAD] Unexpected error during upload",
+    );
     throw new FileUploadToProviderError("Не удалось загрузить файл во внешний провайдер", 502, errorDetails);
   }
 }

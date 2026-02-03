@@ -516,19 +516,34 @@ export default function ChatPage({ params }: ChatPageProps) {
     let assistantMessageCreated = false;
     setIsStreaming(true);
 
+      // Track server-confirmed createdAt for proper assistant message timing
+      let serverUserCreatedAt: string | null = null;
+
       try {
         await sendChatMessageLLM({
           chatId: targetChatId,
           workspaceId,
           content,
           handlers: {
+            onUserMessage: (data) => {
+              // Server confirmed user message with server-side timestamp (fixes clock skew)
+              serverUserCreatedAt = data.createdAt;
+              setLocalMessages((prev) =>
+                prev.map((msg) =>
+                  msg.role === "user" && msg.id.startsWith("local-")
+                    ? { ...msg, createdAt: data.createdAt }
+                    : msg,
+                ),
+              );
+            },
             onDelta: (delta) => {
               setLocalMessages((prev) => {
                 // Создаём assistantMessage при первой delta для плавного UX
                 if (!assistantMessageCreated) {
                   assistantMessageCreated = true;
-                  // Добавляем 1мс к timestamp, чтобы гарантировать порядок после user
-                  const assistantTimestamp = new Date(new Date(userMessage.createdAt).getTime() + 1);
+                  // Используем серверное время пользователя + 1мс, или локальное если сервер ещё не ответил
+                  const baseTime = serverUserCreatedAt ?? userMessage.createdAt;
+                  const assistantTimestamp = new Date(new Date(baseTime).getTime() + 1);
                   const assistantMessage = buildLocalMessage("assistant", targetChatId, delta, assistantTimestamp);
                   return [...prev, assistantMessage];
                 }

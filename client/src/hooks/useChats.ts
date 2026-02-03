@@ -161,6 +161,8 @@ export type ChatStreamHandlers = {
   onDelta?: (delta: string) => void;
   onDone?: (payload?: unknown) => void;
   onError?: (error: Error) => void;
+  /** Called when server confirms user message with server-side createdAt (fixes clock skew) */
+  onUserMessage?: (data: { id: string; createdAt: string }) => void;
 };
 
 export async function sendChatMessageLLM({
@@ -277,6 +279,14 @@ export async function sendChatMessageLLM({
                 ? (parsedPayload as { message?: string }).message!
                 : "Ошибка генерации ответа";
           handlers?.onError?.(new Error(message));
+          continue;
+        }
+
+        if (eventName === "user_message") {
+          const data = parsedPayload as { id?: string; createdAt?: string };
+          if (data.id && data.createdAt) {
+            handlers?.onUserMessage?.({ id: data.id, createdAt: data.createdAt });
+          }
         }
       }
     }

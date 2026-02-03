@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { Loader2, ArrowLeft, Info, Copy } from "lucide-react";
+import { Loader2, ArrowLeft, Info, Copy, CheckCircle2, XCircle, Zap } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -8,8 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import {
   createFileStorageProvider,
   updateFileStorageProvider,
@@ -88,6 +90,15 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
 
   const [form, setForm] = useState<ProviderFormState>(defaultState);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testBearerToken, setTestBearerToken] = useState("");
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    details?: unknown;
+    elapsed?: number;
+    providerFileId?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (provider) {
@@ -166,6 +177,49 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
       toast({ variant: "destructive", title: "Ошибка", description: message });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTest = async () => {
+    if (isCreate) {
+      toast({ variant: "destructive", title: "Сначала сохраните провайдера" });
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const body: { bearerToken?: string } = {};
+      if (form.authType === "bearer" && testBearerToken.trim()) {
+        body.bearerToken = testBearerToken.trim();
+      }
+      const res = await apiRequest("POST", `/api/admin/file-storage/providers/${providerId}/test`, body);
+      const data = await res.json();
+      if (data.success) {
+        setTestResult({
+          success: true,
+          message: data.message ?? "Подключение успешно!",
+          elapsed: data.elapsed,
+          providerFileId: data.providerFileId,
+        });
+        toast({ title: "Проверка прошла успешно", description: `Файл загружен за ${data.elapsed}мс` });
+      } else {
+        setTestResult({
+          success: false,
+          message: data.message ?? "Ошибка подключения",
+          details: data.details,
+          elapsed: data.elapsed,
+        });
+        toast({ variant: "destructive", title: "Проверка не прошла", description: data.message });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Не удалось проверить подключение";
+      setTestResult({
+        success: false,
+        message,
+      });
+      toast({ variant: "destructive", title: "Ошибка", description: message });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -386,6 +440,81 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
           <Label htmlFor="isActive">Активен</Label>
         </div>
       </div>
+
+      {/* Test Connection Section */}
+      {!isCreate && (
+        <div className="rounded-lg border p-4 space-y-4 bg-muted/30">
+          <div className="flex items-center gap-2">
+            <Zap className="h-5 w-5 text-amber-500" />
+            <h3 className="font-medium">Проверка подключения</h3>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Загрузит тестовый файл в провайдер для проверки настроек и сетевой доступности.
+          </p>
+
+          {form.authType === "bearer" && (
+            <div className="grid gap-2">
+              <Label htmlFor="testBearerToken">Bearer токен для теста</Label>
+              <Input
+                id="testBearerToken"
+                type="password"
+                value={testBearerToken}
+                onChange={(e) => setTestBearerToken(e.target.value)}
+                placeholder="Введите токен для авторизации"
+              />
+              <p className="text-xs text-muted-foreground">
+                Токен будет использован только для тестового запроса и не сохраняется.
+              </p>
+            </div>
+          )}
+
+          <Button
+            variant="secondary"
+            onClick={handleTest}
+            disabled={testing || (form.authType === "bearer" && !testBearerToken.trim())}
+          >
+            {testing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Проверяем...
+              </>
+            ) : (
+              <>
+                <Zap className="mr-2 h-4 w-4" />
+                Проверить подключение
+              </>
+            )}
+          </Button>
+
+          {testResult && (
+            <Alert variant={testResult.success ? "default" : "destructive"}>
+              {testResult.success ? (
+                <CheckCircle2 className="h-4 w-4" />
+              ) : (
+                <XCircle className="h-4 w-4" />
+              )}
+              <AlertTitle>{testResult.success ? "Успешно" : "Ошибка"}</AlertTitle>
+              <AlertDescription className="space-y-2">
+                <p>{testResult.message}</p>
+                {testResult.elapsed !== undefined && (
+                  <p className="text-xs">Время выполнения: {testResult.elapsed}мс</p>
+                )}
+                {testResult.providerFileId && (
+                  <p className="text-xs font-mono break-all">File ID: {testResult.providerFileId}</p>
+                )}
+                {testResult.details && (
+                  <details className="text-xs">
+                    <summary className="cursor-pointer">Подробности</summary>
+                    <pre className="mt-2 whitespace-pre-wrap break-all bg-muted p-2 rounded text-[11px]">
+                      {JSON.stringify(testResult.details, null, 2)}
+                    </pre>
+                  </details>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
+      )}
 
       <div className="flex gap-3">
         <Button onClick={handleSave} disabled={saving}>

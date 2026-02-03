@@ -1,7 +1,10 @@
 import fetch, { type BodyInit, type Response } from "node-fetch";
 import FormData from "form-data";
 import { randomUUID } from "crypto";
+import { createLogger } from "./lib/logger";
 import { buildPathFromTemplate } from "./file-storage-path";
+
+const logger = createLogger("file-storage-provider-client");
 
 export type ProviderAuthType = "none" | "bearer";
 
@@ -202,6 +205,18 @@ export class FileStorageProviderClient {
     const requestId = randomUUID();
     const timeoutSignal = buildTimeoutSignal(this.defaultTimeoutMs, input.abortSignal);
 
+    logger.info(
+      {
+        requestId,
+        method: this.uploadMethod,
+        baseUrl: this.baseUrl,
+        timeoutMs: this.defaultTimeoutMs,
+        fileName: input.fileName,
+        sizeBytes: input.sizeBytes,
+      },
+      "[FILE-PROVIDER] Uploading file to provider",
+    );
+
     const headers: Record<string, string> = {
       "x-request-id": requestId,
       ...form.getHeaders(),
@@ -232,6 +247,17 @@ export class FileStorageProviderClient {
         const message = isAbort
           ? "Провайдер файлового хранилища не ответил вовремя"
           : "Не удалось отправить файл провайдеру файлового хранилища";
+        logger.error(
+          {
+            requestId,
+            url,
+            baseUrl: this.baseUrl,
+            attempt,
+            code,
+            errorMessage: errorObj?.message ?? String(error),
+          },
+          "[FILE-PROVIDER] Upload request failed (network/timeout)",
+        );
         throw new ProviderUploadError(
           message,
           isAbort ? 504 : 502,
@@ -285,6 +311,16 @@ export class FileStorageProviderClient {
     const payload = await parseJsonSafe(res);
     if (!res.ok) {
       const retryable = isRetryableStatus(res.status);
+      logger.error(
+        {
+          requestId,
+          url,
+          baseUrl: this.baseUrl,
+          providerStatus: res.status,
+          responseBody: payload ?? null,
+        },
+        "[FILE-PROVIDER] Provider returned error status",
+      );
       throw new ProviderUploadError(
         `Провайдер файлового хранилища вернул ошибку ${res.status}`,
         res.status,
@@ -315,6 +351,16 @@ export class FileStorageProviderClient {
         ? pathValue
         : extractProviderFileId(payload);
     if (!providerFileId) {
+      logger.error(
+        {
+          requestId,
+          url,
+          baseUrl: this.baseUrl,
+          responseFileIdPath: this.responseFileIdPath,
+          responseKeys: payload && typeof payload === "object" ? Object.keys(payload as object) : [],
+        },
+        "[FILE-PROVIDER] Provider response missing file id",
+      );
       throw new ProviderUploadError(
         "В ответе провайдера нет provider_file_id",
         502,
@@ -328,6 +374,11 @@ export class FileStorageProviderClient {
         },
       );
     }
+
+    logger.info(
+      { requestId, baseUrl: this.baseUrl, providerFileId },
+      "[FILE-PROVIDER] Upload succeeded",
+    );
 
     return {
       providerFileId,

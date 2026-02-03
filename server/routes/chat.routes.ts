@@ -761,6 +761,11 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
           res.setHeader('Cache-Control', 'no-cache, no-transform');
           res.setHeader('Connection', 'keep-alive');
           res.setHeader('X-Accel-Buffering', 'no');
+          
+          // Send user message info so client can sync createdAt (fixes client/server clock skew)
+          if (userMessageRecord) {
+            sendSseEvent(res, 'user_message', { id: userMessageRecord.id, createdAt: userMessageRecord.createdAt });
+          }
         }
         
       ragResult = await callRagForSkillChat({ 
@@ -986,6 +991,11 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
+
+      // Send user message info so client can sync createdAt (fixes client/server clock skew)
+      if (userMessageRecord) {
+        sendSseEvent(res, 'user_message', { id: userMessageRecord.id, createdAt: userMessageRecord.createdAt });
+      }
 
       await safeLogStep('STREAM_TO_CLIENT_START', SKILL_EXECUTION_STEP_STATUS.RUNNING, { input: { chatId: req.params.chatId, workspaceId, stream: true } });
 

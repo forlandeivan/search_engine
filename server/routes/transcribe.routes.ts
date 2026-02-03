@@ -25,7 +25,7 @@ import { getSkillById } from '../skills';
 import { runTranscriptActionCommon } from '../lib/transcript-actions';
 import { upsertBotActionForChat } from '../chat-service';
 import { scheduleChatTitleGenerationIfNeeded } from '../chat-title-jobs';
-import { uploadFileToProvider } from '../file-storage-provider-upload-service';
+import { uploadFileToProvider, FileUploadToProviderError } from '../file-storage-provider-upload-service';
 import type { PublicUser, ChatMessageMetadata, UnicaAsrConfig } from '@shared/schema';
 
 const logger = createLogger('transcribe');
@@ -364,22 +364,46 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         message: 'Аудио файл загружен и отправлен на транскрибацию через Unica ASR',
       });
     } catch (error) {
+      const errorObj = error as { name?: string; status?: number; code?: string; statusCode?: number; message?: string; details?: unknown };
       logger.error({
-        error,
+        errorName: errorObj?.name,
+        errorMessage: errorObj?.message,
+        errorStatus: errorObj?.status ?? errorObj?.statusCode,
+        errorCode: errorObj?.code,
+        errorDetails: errorObj?.details,
         chatId,
         operationId,
         elapsed: Date.now() - startTime,
       }, '[UNICA-ASR] ❌ Recognition start failed');
-      
-      if (error instanceof UnicaAsrError) {
+
+      // Check by instanceof or by error name (fallback for cross-module issues)
+      if (error instanceof FileUploadToProviderError || errorObj?.name === 'FileUploadToProviderError') {
+        const status = errorObj?.status ?? 502;
+        const details = errorObj?.details;
         logger.error({
-          code: error.code,
-          statusCode: error.statusCode,
-          message: error.message,
+          chatId,
+          operationId,
+          status,
+          message: errorObj?.message,
+          details,
+        }, '[UNICA-ASR] ❌ File upload to provider failed');
+        return res.status(status).json({
+          message: errorObj?.message ?? 'Ошибка загрузки файла в провайдер',
+          code: 'FILE_UPLOAD_ERROR',
+          details,
+        });
+      }
+
+      if (error instanceof UnicaAsrError || errorObj?.name === 'UnicaAsrError') {
+        const statusCode = errorObj?.statusCode ?? errorObj?.status ?? 500;
+        logger.error({
+          code: errorObj?.code,
+          statusCode,
+          message: errorObj?.message,
         }, "[UNICA-ASR] ❌ UnicaAsrError details");
-        return res.status(error.statusCode || 500).json({
-          message: error.message,
-          code: error.code,
+        return res.status(statusCode).json({
+          message: errorObj?.message,
+          code: errorObj?.code,
         });
       }
 
