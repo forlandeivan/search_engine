@@ -11,11 +11,6 @@ import type {
   AsrExecutionStage,
 } from "./asr-execution-log";
 
-// Investigation note for executionId=8b12aba2-82a0-4a4b-baf0-fdbbfc3584cb:
-// - В текущей БД таблицы asr_executions нет (миграция 0048 не применена), поэтому записи по этому id нет.
-// - При этом transcript 902729e8-1720-4c4f-a5ad-f07f96e3afa4 и placeholder message уже в status=ready с текстом,
-//   значит транскрибация прошла до конца, но лог ASR не сохранялся из-за отсутствующей таблицы.
-
 export interface AsrExecutionLogRepository {
   createExecution(record: AsrExecutionRecord): Promise<void>;
   updateExecution(id: string, updates: Partial<AsrExecutionRecord>): Promise<void>;
