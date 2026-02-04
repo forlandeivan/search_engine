@@ -115,7 +115,7 @@ export interface UnicaRecognitionRequest {
 export interface UnicaRecognitionTask {
   id: string;
   workspaceId: string;
-  status: "Queued" | "Processing" | "Completed" | "Failed" | "Canceling" | "Cancelled";
+  status: string; // Возможные значения: Queued, Processing, Completed, Failed, Canceling, Cancelled
   createdAt: string;
   updatedAt: string;
   resultDatasetId: string | null;
@@ -575,7 +575,7 @@ export class UnicaAsrService {
     // Логируем каждую попытку polling
     await this.logEvent(cached.executionId, "asr_polling_attempt", {
       taskId,
-      providerStatus: task.status,
+      taskStatus: task.status,
       elapsedMs,
       resultDatasetId: task.resultDatasetId || null,
       error: task.error || null,
@@ -588,7 +588,7 @@ export class UnicaAsrService {
       // Логируем ошибку
       await this.logEvent(cached.executionId, "asr_error", {
         taskId,
-        providerStatus: "Failed",
+        taskStatus: "Failed",
         error: task.error || "Unknown error",
         elapsedMs,
       });
@@ -607,7 +607,7 @@ export class UnicaAsrService {
       
       await this.logEvent(cached.executionId, "asr_error", {
         taskId,
-        providerStatus: task.status,
+        taskStatus: task.status,
         error: "Задача была отменена",
         elapsedMs,
       });

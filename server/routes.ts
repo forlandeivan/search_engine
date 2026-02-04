@@ -5394,6 +5394,15 @@ async function runKnowledgeBaseRagPipeline(options: {
     }
 
     const requestConfig = mergeLlmRequestConfig(llmProvider);
+    
+    // DEBUG: логируем откуда берётся температура
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'temperature_debug',
+      bodyLlmTemperature: body.llm.temperature,
+      providerRequestConfig: llmProvider.requestConfig,
+      mergedTemperatureBefore: requestConfig.temperature,
+    }, `[RAG DEBUG] Temperature sources: body=${body.llm.temperature}, provider.requestConfig=${JSON.stringify(llmProvider.requestConfig)}, merged=${requestConfig.temperature}`);
 
     if (body.llm.system_prompt !== undefined) {
       requestConfig.systemPrompt = body.llm.system_prompt || undefined;
@@ -5406,6 +5415,13 @@ async function runKnowledgeBaseRagPipeline(options: {
     if (body.llm.max_tokens !== undefined) {
       requestConfig.maxTokens = body.llm.max_tokens;
     }
+    
+    // DEBUG: финальная температура
+    logger.info({
+      component: 'RAG_PIPELINE',
+      step: 'temperature_final',
+      finalTemperature: requestConfig.temperature,
+    }, `[RAG DEBUG] Final temperature: ${requestConfig.temperature}`);
 
     const configuredProvider: LlmProvider = {
       ...llmProvider,

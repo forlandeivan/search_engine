@@ -127,7 +127,9 @@ function formatStageDetails(stage: string, details: Record<string, unknown> | nu
       break;
     
     case "asr_polling_attempt":
-      if (details.providerStatus) result.push({ key: "Статус провайдера", value: String(details.providerStatus) });
+      // Поддержка и старого providerStatus и нового taskStatus
+      if (details.taskStatus) result.push({ key: "Статус задачи", value: String(details.taskStatus) });
+      else if (details.providerStatus) result.push({ key: "Статус задачи", value: String(details.providerStatus) });
       if (details.elapsedMs !== undefined) result.push({ key: "Прошло времени", value: `${Math.round(Number(details.elapsedMs) / 1000)} сек` });
       if (details.resultDatasetId) result.push({ key: "Dataset ID", value: String(details.resultDatasetId) });
       if (details.error) result.push({ key: "Ошибка", value: String(details.error) });
@@ -143,9 +145,11 @@ function formatStageDetails(stage: string, details: Record<string, unknown> | nu
     
     case "asr_error":
       if (details.error) result.push({ key: "Ошибка", value: String(details.error) });
-      if (details.stage) result.push({ key: "Этап", value: String(details.stage) });
+      if (details.errorStage) result.push({ key: "Этап", value: String(details.errorStage) });
+      else if (details.stage) result.push({ key: "Этап", value: String(details.stage) });
       if (details.taskId) result.push({ key: "Task ID", value: String(details.taskId) });
-      if (details.providerStatus) result.push({ key: "Статус провайдера", value: String(details.providerStatus) });
+      if (details.taskStatus) result.push({ key: "Статус задачи", value: String(details.taskStatus) });
+      else if (details.providerStatus) result.push({ key: "Статус задачи", value: String(details.providerStatus) });
       break;
       
     case "asr_result_final":
