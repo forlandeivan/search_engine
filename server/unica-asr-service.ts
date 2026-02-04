@@ -190,6 +190,7 @@ export class UnicaAsrService {
       config: UnicaAsrConfig;
       startedAt: Date;
       filePath: string;
+      executionId?: string; // ID записи в ASR execution log для логирования
       finalResult?: {
         done: boolean;
         status: "pending" | "processing" | "completed" | "failed";
@@ -199,6 +200,34 @@ export class UnicaAsrService {
       };
     }
   > = new Map();
+  
+  /**
+   * Установить executionId для операции (для логирования в ASR execution log)
+   */
+  setExecutionId(operationId: string, executionId: string): void {
+    const cached = this.operationsCache.get(operationId);
+    if (cached) {
+      cached.executionId = executionId;
+      this.operationsCache.set(operationId, cached);
+    }
+  }
+  
+  /**
+   * Логировать событие в ASR execution log
+   */
+  private async logEvent(
+    executionId: string | undefined,
+    stage: string,
+    details: Record<string, unknown>
+  ): Promise<void> {
+    if (!executionId) return;
+    try {
+      const { asrExecutionLogService } = await import("./asr-execution-log-context");
+      await asrExecutionLogService.addEvent(executionId, { stage, details });
+    } catch (err) {
+      log("[UnicaASR] Failed to log event:", err);
+    }
+  }
 
   /**
    * Запустить асинхронную транскрибацию
@@ -393,6 +422,7 @@ export class UnicaAsrService {
     config: UnicaAsrConfig;
     startedAt: Date;
     filePath: string;
+    executionId?: string;
   } | null> {
     try {
       log("[UnicaASR] Attempting to restore operation from execution log...");
@@ -452,11 +482,12 @@ export class UnicaAsrService {
         config,
         startedAt: execution.startedAt || new Date(),
         filePath: execution.fileName || "restored",
+        executionId: execution.id, // Для логирования polling шагов
       };
       
       // Восстанавливаем в кэш
       this.operationsCache.set(operationId, restored);
-      log("[UnicaASR] ✅ Operation restored from execution log");
+      log("[UnicaASR] ✅ Operation restored from execution log, executionId:", execution.id);
       
       return restored;
     } catch (err) {
@@ -514,12 +545,47 @@ export class UnicaAsrService {
       };
     }
 
-    const task = await this.getTaskStatus(taskId, config);
+    let task;
+    try {
+      task = await this.getTaskStatus(taskId, config);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log("[UnicaASR] ❌ getTaskStatus failed:", errorMessage);
+      
+      // Логируем ошибку в ASR execution log
+      await this.logEvent(cached.executionId, "asr_polling_attempt", {
+        taskId,
+        elapsedMs,
+        error: errorMessage,
+        success: false,
+      });
+      
+      throw err;
+    }
 
     log("[UnicaASR] Unica task status:", task.status);
+    
+    // Логируем каждую попытку polling
+    await this.logEvent(cached.executionId, "asr_polling_attempt", {
+      taskId,
+      providerStatus: task.status,
+      elapsedMs,
+      resultDatasetId: task.resultDatasetId || null,
+      error: task.error || null,
+      success: true,
+    });
 
     if (task.status === "Failed") {
       log("[UnicaASR] ❌ Task failed:", task.error || "Unknown error");
+      
+      // Логируем ошибку
+      await this.logEvent(cached.executionId, "asr_error", {
+        taskId,
+        providerStatus: "Failed",
+        error: task.error || "Unknown error",
+        elapsedMs,
+      });
+      
       this.operationsCache.delete(operationId);
       return {
         done: true,
@@ -532,7 +598,35 @@ export class UnicaAsrService {
       log("[UnicaASR] ✅ Task completed, fetching dataset...");
       log("[UnicaASR] Result dataset ID:", task.resultDatasetId);
       
-      const text = await this.getDatasetText(task.resultDatasetId, config);
+      let text: string;
+      try {
+        text = await this.getDatasetText(task.resultDatasetId, config);
+        
+        // Логируем успешное получение датасета
+        await this.logEvent(cached.executionId, "asr_dataset_fetch", {
+          datasetId: task.resultDatasetId,
+          textLength: text.length,
+          success: true,
+        });
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        log("[UnicaASR] ❌ getDatasetText failed:", errorMessage);
+        
+        // Логируем ошибку
+        await this.logEvent(cached.executionId, "asr_dataset_fetch", {
+          datasetId: task.resultDatasetId,
+          error: errorMessage,
+          success: false,
+        });
+        await this.logEvent(cached.executionId, "asr_error", {
+          taskId,
+          stage: "dataset_fetch",
+          error: errorMessage,
+        });
+        
+        throw err;
+      }
+      
       cached.finalResult = {
         done: true,
         status: "completed",

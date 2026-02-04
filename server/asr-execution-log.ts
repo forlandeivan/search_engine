@@ -11,6 +11,9 @@ export type AsrExecutionStage =
   | "audio_message_created"
   | "transcript_placeholder_message_created"
   | "asr_request_sent"
+  | "asr_polling_attempt"      // Попытка polling с результатом от провайдера
+  | "asr_dataset_fetch"        // Запрос датасета с результатом
+  | "asr_error"                // Ошибка на любом этапе
   | "asr_result_partial"
   | "asr_result_final"
   | "transcript_saved"

@@ -72,6 +72,9 @@ const STAGE_LABELS: Record<string, string> = {
   audio_message_created: "Создано аудио-сообщение",
   transcript_placeholder_message_created: "Создан placeholder стенограммы",
   asr_request_sent: "Отправлен запрос ASR",
+  asr_polling_attempt: "Polling провайдера",
+  asr_dataset_fetch: "Получение текста",
+  asr_error: "Ошибка",
   asr_result_partial: "Частичный результат",
   asr_result_final: "Финальный результат",
   transcript_saved: "Сохранена стенограмма",
@@ -93,6 +96,9 @@ const PIPELINE_STAGES_ORDER = [
 const OPTIONAL_STAGES = new Set([
   "audio_message_created",
   "transcript_placeholder_message_created",
+  "asr_polling_attempt",
+  "asr_dataset_fetch",
+  "asr_error",
   "asr_result_partial",
   "auto_action_triggered",
   "auto_action_completed",
@@ -118,6 +124,28 @@ function formatStageDetails(stage: string, details: Record<string, unknown> | nu
       if (details.durationSeconds) result.push({ key: "Длительность", value: `${Number(details.durationSeconds).toFixed(1)} сек` });
       if (details.elapsed !== undefined) result.push({ key: "Время отправки", value: `${details.elapsed} мс` });
       if (details.objectKey) result.push({ key: "S3 ключ", value: String(details.objectKey) });
+      break;
+    
+    case "asr_polling_attempt":
+      if (details.providerStatus) result.push({ key: "Статус провайдера", value: String(details.providerStatus) });
+      if (details.elapsedMs !== undefined) result.push({ key: "Прошло времени", value: `${Math.round(Number(details.elapsedMs) / 1000)} сек` });
+      if (details.resultDatasetId) result.push({ key: "Dataset ID", value: String(details.resultDatasetId) });
+      if (details.error) result.push({ key: "Ошибка", value: String(details.error) });
+      if (details.success !== undefined) result.push({ key: "Успех", value: details.success ? "Да" : "Нет" });
+      break;
+    
+    case "asr_dataset_fetch":
+      if (details.datasetId) result.push({ key: "Dataset ID", value: String(details.datasetId) });
+      if (details.textLength !== undefined) result.push({ key: "Длина текста", value: `${details.textLength} символов` });
+      if (details.error) result.push({ key: "Ошибка", value: String(details.error) });
+      if (details.success !== undefined) result.push({ key: "Успех", value: details.success ? "Да" : "Нет" });
+      break;
+    
+    case "asr_error":
+      if (details.error) result.push({ key: "Ошибка", value: String(details.error) });
+      if (details.stage) result.push({ key: "Этап", value: String(details.stage) });
+      if (details.taskId) result.push({ key: "Task ID", value: String(details.taskId) });
+      if (details.providerStatus) result.push({ key: "Статус провайдера", value: String(details.providerStatus) });
       break;
       
     case "asr_result_final":

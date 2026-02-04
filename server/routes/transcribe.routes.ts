@@ -299,7 +299,7 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
 
       // 3. Создать ASR execution record
       logger.info("[UNICA-ASR] Creating ASR execution log...");
-      await asrExecutionLogService.createExecution({
+      const execution = await asrExecutionLogService.createExecution({
         workspaceId,
         chatId,
         skillId: skill.id,
@@ -324,7 +324,9 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
           },
         ],
       });
-      logger.info("[UNICA-ASR] ✅ ASR execution log created");
+      // Связать executionId с операцией для логирования polling
+      unicaAsrService.setExecutionId(unicaOperationId, execution.id);
+      logger.info({ executionId: execution.id }, "[UNICA-ASR] ✅ ASR execution log created");
 
       // 4. Create BotAction to show processing indicator
       try {
@@ -866,6 +868,7 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
       }, '[START-TRANSCRIBE-UNICA] Recognition started successfully');
 
       // Update or create ASR execution log
+      let effectiveExecutionId: string | null = null;
       try {
         if (clientExecutionId) {
           // Update existing execution record from pre-upload
@@ -884,10 +887,11 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
             },
             'processing',
           );
+          effectiveExecutionId = clientExecutionId;
           logger.info({ executionId: clientExecutionId, unicaOperationId }, '[START-TRANSCRIBE-UNICA] ASR execution log updated');
         } else {
           // Create new execution record (fallback for old clients)
-          await asrExecutionLogService.createExecution({
+          const execution = await asrExecutionLogService.createExecution({
             workspaceId,
             chatId,
             skillId: skill.id,
@@ -911,7 +915,12 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
               },
             ],
           });
-          logger.info({ unicaOperationId }, '[START-TRANSCRIBE-UNICA] ASR execution log created');
+          effectiveExecutionId = execution.id;
+          logger.info({ executionId: execution.id, unicaOperationId }, '[START-TRANSCRIBE-UNICA] ASR execution log created');
+        }
+        // Связать executionId с операцией для логирования polling
+        if (effectiveExecutionId) {
+          unicaAsrService.setExecutionId(unicaOperationId, effectiveExecutionId);
         }
       } catch (logError) {
         logger.warn({ error: logError, operationId: unicaOperationId }, '[START-TRANSCRIBE-UNICA] Failed to update/create execution log');
