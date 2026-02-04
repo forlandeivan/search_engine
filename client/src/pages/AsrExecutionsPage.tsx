@@ -531,7 +531,12 @@ function PipelineVisualizer({
     const isCompleted = completedStages.has(stage);
     const isCurrent = index === currentStageIndex + 1 && status === "processing";
     const isFailed = status === "failed" && index === currentStageIndex + 1;
+    const isErrorStage = stage === "asr_error";
 
+    // Ошибка всегда показывается с красной иконкой
+    if (isErrorStage && isCompleted) {
+      return <XCircle className="h-5 w-5 text-rose-500" />;
+    }
     if (isFailed) {
       return <XCircle className="h-5 w-5 text-rose-500" />;
     }
@@ -627,15 +632,18 @@ function PipelineVisualizer({
           const isExpanded = expandedStages.has(stage);
           const showJson = showRawJson.has(stage);
           const lastEvent = stageEvents[stageEvents.length - 1];
+          const isErrorStage = stage === "asr_error";
           
           return (
             <div 
               key={stage}
               className={cn(
                 "rounded-lg border transition-colors",
-                isCompleted 
-                  ? "bg-white border-slate-200" 
-                  : "bg-slate-50 border-slate-100"
+                isErrorStage && isCompleted
+                  ? "bg-rose-50 border-rose-200"
+                  : isCompleted 
+                    ? "bg-white border-slate-200" 
+                    : "bg-slate-50 border-slate-100"
               )}
             >
               {/* Заголовок этапа */}
@@ -656,11 +664,12 @@ function PipelineVisualizer({
                   <div className="flex items-center gap-2">
                     <span className={cn(
                       "font-medium text-sm",
+                      isErrorStage && isCompleted ? "text-rose-700" :
                       isCompleted ? "text-slate-900" : "text-slate-400"
                     )}>
                       {STAGE_LABELS[stage] ?? stage}
                     </span>
-                    {isOptional && (
+                    {isOptional && !isErrorStage && (
                       <span className="text-xs text-slate-400">(опц.)</span>
                     )}
                   </div>

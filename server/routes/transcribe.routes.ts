@@ -36,6 +36,76 @@ export const transcribeRouter = Router();
 // Helper Functions
 // ============================================================================
 
+/**
+ * Логирует ошибку в ASR execution log
+ * Если executionId нет - создаёт новую запись с ошибкой
+ */
+async function logAsrError(params: {
+  executionId?: string | null;
+  workspaceId?: string;
+  chatId?: string;
+  skillId?: string;
+  provider?: string;
+  stage: string;
+  error: unknown;
+  details?: Record<string, unknown>;
+}): Promise<void> {
+  const { executionId, workspaceId, chatId, skillId, provider, stage, error, details } = params;
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorCode = (error as any)?.code || (error as any)?.name || 'UNKNOWN_ERROR';
+  
+  try {
+    if (executionId) {
+      // Обновляем существующую запись
+      await asrExecutionLogService.addEvent(
+        executionId,
+        {
+          stage: 'asr_error',
+          details: {
+            errorStage: stage,
+            errorMessage,
+            errorCode,
+            ...details,
+          },
+        },
+        'failed',
+      );
+      await asrExecutionLogService.updateExecution(executionId, {
+        status: 'failed',
+        errorMessage,
+      });
+    } else if (workspaceId && chatId) {
+      // Создаём новую запись с ошибкой
+      await asrExecutionLogService.createExecution({
+        workspaceId,
+        chatId,
+        skillId: skillId || null,
+        provider: provider || 'unknown',
+        mode: 'standard',
+        status: 'failed',
+        errorMessage,
+        startedAt: new Date(),
+        completedAt: new Date(),
+        pipelineEvents: [
+          {
+            id: crypto.randomUUID(),
+            timestamp: new Date().toISOString(),
+            stage: 'asr_error',
+            details: {
+              errorStage: stage,
+              errorMessage,
+              errorCode,
+              ...details,
+            } as any,
+          },
+        ],
+      });
+    }
+  } catch (logError) {
+    logger.warn({ logError, originalError: errorMessage }, '[ASR] Failed to log error to execution log');
+  }
+}
+
 function getSessionUser(req: Request): PublicUser | null {
   return (req as Request & { user?: PublicUser }).user ?? null;
 }
@@ -378,6 +448,17 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         elapsed: Date.now() - startTime,
       }, '[UNICA-ASR] ❌ Recognition start failed');
 
+      // Логируем ошибку в ASR execution log для отображения в UI
+      await logAsrError({
+        workspaceId,
+        chatId,
+        skillId: skill?.id,
+        provider: 'unica',
+        stage: 'transcription_start',
+        error,
+        details: { operationId, elapsed: Date.now() - startTime },
+      });
+
       // Check by instanceof or by error name (fallback for cross-module issues)
       if (error instanceof FileUploadToProviderError || errorObj?.name === 'FileUploadToProviderError') {
         const status = errorObj?.status ?? 502;
@@ -476,6 +557,17 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
       operationId,
       elapsed: Date.now() - startTime,
     }, '[TRANSCRIBE-ERROR] Transcription start failed');
+    
+    // Логируем ошибку в ASR execution log для отображения в UI
+    await logAsrError({
+      workspaceId,
+      chatId,
+      provider: 'yandex_speechkit',
+      stage: 'transcription_start',
+      error,
+      details: { operationId, elapsed: Date.now() - startTime },
+    });
+    
     if (error instanceof YandexSttAsyncError) {
       return res.status(error.status).json({
         message: error.message,
@@ -701,6 +793,17 @@ transcribeRouter.post('/upload', upload.single('audio'), asyncHandler(async (req
             elapsed: Date.now() - startTime,
           }, '[UPLOAD-ONLY-UNICA] Pre-upload failed');
 
+          // Логируем ошибку в ASR execution log
+          await logAsrError({
+            workspaceId,
+            chatId,
+            skillId: skill?.id,
+            provider: 'unica',
+            stage: 'file_upload',
+            error,
+            details: { elapsed: Date.now() - startTime },
+          });
+
           if (error instanceof FileUploadToProviderError) {
             return res.status(error.status).json({
               message: error.message,
@@ -776,6 +879,16 @@ transcribeRouter.post('/upload', upload.single('audio'), asyncHandler(async (req
       chatId,
       elapsed: Date.now() - startTime,
     }, '[UPLOAD-ONLY-ERROR] Upload failed');
+    
+    // Логируем ошибку в ASR execution log
+    await logAsrError({
+      workspaceId,
+      chatId,
+      provider: 'yandex_speechkit',
+      stage: 'file_upload',
+      error,
+      details: { elapsed: Date.now() - startTime },
+    });
     
     if (error instanceof YandexSttAsyncError) {
       return res.status(error.status).json({
@@ -965,6 +1078,18 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
         elapsed: Date.now() - startTime,
       }, '[START-TRANSCRIBE-UNICA] Failed to start recognition');
 
+      // Логируем ошибку в ASR execution log
+      await logAsrError({
+        executionId: clientExecutionId || null,
+        workspaceId,
+        chatId,
+        skillId: skill?.id,
+        provider: 'unica',
+        stage: 'start_recognition',
+        error,
+        details: { providerFileId, elapsed: Date.now() - startTime },
+      });
+
       if (error instanceof UnicaAsrError) {
         return res.status(error.statusCode || 500).json({
           message: error.message,
@@ -1051,6 +1176,17 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
       s3Uri,
       elapsed: Date.now() - startTime,
     }, '[START-TRANSCRIBE-ERROR] Failed to start transcription');
+
+    // Логируем ошибку в ASR execution log
+    await logAsrError({
+      executionId: clientExecutionId || null,
+      workspaceId,
+      chatId,
+      provider: 'yandex_speechkit',
+      stage: 'start_recognition',
+      error,
+      details: { s3Uri, elapsed: Date.now() - startTime },
+    });
 
     if (error instanceof YandexSttAsyncError) {
       return res.status(error.status).json({
