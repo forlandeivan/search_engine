@@ -45,6 +45,32 @@ export function stringifyPayloadForContext(payload: Record<string, unknown> | nu
   }
 
   try {
+    // Извлекаем текст чанка для LLM-friendly формата
+    // Приоритет: text > snippet > chunk.text > chunk.snippet > JSON fallback
+    const chunk = payload.chunk as Record<string, unknown> | undefined;
+    const document = payload.document as Record<string, unknown> | undefined;
+    
+    // Получаем текст
+    const text = 
+      (typeof payload.text === 'string' && payload.text) ||
+      (typeof payload.snippet === 'string' && payload.snippet) ||
+      (chunk && typeof chunk.text === 'string' && chunk.text) ||
+      (chunk && typeof chunk.snippet === 'string' && chunk.snippet);
+    
+    if (text) {
+      // Формируем читаемый контекст
+      const title = 
+        (document && typeof document.title === 'string' && document.title) ||
+        (chunk && typeof chunk.sectionTitle === 'string' && chunk.sectionTitle) ||
+        null;
+      
+      if (title) {
+        return `[${title}]\n${text}`;
+      }
+      return text;
+    }
+    
+    // Fallback на JSON если текст не найден
     const serialized = JSON.stringify(payload, null, 2);
     return serialized.length > 4000 ? `${serialized.slice(0, 4000)}…` : serialized;
   } catch {
