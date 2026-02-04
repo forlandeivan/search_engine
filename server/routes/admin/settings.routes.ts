@@ -7,6 +7,11 @@
  * - POST /api/admin/settings/smtp/test - Test SMTP settings
  * - GET /api/admin/settings/maintenance - Get maintenance mode settings
  * - PUT /api/admin/settings/maintenance - Update maintenance mode settings
+ * - GET /api/admin/settings/maintenance/intervals - List maintenance intervals
+ * - GET /api/admin/settings/maintenance/schedules - List maintenance schedules
+ * - POST /api/admin/settings/maintenance/schedules - Create maintenance schedule
+ * - PUT /api/admin/settings/maintenance/schedules/:id - Update maintenance schedule
+ * - DELETE /api/admin/settings/maintenance/schedules/:id - Delete maintenance schedule
  * - GET /api/admin/indexing-rules - Get indexing rules
  * - PUT /api/admin/indexing-rules - Update indexing rules
  * - PATCH /api/admin/indexing-rules - Partial update indexing rules
@@ -23,6 +28,9 @@ import { smtpTestService } from '../../smtp-test-service';
 import { indexingRulesService, IndexingRulesError } from '../../indexing-rules';
 import { maintenanceModeSettingsService, MaintenanceModeSettingsError } from '../../maintenance-mode-settings';
 import { maintenanceModeAuditLogService } from '../../maintenance-mode-audit-log-service';
+import { maintenanceModeScheduleService, MaintenanceModeScheduleError } from '../../maintenance-mode-schedule-service';
+import { maintenanceModeForceSessionService } from '../../maintenance-mode-force-session-service';
+import { maintenanceModeScheduleInputSchema, type MaintenanceModeIntervalDto } from '@shared/maintenance-mode';
 
 const logger = createLogger('admin-settings');
 
@@ -142,6 +150,136 @@ adminSettingsRouter.put('/maintenance', asyncHandler(async (req, res) => {
       return res.status(400).json({ message: 'Invalid settings', details: error.issues });
     }
     if (error instanceof MaintenanceModeSettingsError) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    throw error;
+  }
+}));
+
+/**
+ * GET /settings/maintenance/intervals
+ */
+adminSettingsRouter.get('/maintenance/intervals', asyncHandler(async (_req, res) => {
+  const now = new Date();
+  const schedules = await maintenanceModeScheduleService.listWithInitiator();
+  const forceSessions = await maintenanceModeForceSessionService.listWithInitiator();
+
+  const scheduleIntervals: MaintenanceModeIntervalDto[] = schedules.map((schedule) => {
+    const start = new Date(schedule.scheduledStartAt);
+    const end = new Date(schedule.scheduledEndAt);
+    let status: MaintenanceModeIntervalDto["status"] = "past";
+    if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
+      if (now >= start && now <= end) {
+        status = "active";
+      } else if (now < start) {
+        status = "scheduled";
+      }
+    }
+    return {
+      id: schedule.id,
+      kind: "schedule",
+      startAt: schedule.scheduledStartAt,
+      endAt: schedule.scheduledEndAt,
+      status,
+      initiatorName: schedule.initiatorName ?? null,
+      messageTitle: schedule.messageTitle ?? "",
+      messageBody: schedule.messageBody ?? "",
+      publicEta: schedule.publicEta ?? null,
+    };
+  });
+
+  const forceIntervals: MaintenanceModeIntervalDto[] = forceSessions.map((session) => ({
+    id: session.id,
+    kind: "force",
+    startAt: session.startedAt,
+    endAt: session.endedAt,
+    status: session.endedAt ? "past" : "active",
+    initiatorName: session.initiatorName ?? null,
+    messageTitle: session.messageTitle ?? "",
+    messageBody: session.messageBody ?? "",
+    publicEta: session.publicEta ?? null,
+  }));
+
+  const allIntervals = [...forceIntervals, ...scheduleIntervals].sort((a, b) => {
+    const statusWeight = (status: MaintenanceModeIntervalDto["status"]) =>
+      status === "active" ? 0 : status === "scheduled" ? 1 : 2;
+    const weightDiff = statusWeight(a.status) - statusWeight(b.status);
+    if (weightDiff !== 0) return weightDiff;
+    const aStart = new Date(a.startAt).getTime();
+    const bStart = new Date(b.startAt).getTime();
+    if (a.status === "scheduled") {
+      return aStart - bStart;
+    }
+    return bStart - aStart;
+  });
+
+  res.json({ items: allIntervals });
+}));
+
+/**
+ * GET /settings/maintenance/schedules
+ */
+adminSettingsRouter.get('/maintenance/schedules', asyncHandler(async (_req, res) => {
+  const schedules = await maintenanceModeScheduleService.listWithInitiator();
+  res.json({ items: schedules });
+}));
+
+/**
+ * POST /settings/maintenance/schedules
+ */
+adminSettingsRouter.post('/maintenance/schedules', asyncHandler(async (req, res) => {
+  try {
+    const adminId = (req as any).user?.id ?? null;
+    const parsed = maintenanceModeScheduleInputSchema.parse(req.body);
+    const schedule = await maintenanceModeScheduleService.create({
+      ...parsed,
+      updatedByAdminId: adminId,
+    });
+    res.json(schedule);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: 'Invalid schedule', details: error.issues });
+    }
+    if (error instanceof MaintenanceModeScheduleError) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    throw error;
+  }
+}));
+
+/**
+ * PUT /settings/maintenance/schedules/:id
+ */
+adminSettingsRouter.put('/maintenance/schedules/:id', asyncHandler(async (req, res) => {
+  try {
+    const adminId = (req as any).user?.id ?? null;
+    const parsed = maintenanceModeScheduleInputSchema.parse(req.body);
+    const schedule = await maintenanceModeScheduleService.update(req.params.id, {
+      ...parsed,
+      updatedByAdminId: adminId,
+    });
+    res.json(schedule);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ message: 'Invalid schedule', details: error.issues });
+    }
+    if (error instanceof MaintenanceModeScheduleError) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    throw error;
+  }
+}));
+
+/**
+ * DELETE /settings/maintenance/schedules/:id
+ */
+adminSettingsRouter.delete('/maintenance/schedules/:id', asyncHandler(async (req, res) => {
+  try {
+    const adminId = (req as any).user?.id ?? null;
+    await maintenanceModeScheduleService.remove(req.params.id, adminId);
+    res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof MaintenanceModeScheduleError) {
       return res.status(error.status).json({ message: error.message });
     }
     throw error;

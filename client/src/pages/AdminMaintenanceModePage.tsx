@@ -1,22 +1,41 @@
-import { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+﻿import { useEffect, useMemo, useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@/lib/zod-resolver";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDownIcon, ChevronsUpDown, Loader2, RefreshCw } from "lucide-react";
+import { Check, ChevronDownIcon, ChevronsUpDown, Loader2, Plus } from "lucide-react";
+import type { DateRange } from "react-day-picker";
 
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Command,
   CommandEmpty,
@@ -34,34 +53,14 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 import { cn } from "@/lib/utils";
-import type { MaintenanceModeSettingsDto } from "@shared/maintenance-mode";
-
-type AuditLogItem = {
-  id: string;
-  eventType: string;
-  actorAdminId: string | null;
-  occurredAt: string;
-  payload: Record<string, unknown> | null;
-};
-
-type AuditLogResponse = {
-  items: AuditLogItem[];
-  page: number;
-  pageSize: number;
-  totalItems: number;
-  totalPages: number;
-};
+import type {
+  MaintenanceModeIntervalDto,
+  MaintenanceModeScheduleDto,
+  MaintenanceModeScheduleListItemDto,
+  MaintenanceModeSettingsDto,
+} from "@shared/maintenance-mode";
 
 const DEFAULT_TIME_ZONE = "UTC";
 const DEFAULT_START_TIME = "10:00";
@@ -152,44 +151,28 @@ const formSchema = z
 
 type FormValues = z.infer<typeof formSchema>;
 
-const eventLabels: Record<string, string> = {
-  enabled: "Включено",
-  disabled: "Выключено",
-  schedule_updated: "Расписание",
-  message_updated: "Сообщение",
-};
-
-function formatAuditPayload(item: AuditLogItem): string {
-  if (!item.payload || typeof item.payload !== "object") {
-    return "";
-  }
-  const payload = item.payload as Record<string, any>;
-  const before = payload.before ?? {};
-  const after = payload.after ?? {};
-
-  if (item.eventType === "schedule_updated") {
-    return `start: ${before.scheduledStartAt ?? "-"} -> ${after.scheduledStartAt ?? "-"}, end: ${before.scheduledEndAt ?? "-"} -> ${after.scheduledEndAt ?? "-"}`;
-  }
-  if (item.eventType === "enabled" || item.eventType === "disabled") {
-    return `forceEnabled: ${before.forceEnabled ?? "-"} -> ${after.forceEnabled ?? "-"}`;
-  }
-  if (item.eventType === "message_updated") {
-    return "сообщение обновлено";
-  }
-  return "";
-}
-
-function computeStatus(settings: MaintenanceModeSettingsDto | null): "off" | "scheduled" | "active" {
+function computeStatus(
+  settings: MaintenanceModeSettingsDto | null,
+  schedules: MaintenanceModeScheduleListItemDto[] | undefined,
+): "off" | "scheduled" | "active" {
   if (!settings) return "off";
   if (settings.forceEnabled) return "active";
-  if (settings.scheduledStartAt && settings.scheduledEndAt) {
-    const start = new Date(settings.scheduledStartAt).getTime();
-    const end = new Date(settings.scheduledEndAt).getTime();
-    const now = Date.now();
+  if (!schedules?.length) return "off";
+
+  const now = Date.now();
+  let hasUpcoming = false;
+
+  for (const schedule of schedules) {
+    const start = new Date(schedule.scheduledStartAt).getTime();
+    const end = new Date(schedule.scheduledEndAt).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+      continue;
+    }
     if (now >= start && now <= end) return "active";
-    if (now < start) return "scheduled";
+    if (start > now) hasUpcoming = true;
   }
-  return "off";
+
+  return hasUpcoming ? "scheduled" : "off";
 }
 
 function resolveTimeZone(): string {
@@ -336,14 +319,15 @@ function zonedDateTimeToUtcIso(date: Date | undefined, time: string, timeZone: s
 export default function AdminMaintenanceModePage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [page, setPage] = useState(1);
-  const [logFilters, setLogFilters] = useState({
-    type: "all",
-    dateFrom: "",
-    dateTo: "",
-  });
-  const pageSize = 20;
   const [timeZoneOpen, setTimeZoneOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<MaintenanceModeScheduleListItemDto | null>(null);
+  const [forceConfirmOpen, setForceConfirmOpen] = useState(false);
+  const [cancelDialog, setCancelDialog] = useState<
+    | { kind: "force" }
+    | { kind: "schedule"; schedule: MaintenanceModeScheduleListItemDto; status: "scheduled" | "active" }
+    | null
+  >(null);
 
   const timeZones = useMemo(() => listTimeZones(), []);
   const [timeZone, setTimeZone] = useState(resolveTimeZone);
@@ -360,7 +344,7 @@ export default function AdminMaintenanceModePage() {
     return options.sort((a, b) => a.offsetMinutes - b.offsetMinutes || a.value.localeCompare(b.value));
   }, [timeZones]);
 
-  const { data, isLoading, isError, error, refetch } = useQuery<MaintenanceModeSettingsDto>({
+  const { data, isLoading, isError, error } = useQuery<MaintenanceModeSettingsDto>({
     queryKey: ["/api/admin/settings/maintenance"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/admin/settings/maintenance");
@@ -372,7 +356,23 @@ export default function AdminMaintenanceModePage() {
     },
   });
 
-  const status = useMemo(() => computeStatus(data ?? null), [data]);
+  const scheduleQuery = useQuery<MaintenanceModeScheduleListItemDto[]>({
+    queryKey: ["/api/admin/settings/maintenance/schedules"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/settings/maintenance/schedules");
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.message ?? "Не удалось загрузить расписание обслуживания");
+      }
+      return (json?.items ?? []) as MaintenanceModeScheduleListItemDto[];
+    },
+    placeholderData: (previousData) => previousData,
+  });
+
+  const status = useMemo(
+    () => computeStatus(data ?? null, scheduleQuery.data ?? []),
+    [data, scheduleQuery.data],
+  );
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -390,39 +390,54 @@ export default function AdminMaintenanceModePage() {
   });
 
   useEffect(() => {
+    form.register("scheduledStartDate");
+    form.register("scheduledEndDate");
+    form.register("scheduledStartTime");
+    form.register("scheduledEndTime");
+  }, [form]);
+
+  const watchedStartDate = useWatch({ control: form.control, name: "scheduledStartDate" });
+  const watchedEndDate = useWatch({ control: form.control, name: "scheduledEndDate" });
+  const watchedStartTime = useWatch({ control: form.control, name: "scheduledStartTime" }) ?? "";
+  const watchedEndTime = useWatch({ control: form.control, name: "scheduledEndTime" }) ?? "";
+
+  useEffect(() => {
     if (!data) return;
-    const start = utcIsoToFormFields(data.scheduledStartAt, normalizedTimeZone);
-    const end = utcIsoToFormFields(data.scheduledEndAt, normalizedTimeZone);
+    form.setValue("forceEnabled", data.forceEnabled ?? false, { shouldDirty: false });
+    form.setValue("messageTitle", sanitizeText(data.messageTitle), { shouldDirty: false });
+    form.setValue("messageBody", sanitizeText(data.messageBody), { shouldDirty: false });
+    form.setValue("publicEta", sanitizeText(data.publicEta), { shouldDirty: false });
+  }, [data, form]);
 
-    form.reset(
-      {
-        scheduledStartDate: start.date,
-        scheduledStartTime: start.time || DEFAULT_START_TIME,
-        scheduledEndDate: end.date,
-        scheduledEndTime: end.time || DEFAULT_END_TIME,
-        forceEnabled: data.forceEnabled ?? false,
-        messageTitle: sanitizeText(data.messageTitle),
-        messageBody: sanitizeText(data.messageBody),
-        publicEta: sanitizeText(data.publicEta),
-      },
-      { keepDirtyValues: true },
-    );
-  }, [data, form, normalizedTimeZone]);
+  const buildSettingsPayload = (values: FormValues, forceEnabled: boolean) => ({
+    forceEnabled,
+    messageTitle: values.messageTitle.trim(),
+    messageBody: values.messageBody.trim(),
+    publicEta: values.publicEta.trim() ? values.publicEta.trim() : null,
+  });
 
-  const updateMutation = useMutation({
-    mutationFn: async (values: FormValues) => {
-      const scheduledStartAt = zonedDateTimeToUtcIso(values.scheduledStartDate, values.scheduledStartTime, normalizedTimeZone);
-      const scheduledEndAt = zonedDateTimeToUtcIso(values.scheduledEndDate, values.scheduledEndTime, normalizedTimeZone);
-      const hasSchedule = Boolean(scheduledStartAt && scheduledEndAt);
+  const resetScheduleForm = (schedule?: MaintenanceModeScheduleListItemDto | null) => {
+    const start = schedule
+      ? utcIsoToFormFields(schedule.scheduledStartAt, normalizedTimeZone)
+      : { date: undefined, time: DEFAULT_START_TIME };
+    const end = schedule
+      ? utcIsoToFormFields(schedule.scheduledEndAt, normalizedTimeZone)
+      : { date: undefined, time: DEFAULT_END_TIME };
 
-      const payload = {
-        scheduledStartAt: hasSchedule ? scheduledStartAt : null,
-        scheduledEndAt: hasSchedule ? scheduledEndAt : null,
-        forceEnabled: values.forceEnabled,
-        messageTitle: values.messageTitle.trim(),
-        messageBody: values.messageBody.trim(),
-        publicEta: values.publicEta.trim() ? values.publicEta.trim() : null,
-      };
+    form.reset({
+      scheduledStartDate: start.date,
+      scheduledStartTime: start.time || DEFAULT_START_TIME,
+      scheduledEndDate: end.date,
+      scheduledEndTime: end.time || DEFAULT_END_TIME,
+      forceEnabled: data?.forceEnabled ?? false,
+      messageTitle: schedule ? sanitizeText(schedule.messageTitle) : sanitizeText(data?.messageTitle) || "",
+      messageBody: schedule ? sanitizeText(schedule.messageBody) : sanitizeText(data?.messageBody) || "",
+      publicEta: schedule ? sanitizeText(schedule.publicEta) : sanitizeText(data?.publicEta) || "",
+    });
+  };
+
+  const updateSettingsMutation = useMutation({
+    mutationFn: async (payload: ReturnType<typeof buildSettingsPayload>) => {
       const res = await apiRequest("PUT", "/api/admin/settings/maintenance", payload);
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -431,21 +446,13 @@ export default function AdminMaintenanceModePage() {
       return json as MaintenanceModeSettingsDto;
     },
     onSuccess: (updated) => {
-      const start = utcIsoToFormFields(updated.scheduledStartAt, normalizedTimeZone);
-      const end = utcIsoToFormFields(updated.scheduledEndAt, normalizedTimeZone);
-
-      form.reset({
-        scheduledStartDate: start.date,
-        scheduledStartTime: start.time || DEFAULT_START_TIME,
-        scheduledEndDate: end.date,
-        scheduledEndTime: end.time || DEFAULT_END_TIME,
-        forceEnabled: updated.forceEnabled ?? false,
-        messageTitle: sanitizeText(updated.messageTitle),
-        messageBody: sanitizeText(updated.messageBody),
-        publicEta: sanitizeText(updated.publicEta),
-      });
+      form.setValue("forceEnabled", updated.forceEnabled ?? false, { shouldDirty: false });
+      form.setValue("messageTitle", sanitizeText(updated.messageTitle), { shouldDirty: false });
+      form.setValue("messageBody", sanitizeText(updated.messageBody), { shouldDirty: false });
+      form.setValue("publicEta", sanitizeText(updated.publicEta), { shouldDirty: false });
       queryClient.invalidateQueries({ queryKey: ["/api/maintenance/status"] });
-      toast({ title: "Настройки сохранены", description: "Режим обслуживания обновлен." });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings/maintenance"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings/maintenance/intervals"] });
     },
     onError: (err: unknown) => {
       const message = err instanceof Error ? err.message : "Не удалось сохранить настройки";
@@ -453,31 +460,188 @@ export default function AdminMaintenanceModePage() {
     },
   });
 
-  const auditQuery = useQuery<AuditLogResponse, Error>({
-    queryKey: [
-      "/api/admin/settings/maintenance/audit",
-      logFilters.type,
-      logFilters.dateFrom,
-      logFilters.dateTo,
-      page,
-      pageSize,
-    ],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      params.set("page", String(page));
-      params.set("pageSize", String(pageSize));
-      if (logFilters.type !== "all") params.set("type", logFilters.type);
-      if (logFilters.dateFrom) params.set("dateFrom", logFilters.dateFrom);
-      if (logFilters.dateTo) params.set("dateTo", logFilters.dateTo);
-      const res = await apiRequest("GET", `/api/admin/settings/maintenance/audit?${params.toString()}`);
+  const scheduleMutation = useMutation({
+    mutationFn: async ({
+      scheduleId,
+      values,
+      action,
+    }: {
+      scheduleId?: string;
+      values: FormValues;
+      action?: "save" | "end";
+    }): Promise<MaintenanceModeScheduleDto> => {
+      const scheduledStartAt = zonedDateTimeToUtcIso(
+        values.scheduledStartDate,
+        values.scheduledStartTime,
+        normalizedTimeZone,
+      );
+      const scheduledEndAt = zonedDateTimeToUtcIso(
+        values.scheduledEndDate,
+        values.scheduledEndTime,
+        normalizedTimeZone,
+      );
+
+      if (!scheduledStartAt || !scheduledEndAt) {
+        throw new Error("Заполните интервал обслуживания");
+      }
+
+      const payload = {
+        scheduledStartAt,
+        scheduledEndAt,
+        messageTitle: values.messageTitle.trim(),
+        messageBody: values.messageBody.trim(),
+        publicEta: values.publicEta.trim() ? values.publicEta.trim() : null,
+      };
+      const endpoint = scheduleId
+        ? `/api/admin/settings/maintenance/schedules/${scheduleId}`
+        : "/api/admin/settings/maintenance/schedules";
+      const method = scheduleId ? "PUT" : "POST";
+      const res = await apiRequest(method, endpoint, payload);
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(json?.message ?? "Не удалось загрузить журнал");
+        throw new Error(json?.message ?? "Не удалось сохранить расписание");
       }
-      return json as AuditLogResponse;
+      return json as MaintenanceModeScheduleDto;
+    },
+    onSuccess: (_schedule, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings/maintenance/schedules"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings/maintenance/intervals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/maintenance/status"] });
+      if (variables.action !== "end") {
+        updateSettingsMutation.mutate(buildSettingsPayload(variables.values, false));
+      }
+      setScheduleOpen(false);
+      setEditingSchedule(null);
+      toast({
+        title:
+          variables.action === "end"
+            ? "Обслуживание завершено"
+            : variables.scheduleId
+              ? "Расписание обновлено"
+              : "Расписание добавлено",
+        description: variables.action === "end" ? "Интервал завершен досрочно." : "Интервал обслуживания сохранен.",
+      });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : "Не удалось сохранить расписание";
+      toast({ title: "Ошибка", description: message, variant: "destructive" });
+    },
+  });
+
+  const deleteScheduleMutation = useMutation({
+    mutationFn: async (scheduleId: string) => {
+      const res = await apiRequest("DELETE", `/api/admin/settings/maintenance/schedules/${scheduleId}`);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.message ?? "Не удалось удалить расписание");
+      }
+      return true;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings/maintenance/schedules"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/settings/maintenance/intervals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/maintenance/status"] });
+      toast({ title: "Расписание отменено" });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : "Не удалось удалить расписание";
+      toast({ title: "Ошибка", description: message, variant: "destructive" });
+    },
+  });
+
+  const handleForceEnable = () => {
+    const values = form.getValues();
+    updateSettingsMutation.mutate(buildSettingsPayload(values, true), {
+      onSuccess: () => {
+        setForceConfirmOpen(false);
+        toast({ title: "Режим обслуживания включен" });
+      },
+    });
+  };
+
+  const handleScheduleSubmit = form.handleSubmit((values) => {
+    scheduleMutation.mutate({ scheduleId: editingSchedule?.id, values, action: "save" });
+  });
+
+  const handleCreateSchedule = () => {
+    setEditingSchedule(null);
+    resetScheduleForm(null);
+    setScheduleOpen(true);
+  };
+
+  const handleEditSchedule = (schedule: MaintenanceModeScheduleListItemDto) => {
+    setEditingSchedule(schedule);
+    resetScheduleForm(schedule);
+    setScheduleOpen(true);
+  };
+
+  const handleCancelConfirm = () => {
+    if (!cancelDialog) return;
+
+    if (cancelDialog.kind === "force") {
+      const values = form.getValues();
+      updateSettingsMutation.mutate(buildSettingsPayload(values, false), {
+        onSuccess: () => {
+          setCancelDialog(null);
+          toast({ title: "Режим обслуживания выключен" });
+        },
+      });
+      return;
+    }
+
+    if (cancelDialog.status === "active") {
+      const now = new Date().toISOString();
+      const values = form.getValues();
+      const startFields = utcIsoToFormFields(cancelDialog.schedule.scheduledStartAt, normalizedTimeZone);
+      const endFields = utcIsoToFormFields(now, normalizedTimeZone);
+      const startTime = startFields.time || DEFAULT_START_TIME;
+      const endTime = endFields.time || DEFAULT_END_TIME;
+      if (!startFields.date || !endFields.date) {
+        toast({ title: "Ошибка", description: "Не удалось подготовить интервал", variant: "destructive" });
+        setCancelDialog(null);
+        return;
+      }
+      scheduleMutation.mutate({
+        scheduleId: cancelDialog.schedule.id,
+        values: {
+          ...values,
+          scheduledStartDate: startFields.date,
+          scheduledStartTime: startTime,
+          scheduledEndDate: endFields.date,
+          scheduledEndTime: endTime,
+          messageTitle: cancelDialog.schedule.messageTitle ?? values.messageTitle,
+          messageBody: cancelDialog.schedule.messageBody ?? values.messageBody,
+          publicEta: cancelDialog.schedule.publicEta ?? values.publicEta,
+        },
+        action: "end",
+      });
+    } else {
+      deleteScheduleMutation.mutate(cancelDialog.schedule.id);
+    }
+
+    setCancelDialog(null);
+  };
+
+  const intervalsQuery = useQuery<MaintenanceModeIntervalDto[]>({
+    queryKey: ["/api/admin/settings/maintenance/intervals"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/settings/maintenance/intervals");
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.message ?? "Не удалось загрузить интервалы");
+      }
+      return (json?.items ?? []) as MaintenanceModeIntervalDto[];
     },
     placeholderData: (previousData) => previousData,
   });
+
+  const schedules = scheduleQuery.data ?? [];
+  const scheduleLookup = useMemo(
+    () => new Map(schedules.map((schedule) => [schedule.id, schedule])),
+    [schedules],
+  );
+
+  const journalRows = intervalsQuery.data ?? [];
 
   if (isLoading) {
     return (
@@ -505,376 +669,478 @@ export default function AdminMaintenanceModePage() {
 
   return (
     <div className="h-full min-h-0 overflow-y-auto">
-      <div className="p-6 space-y-6">
-      <header className="space-y-2">
-        <div className="flex items-center gap-2">
-          <CardTitle>Режим обслуживания</CardTitle>
-          <Badge variant={status === "active" ? "destructive" : status === "scheduled" ? "secondary" : "outline"}>
-            {status === "active" ? "Активен" : status === "scheduled" ? "Запланирован" : "Выключен"}
-          </Badge>
-        </div>
-        <CardDescription>
-          Управление плановым и экстренным обслуживанием. Даты и время интерпретируются в выбранном часовом поясе и
-          отправляются на сервер в UTC.
-        </CardDescription>
-      </header>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Настройки</CardTitle>
-          <CardDescription>Укажите расписание и тексты для пользователей.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form className="space-y-6" onSubmit={form.handleSubmit((values) => updateMutation.mutate(values))}>
-              <FormField
-                control={form.control}
-                name="forceEnabled"
-                render={({ field }) => (
-                  <FormItem className="flex items-center justify-between gap-4 rounded-lg border p-4">
-                    <div>
-                      <FormLabel>Экстренно включить</FormLabel>
-                      <FormDescription>
-                        Включает режим обслуживания немедленно и блокирует запросы.
-                      </FormDescription>
-                    </div>
-                    <FormControl>
-                      <Switch checked={field.value} onCheckedChange={field.onChange} />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
-
-              <div className="space-y-2">
-                <Label htmlFor="maintenance-timezone">Часовой пояс</Label>
-                <Popover open={timeZoneOpen} onOpenChange={setTimeZoneOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={timeZoneOpen}
-                      id="maintenance-timezone"
-                      className="w-full justify-between"
-                    >
-                      {timeZoneOptions.find((zone) => zone.value === normalizedTimeZone)?.label ??
-                        "Выберите часовой пояс"}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-full p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder="Поиск часового пояса..." className="h-9" />
-                      <CommandList>
-                        <CommandEmpty>Ничего не найдено.</CommandEmpty>
-                        <CommandGroup>
-                          {timeZoneOptions.map((zone) => (
-                            <CommandItem
-                              key={zone.value}
-                              value={`${zone.label} ${zone.value}`}
-                              onSelect={() => {
-                                setTimeZone(zone.value);
-                                setTimeZoneOpen(false);
-                              }}
-                            >
-                              <Check
-                                className={cn(
-                                  "mr-2 h-4 w-4",
-                                  normalizedTimeZone === zone.value ? "opacity-100" : "opacity-0",
-                                )}
-                              />
-                              {zone.label}
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-                <p className="text-xs text-muted-foreground">
-                  Даты и время интерпретируются в выбранном часовом поясе.
-                </p>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="scheduledStartDate"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>Дата начала</FormLabel>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant="outline"
-                              className="w-full justify-between font-normal"
-                            >
-                              {field.value ? field.value.toLocaleDateString("ru-RU") : "Выберите дату"}
-                              <ChevronDownIcon className="h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={field.onChange}
-                            captionLayout="dropdown"
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="scheduledStartTime"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Время начала</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="time"
-                          step="60"
-                          placeholder="10:30"
-                          className="bg-background appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="scheduledEndDate"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>Дата окончания</FormLabel>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant="outline"
-                              className="w-full justify-between font-normal"
-                            >
-                              {field.value ? field.value.toLocaleDateString("ru-RU") : "Выберите дату"}
-                              <ChevronDownIcon className="h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={field.onChange}
-                            captionLayout="dropdown"
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="scheduledEndTime"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Время окончания</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="time"
-                          step="60"
-                          placeholder="12:00"
-                          className="bg-background appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="messageTitle"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Заголовок для пользователей</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Дополнительно" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="publicEta"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Время восстановления</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Дополнительно" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              <FormField
-                control={form.control}
-                name="messageBody"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Описание для страницы заглушки</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="Дополнительно" {...field} />
-                    </FormControl>
-                    <FormDescription>Подробное описание для пользователей.</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <div className="flex gap-2">
-                <Button type="submit" disabled={!form.formState.isValid || updateMutation.isPending}>
-                  {updateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Сохранить
-                </Button>
-                <Button type="button" variant="outline" onClick={() => refetch()}>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Обновить
-                </Button>
-              </div>
-            </form>
-          </Form>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Журнал</CardTitle>
-          <CardDescription>Последние события режима обслуживания.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid md:grid-cols-3 gap-3">
-            <div className="space-y-2">
-              <Label>Тип события</Label>
-              <Select value={logFilters.type} onValueChange={(value) => setLogFilters((prev) => ({ ...prev, type: value }))}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Все" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Все</SelectItem>
-                  <SelectItem value="enabled">Включено</SelectItem>
-                  <SelectItem value="disabled">Выключено</SelectItem>
-                  <SelectItem value="schedule_updated">Расписание</SelectItem>
-                  <SelectItem value="message_updated">Сообщение</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>С даты</Label>
-              <Input
-                type="date"
-                value={logFilters.dateFrom}
-                onChange={(e) => setLogFilters((prev) => ({ ...prev, dateFrom: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>По дату</Label>
-              <Input
-                type="date"
-                value={logFilters.dateTo}
-                onChange={(e) => setLogFilters((prev) => ({ ...prev, dateTo: e.target.value }))}
-              />
-            </div>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between gap-4 px-6 pt-6">
+          <div className="flex items-center gap-2">
+            <h1 className="text-3xl font-semibold">Режим обслуживания</h1>
+            <Badge variant={status === "active" ? "destructive" : status === "scheduled" ? "secondary" : "outline"}>
+              {status === "active" ? "Активен" : status === "scheduled" ? "Запланирован" : "Выключен"}
+            </Badge>
           </div>
+          <div className="flex flex-wrap gap-2">
+            <AlertDialog open={forceConfirmOpen} onOpenChange={setForceConfirmOpen}>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="destructive"
+                  disabled={updateSettingsMutation.isPending || status === "active"}
+                >
+                  Включить прямо сейчас
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Включить экстренный режим?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Режим обслуживания будет активирован немедленно и заблокирует обычные запросы.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Отмена</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleForceEnable}>
+                    Включить
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
 
-          {auditQuery.isLoading ? (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Загружаем журнал...
-            </div>
-          ) : auditQuery.isError ? (
-            <Alert variant="destructive">
-              <AlertTitle>Ошибка загрузки</AlertTitle>
-              <AlertDescription>{auditQuery.error?.message ?? "Не удалось загрузить журнал"}</AlertDescription>
-            </Alert>
-          ) : auditQuery.data?.items?.length ? (
-            <div className="space-y-3">
-              <div className="border rounded-md overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted text-left">
-                    <tr>
-                      <th className="px-3 py-2">Дата</th>
-                      <th className="px-3 py-2">Событие</th>
-                      <th className="px-3 py-2">Админ</th>
-                      <th className="px-3 py-2">Детали</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {auditQuery.data.items.map((item) => (
-                      <tr key={item.id} className="border-b last:border-b-0">
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {new Date(item.occurredAt).toLocaleString()}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {eventLabels[item.eventType] ?? item.eventType}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                          {item.actorAdminId ?? "-"}
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {formatAuditPayload(item) || "-"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1 || auditQuery.isFetching}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                >
-                  Предыдущая
-                </Button>
-                <span className="text-sm text-muted-foreground">
-                  Стр. {auditQuery.data.page} из {auditQuery.data.totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= auditQuery.data.totalPages || auditQuery.isFetching}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Следующая
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <Alert>
-              <AlertTitle>Пока нет записей</AlertTitle>
-              <AlertDescription>Измените настройки, чтобы появились события в журнале.</AlertDescription>
-            </Alert>
-          )}
-        </CardContent>
-      </Card>
+            <Button
+              disabled={scheduleMutation.isPending || updateSettingsMutation.isPending}
+              onClick={handleCreateSchedule}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Запланировать
+            </Button>
+
+            <Dialog
+              open={scheduleOpen}
+              onOpenChange={(open) => {
+                setScheduleOpen(open);
+                if (!open) {
+                  setEditingSchedule(null);
+                }
+              }}
+            >
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>
+                    {editingSchedule ? "Редактировать обслуживание" : "Запланировать обслуживание"}
+                  </DialogTitle>
+                  <DialogDescription>
+                    Укажите интервал, часовой пояс и сообщения для пользователей.
+                  </DialogDescription>
+                </DialogHeader>
+                <Form {...form}>
+                  <form className="space-y-6" onSubmit={handleScheduleSubmit}>
+                    <div className="space-y-2">
+                      <Label htmlFor="maintenance-timezone">Часовой пояс</Label>
+                      <Popover open={timeZoneOpen} onOpenChange={setTimeZoneOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={timeZoneOpen}
+                            id="maintenance-timezone"
+                            className="w-full justify-between"
+                          >
+                            {timeZoneOptions.find((zone) => zone.value === normalizedTimeZone)?.label ??
+                              "Выберите часовой пояс"}
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-full p-0" align="start">
+                          <Command>
+                            <CommandInput placeholder="Поиск часового пояса..." className="h-9" />
+                            <CommandList>
+                              <CommandEmpty>Ничего не найдено.</CommandEmpty>
+                              <CommandGroup>
+                                {timeZoneOptions.map((zone) => (
+                                  <CommandItem
+                                    key={zone.value}
+                                    value={`${zone.label} ${zone.value}`}
+                                    onSelect={() => {
+                                      setTimeZone(zone.value);
+                                      setTimeZoneOpen(false);
+                                    }}
+                                  >
+                                    <Check
+                                      className={cn(
+                                        "mr-2 h-4 w-4",
+                                        normalizedTimeZone === zone.value ? "opacity-100" : "opacity-0",
+                                      )}
+                                    />
+                                    {zone.label}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+
+                    <FormField
+                      control={form.control}
+                      name="scheduledEndTime"
+                      render={() => {
+                        const range: DateRange | undefined = watchedStartDate
+                          ? { from: watchedStartDate, to: watchedEndDate ?? undefined }
+                          : watchedEndDate
+                            ? { from: watchedEndDate, to: undefined }
+                            : undefined;
+
+                        const formatDateTime = (date: Date | null | undefined, time: string) => {
+                          if (!date) return null;
+                          const [h, m] = (time || "00:00").split(":").map(Number);
+                          const d = new Date(date);
+                          d.setHours(h || 0, m || 0, 0, 0);
+                          return d.toLocaleString("ru-RU", {
+                            day: "2-digit",
+                            month: "short",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            timeZone: normalizedTimeZone,
+                          });
+                        };
+
+                        const displayLabel =
+                          range?.from && range?.to
+                            ? `${formatDateTime(range.from, watchedStartTime) ?? ""} — ${formatDateTime(range.to, watchedEndTime) ?? ""}`
+                            : range?.from
+                              ? `${formatDateTime(range.from, watchedStartTime) ?? ""}`
+                              : "Выберите интервал";
+
+                        const intervalError =
+                          form.formState.errors.scheduledEndTime?.message ??
+                          form.formState.errors.scheduledStartTime?.message;
+
+                        return (
+                          <FormItem className="space-y-2">
+                            <FormLabel>Интервал обслуживания</FormLabel>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button variant="outline" className="w-full justify-between font-normal">
+                                  <span className="truncate text-left">{displayLabel}</span>
+                                  <ChevronDownIcon className="h-4 w-4 opacity-50 shrink-0" />
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-0" align="start">
+                                <Card className="w-fit py-4">
+                                  <CardContent className="px-4">
+                                    <Calendar
+                                      mode="range"
+                                      defaultMonth={range?.from}
+                                      selected={range}
+                                      onSelect={(value) => {
+                                        form.setValue("scheduledStartDate", value?.from ?? undefined, {
+                                          shouldDirty: true,
+                                          shouldValidate: true,
+                                        });
+                                        form.setValue("scheduledEndDate", value?.to ?? undefined, {
+                                          shouldDirty: true,
+                                          shouldValidate: true,
+                                        });
+                                      }}
+                                      className="bg-transparent p-0 [--cell-size:--spacing(10.5)]"
+                                    />
+                                  </CardContent>
+                                  <CardFooter className="flex gap-2 border-t px-4 !pt-4 *:[div]:w-full">
+                                    <div>
+                                      <Label htmlFor="maintenance-start-time" className="sr-only">
+                                        Start Time
+                                      </Label>
+                                      <Input
+                                        id="maintenance-start-time"
+                                        type="time"
+                                        step="60"
+                                        value={watchedStartTime}
+                                        onChange={(e) =>
+                                          form.setValue("scheduledStartTime", e.target.value, {
+                                            shouldDirty: true,
+                                            shouldValidate: true,
+                                          })
+                                        }
+                                        className="appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
+                                      />
+                                    </div>
+                                    <span>-</span>
+                                    <div>
+                                      <Label htmlFor="maintenance-end-time" className="sr-only">
+                                        End Time
+                                      </Label>
+                                      <Input
+                                        id="maintenance-end-time"
+                                        type="time"
+                                        step="60"
+                                        value={watchedEndTime}
+                                        onChange={(e) =>
+                                          form.setValue("scheduledEndTime", e.target.value, {
+                                            shouldDirty: true,
+                                            shouldValidate: true,
+                                          })
+                                        }
+                                        className="appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
+                                      />
+                                    </div>
+                                  </CardFooter>
+                                </Card>
+                              </PopoverContent>
+                            </Popover>
+                            {intervalError ? <p className="text-sm text-destructive">{intervalError}</p> : null}
+                          </FormItem>
+                        );
+                      }}
+                    />
+
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="messageTitle"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Заголовок для пользователей</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Дополнительно" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="publicEta"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Время восстановления</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Дополнительно" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <FormField
+                      control={form.control}
+                      name="messageBody"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Описание для страницы заглушки</FormLabel>
+                          <FormControl>
+                            <Textarea placeholder="Дополнительно" {...field} />
+                          </FormControl>
+                          <FormDescription>Подробное описание для пользователей.</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <DialogFooter className="gap-2">
+                      <Button type="button" variant="outline" onClick={() => setScheduleOpen(false)}>
+                        Отмена
+                      </Button>
+                      <Button
+                        type="submit"
+                        disabled={!form.formState.isValid || scheduleMutation.isPending}
+                      >
+                        {scheduleMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Сохранить
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </Form>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
+
+        <div className="px-6 pb-6 space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Журнал</CardTitle>
+              <CardDescription>История интервалов режима обслуживания.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {intervalsQuery.isLoading ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Загружаем интервалы...
+                </div>
+              ) : intervalsQuery.isError ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Ошибка загрузки</AlertTitle>
+                  <AlertDescription>
+                    {(intervalsQuery.error as Error | undefined)?.message ?? "Не удалось загрузить интервалы"}
+                  </AlertDescription>
+                </Alert>
+              ) : journalRows.length ? (
+                <div className="space-y-3">
+                  <div className="border rounded-md overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted text-left">
+                        <tr>
+                          <th className="px-3 py-2">Интервал (UTC)</th>
+                          <th className="px-3 py-2">Статус</th>
+                          <th className="px-3 py-2">Админ</th>
+                          <th className="px-3 py-2">Детали</th>
+                          <th className="px-3 py-2 text-right">Действия</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {journalRows.map((row) => {
+                          const startLabel = new Date(row.startAt).toLocaleString("ru-RU", {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                            timeZone: "UTC",
+                          });
+                          const endLabel = row.endAt
+                            ? new Date(row.endAt).toLocaleString("ru-RU", {
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                                timeZone: "UTC",
+                              })
+                            : null;
+                          const intervalLabel = endLabel
+                            ? `${startLabel} — ${endLabel} (UTC)`
+                            : `С ${startLabel} (UTC)`;
+                          const statusLabel =
+                            row.status === "active"
+                              ? "Активный"
+                              : row.status === "scheduled"
+                                ? "Запланирован"
+                                : "Прошедший";
+                          const schedule = row.kind === "schedule" ? scheduleLookup.get(row.id) : null;
+                          const details: string[] = [];
+                          if (row.kind === "force") {
+                            details.push("Экстренный режим");
+                          }
+                          if (row.messageTitle?.trim()) {
+                            details.push(row.messageTitle.trim());
+                          }
+                          if (row.messageBody?.trim()) {
+                            details.push(row.messageBody.trim());
+                          }
+                          if (row.publicEta?.trim()) {
+                            details.push(`ETA: ${row.publicEta.trim()}`);
+                          }
+
+                          return (
+                            <tr key={row.id} className="border-b last:border-b-0">
+                              <td className="px-3 py-2 whitespace-nowrap">{intervalLabel}</td>
+                              <td className="px-3 py-2 whitespace-nowrap">{statusLabel}</td>
+                              <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                                {row.initiatorName ?? "-"}
+                              </td>
+                              <td className="px-3 py-2 text-muted-foreground">
+                                {details.length ? (
+                                  <div className="space-y-1">
+                                    {details.map((line) => (
+                                      <div key={line}>{line}</div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  "-"
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {row.kind === "force" ? (
+                                  row.status === "active" ? (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={updateSettingsMutation.isPending}
+                                      onClick={() => setCancelDialog({ kind: "force" })}
+                                    >
+                                      Отключить
+                                    </Button>
+                                  ) : (
+                                    <span className="text-muted-foreground">-</span>
+                                  )
+                                ) : schedule ? (
+                                  row.status === "past" ? (
+                                    <span className="text-muted-foreground">-</span>
+                                  ) : (
+                                    <div className="flex justify-end gap-2">
+                                      {row.status === "scheduled" ? (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          disabled={scheduleMutation.isPending}
+                                          onClick={() => handleEditSchedule(schedule)}
+                                        >
+                                          Редактировать
+                                        </Button>
+                                      ) : null}
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={scheduleMutation.isPending || deleteScheduleMutation.isPending}
+                                        onClick={() =>
+                                          setCancelDialog({
+                                            kind: "schedule",
+                                            schedule,
+                                            status: row.status === "active" ? "active" : "scheduled",
+                                          })
+                                        }
+                                      >
+                                        {row.status === "active" ? "Отключить" : "Отменить"}
+                                      </Button>
+                                    </div>
+                                  )
+                                ) : (
+                                  <span className="text-muted-foreground">-</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <AlertDialog
+                    open={Boolean(cancelDialog)}
+                    onOpenChange={(open) => {
+                      if (!open) {
+                        setCancelDialog(null);
+                      }
+                    }}
+                  >
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          {cancelDialog?.kind === "force"
+                            ? "Отключить режим обслуживания?"
+                            : cancelDialog?.status === "active"
+                              ? "Отключить режим обслуживания?"
+                              : "Отменить запланированное обслуживание?"}
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          {cancelDialog?.kind === "force"
+                            ? "Режим обслуживания будет выключен."
+                            : cancelDialog?.status === "active"
+                              ? "Интервал будет завершен досрочно. Запись останется в журнале."
+                              : "Запланированный интервал будет отменен."}
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Отмена</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleCancelConfirm}>
+                          Подтвердить
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              ) : (
+                <Alert>
+                  <AlertTitle>Пока нет интервалов</AlertTitle>
+                  <AlertDescription>Добавьте или запустите обслуживание, чтобы появились записи.</AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
       </div>
     </div>
+  </div>
   );
 }

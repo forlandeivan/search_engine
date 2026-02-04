@@ -12,20 +12,39 @@ const login = async (page: Page) => {
   await page.reload();
 };
 
-const updateMaintenance = async (page: Page, data: Record<string, unknown>) => {
+const updateSettings = async (page: Page, data: Record<string, unknown>) => {
   const response = await page.request.put("/api/admin/settings/maintenance", { data });
   expect(response.ok()).toBeTruthy();
 };
 
+const createSchedule = async (page: Page, data: Record<string, unknown>) => {
+  const response = await page.request.post("/api/admin/settings/maintenance/schedules", { data });
+  expect(response.ok()).toBeTruthy();
+};
+
+const listSchedules = async (page: Page) => {
+  const response = await page.request.get("/api/admin/settings/maintenance/schedules");
+  expect(response.ok()).toBeTruthy();
+  const json = await response.json();
+  return (json?.items ?? []) as Array<{ id: string }>;
+};
+
+const clearSchedules = async (page: Page) => {
+  const items = await listSchedules(page);
+  for (const item of items) {
+    const response = await page.request.delete(`/api/admin/settings/maintenance/schedules/${item.id}`);
+    expect(response.ok()).toBeTruthy();
+  }
+};
+
 const resetMaintenance = async (page: Page) => {
-  await updateMaintenance(page, {
-    scheduledStartAt: null,
-    scheduledEndAt: null,
+  await updateSettings(page, {
     forceEnabled: false,
     messageTitle: "",
     messageBody: "",
     publicEta: null,
   });
+  await clearSchedules(page);
 };
 
 test.describe("maintenance mode UI", () => {
@@ -39,9 +58,14 @@ test.describe("maintenance mode UI", () => {
     const scheduledEndAt = new Date(now + 2 * 60 * 60 * 1000).toISOString();
 
     try {
-      await updateMaintenance(page, {
+      await createSchedule(page, {
         scheduledStartAt,
         scheduledEndAt,
+        messageTitle: "Scheduled maintenance",
+        messageBody: "Update planned",
+        publicEta: "Soon",
+      });
+      await updateSettings(page, {
         forceEnabled: false,
         messageTitle: "Scheduled maintenance",
         messageBody: "Update planned",
@@ -60,9 +84,7 @@ test.describe("maintenance mode UI", () => {
     await login(page);
 
     try {
-      await updateMaintenance(page, {
-        scheduledStartAt: null,
-        scheduledEndAt: null,
+      await updateSettings(page, {
         forceEnabled: true,
         messageTitle: "Maintenance mode",
         messageBody: "We are updating the system",
@@ -81,9 +103,7 @@ test.describe("maintenance mode UI", () => {
     await login(page);
 
     try {
-      await updateMaintenance(page, {
-        scheduledStartAt: null,
-        scheduledEndAt: null,
+      await updateSettings(page, {
         forceEnabled: true,
         messageTitle: "Maintenance mode",
         messageBody: "We are updating the system",

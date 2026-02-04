@@ -8,8 +8,17 @@ import {
   updateMaintenanceModeSettingsSchema,
   type MaintenanceModeSettingsDto,
   type MaintenanceModeStatusDto,
+  type UpdateMaintenanceModeSettingsDto,
 } from "@shared/maintenance-mode";
 import { maintenanceModeAuditLogService, type MaintenanceAuditLogEventType } from "./maintenance-mode-audit-log-service";
+import {
+  maintenanceModeScheduleService,
+  type MaintenanceModeScheduleService,
+} from "./maintenance-mode-schedule-service";
+import {
+  maintenanceModeForceSessionService,
+  type MaintenanceModeForceSessionService,
+} from "./maintenance-mode-force-session-service";
 
 export class MaintenanceModeSettingsError extends Error {
   status = 400;
@@ -28,8 +37,6 @@ const MAINTENANCE_MODE_SINGLETON_ID = "maintenance_mode_singleton";
 const MAINTENANCE_SETTINGS_CACHE_TTL_MS = 60_000;
 
 const DEFAULT_SETTINGS: MaintenanceModeSettingsDto = {
-  scheduledStartAt: null,
-  scheduledEndAt: null,
   forceEnabled: false,
   messageTitle: "",
   messageBody: "",
@@ -69,36 +76,12 @@ class DbMaintenanceModeSettingsRepository implements MaintenanceModeSettingsRepo
   }
 }
 
-function toIso(value: Date | string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-}
-
-function parseDate(value: string | null): Date | null {
-  if (!value) {
-    return null;
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-  return parsed;
-}
-
 function mapToDto(row: StoredMaintenanceModeSettings | null): MaintenanceModeSettingsDto {
   if (!row) {
     return { ...DEFAULT_SETTINGS };
   }
 
   const dto: MaintenanceModeSettingsDto = {
-    scheduledStartAt: toIso(row.scheduledStartAt),
-    scheduledEndAt: toIso(row.scheduledEndAt),
     forceEnabled: row.forceEnabled,
     messageTitle: row.messageTitle ?? "",
     messageBody: row.messageBody ?? "",
@@ -124,7 +107,11 @@ function normalizeString(value: string | null | undefined, maxLength: number): s
 }
 
 export class MaintenanceModeSettingsService {
-  constructor(private readonly repo: MaintenanceModeSettingsRepository = new DbMaintenanceModeSettingsRepository()) {}
+  constructor(
+    private readonly repo: MaintenanceModeSettingsRepository = new DbMaintenanceModeSettingsRepository(),
+    private readonly scheduleService: MaintenanceModeScheduleService = maintenanceModeScheduleService,
+    private readonly forceSessionService: MaintenanceModeForceSessionService = maintenanceModeForceSessionService,
+  ) {}
 
   async getSettings(): Promise<MaintenanceModeSettingsDto> {
     const cache = getCache();
@@ -147,13 +134,11 @@ export class MaintenanceModeSettingsService {
 
     const existing = await this.repo.get();
     const before = mapToDto(existing);
-    const scheduledStartAt = parseDate(parsed.scheduledStartAt);
-    const scheduledEndAt = parseDate(parsed.scheduledEndAt);
 
     const record: StoredMaintenanceModeSettings = {
       id: existing?.id ?? MAINTENANCE_MODE_SINGLETON_ID,
-      scheduledStartAt,
-      scheduledEndAt,
+      scheduledStartAt: null,
+      scheduledEndAt: null,
       forceEnabled: parsed.forceEnabled,
       messageTitle: normalizeString(parsed.messageTitle, 120) ?? "",
       messageBody: normalizeString(parsed.messageBody, 2000) ?? "",
@@ -170,6 +155,7 @@ export class MaintenanceModeSettingsService {
     await cache.set(cacheKeys.maintenanceModeSettings(), dto, MAINTENANCE_SETTINGS_CACHE_TTL_MS);
 
     await this.logChanges(before, dto, input.updatedByAdminId ?? null);
+    await this.syncForceSessions(before, dto, input.updatedByAdminId ?? null);
 
     return dto;
   }
@@ -187,22 +173,6 @@ export class MaintenanceModeSettingsService {
         payload: {
           before: { forceEnabled: before.forceEnabled },
           after: { forceEnabled: after.forceEnabled },
-        },
-      });
-    }
-
-    if (before.scheduledStartAt !== after.scheduledStartAt || before.scheduledEndAt !== after.scheduledEndAt) {
-      events.push({
-        type: "schedule_updated",
-        payload: {
-          before: {
-            scheduledStartAt: before.scheduledStartAt,
-            scheduledEndAt: before.scheduledEndAt,
-          },
-          after: {
-            scheduledStartAt: after.scheduledStartAt,
-            scheduledEndAt: after.scheduledEndAt,
-          },
         },
       });
     }
@@ -244,28 +214,87 @@ export class MaintenanceModeSettingsService {
     );
   }
 
+  private async syncForceSessions(
+    before: MaintenanceModeSettingsDto,
+    after: MaintenanceModeSettingsDto,
+    actorAdminId: string | null,
+  ): Promise<void> {
+    if (!before.forceEnabled && after.forceEnabled) {
+      await this.forceSessionService.startSession({
+        actorAdminId,
+        messageTitle: after.messageTitle ?? "",
+        messageBody: after.messageBody ?? "",
+        publicEta: after.publicEta ?? null,
+      });
+      return;
+    }
+
+    if (before.forceEnabled && !after.forceEnabled) {
+      await this.forceSessionService.endActiveSession(actorAdminId);
+      return;
+    }
+
+    if (
+      before.forceEnabled &&
+      after.forceEnabled &&
+      (before.messageTitle !== after.messageTitle ||
+        before.messageBody !== after.messageBody ||
+        before.publicEta !== after.publicEta)
+    ) {
+      await this.forceSessionService.updateActiveSessionMessages({
+        messageTitle: after.messageTitle ?? "",
+        messageBody: after.messageBody ?? "",
+        publicEta: after.publicEta ?? null,
+      });
+    }
+  }
+
   async getEffectiveStatus(): Promise<MaintenanceModeStatusDto> {
     const settings = await this.getSettings();
     const now = new Date();
-    const start = parseDate(settings.scheduledStartAt);
-    const end = parseDate(settings.scheduledEndAt);
 
     let status: MaintenanceModeStatusDto["status"] = "off";
+    let scheduledStartAt: string | null = null;
+    let scheduledEndAt: string | null = null;
+    let messageTitle = settings.messageTitle ?? "";
+    let messageBody = settings.messageBody ?? "";
+    let publicEta = settings.publicEta ?? null;
+
     if (settings.forceEnabled) {
       status = "active";
-    } else if (start && end) {
-      if (now >= start && now <= end) {
-        status = "active";
-      } else if (now < start) {
-        status = "scheduled";
-      } else {
-        status = "off";
+    } else {
+      const nearest = await this.scheduleService.findNearestSchedule(now);
+      if (nearest) {
+        const start = new Date(nearest.scheduledStartAt);
+        const end = new Date(nearest.scheduledEndAt);
+        if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
+          if (now >= start && now <= end) {
+            scheduledStartAt = nearest.scheduledStartAt;
+            scheduledEndAt = nearest.scheduledEndAt;
+            status = "active";
+            messageTitle = nearest.messageTitle ?? "";
+            messageBody = nearest.messageBody ?? "";
+            publicEta = nearest.publicEta ?? null;
+          } else if (now < start) {
+            scheduledStartAt = nearest.scheduledStartAt;
+            scheduledEndAt = nearest.scheduledEndAt;
+            status = "scheduled";
+            messageTitle = nearest.messageTitle ?? "";
+            messageBody = nearest.messageBody ?? "";
+            publicEta = nearest.publicEta ?? null;
+          }
+        }
       }
     }
 
     return {
       ...settings,
       status,
+      scheduledStartAt,
+      scheduledEndAt,
+      messageTitle,
+      messageBody,
+      publicEta,
       serverTime: now.toISOString(),
     };
   }

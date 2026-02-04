@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Loader2, Sparkles, Music, Search, Archive, File as FileIcon, Download } from "lucide-react";
 import MarkdownRenderer from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,8 @@ type ChatMessagesAreaProps = {
   onRenameChat?: (title: string) => Promise<void>;
   workspaceId?: string;
   isRagSkill?: boolean; // Является ли навык RAG-навыком
+  /** Контент под областью сообщений (например, поле ввода), внутри колонки 768px */
+  children?: ReactNode;
 };
 
 export default function ChatMessagesArea({
@@ -56,6 +58,7 @@ export default function ChatMessagesArea({
   onRenameChat,
   workspaceId,
   isRagSkill = false,
+  children,
 }: ChatMessagesAreaProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -137,7 +140,8 @@ export default function ChatMessagesArea({
   }, [sortedMessages]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-background">
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-background">
+      {/* Шапка на всю ширину (вне колонки 768px) */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4">
         <div className="flex-1">
           {headerTitle && !isEditingTitle ? (
@@ -236,8 +240,10 @@ export default function ChatMessagesArea({
         </div>
       </header>
 
+      {/* Скролл на всю ширину — скроллбар у правого края экрана */}
       <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto py-5">
-        <div className="mx-auto max-w-3xl px-4">
+        <div className="mx-auto max-w-[800px] px-4">
+        <div className="flex min-h-full flex-col gap-3">
           {readonlyBanner}
           {assistantActionText ? (
             <div className="mb-3 flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-500/40 dark:bg-sky-900/40 dark:text-sky-100">
@@ -247,7 +253,6 @@ export default function ChatMessagesArea({
               </div>
             </div>
           ) : null}
-          <div className="flex h-full min-h-0 flex-col gap-3">
           {errorMessage ? (
             <div className="mx-auto mt-10 max-w-lg rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
               <h2 className="text-lg font-semibold">Не удалось загрузить историю</h2>
@@ -277,11 +282,10 @@ export default function ChatMessagesArea({
             </div>
           ) : null}
 
-          {!errorMessage
-            ? sortedMessages
+          {!errorMessage && !isLoading && messages.length > 0 ? (
+            <div className="flex min-h-0 flex-1 flex-col justify-end gap-3">
+              {sortedMessages
                 .filter((message) => {
-                  // Отсекаем временные локальные ассистентские сообщения без контента (плейсхолдеры стрима),
-                  // чтобы не рендерить пустой bubble.
                   const isEmptyAssistant =
                     message.role === "assistant" &&
                     (!message.content || message.content.trim().length === 0) &&
@@ -302,17 +306,20 @@ export default function ChatMessagesArea({
                     onOpenCard={onOpenCard}
                     workspaceId={workspaceId}
                   />
-                ))
-            : null}
+                ))}
+            </div>
+          ) : null}
 
           {!isLoading && !errorMessage && messages.length === 0 && !isNewChat ? (
             <div className="text-center text-sm text-muted-foreground">Сообщений пока нет.</div>
           ) : null}
-          </div>
+        </div>
         </div>
       </div>
 
-      {streamError ? (
+      {/* Колонка 768px под скроллом: ошибки, «печатает», поле ввода */}
+      <div className="mx-auto w-full max-w-[800px] shrink-0 px-4">
+    {streamError ? (
         <div className="border-t bg-destructive/10 px-6 py-3 text-sm text-destructive">{streamError}</div>
       ) : null}
 
@@ -321,6 +328,8 @@ export default function ChatMessagesArea({
           Ассистент печатает...
         </div>
       ) : null}
+      {children}
+      </div>
     </div>
   );
 }
@@ -502,7 +511,7 @@ function ChatBubble({
         <Music className="h-4 w-4 text-primary" />
       </div>
       <div className="min-w-0">
-        <p className="font-semibold text-primary-foreground">{fileName}</p>
+        <p className="break-words font-semibold text-primary-foreground">{fileName}</p>
         <p className="text-xs text-primary-foreground/70">
           {getAudioExtension(fileName)}
         </p>
@@ -518,12 +527,12 @@ function ChatBubble({
           isGroupedWithPrevious ? "mt-1" : "mt-3"
         )}
       >
-        <div className="max-w-[70%]">
+        <div className="min-w-0 max-w-[70%]">
           {isFileMessage ? (
-            <div className="rounded-2xl bg-primary px-3 py-2.5 text-primary-foreground">
+            <div className="min-w-0 overflow-hidden rounded-2xl bg-primary px-3 py-2.5 text-primary-foreground">
               {metadata?.type === 'document' ? (
                 <>
-                  {message.content && <p className="text-sm mb-2">{message.content}</p>}
+                  {message.content && <p className="text-sm mb-2 break-words">{message.content}</p>}
                   {renderDocumentAttachment()}
                 </>
               ) : (
@@ -534,7 +543,7 @@ function ChatBubble({
               </div>
             </div>
           ) : (isAudioMessage || isAudioFile) ? (
-            <div className="rounded-2xl bg-primary p-1">
+            <div className="min-w-0 overflow-hidden rounded-2xl bg-primary p-1">
               <div className="rounded-xl bg-primary/90 border border-primary-foreground/20 p-3">
                 {renderAudioBubble(audioFileName || legacyAudioFileName)}
               </div>
@@ -543,9 +552,11 @@ function ChatBubble({
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-1 rounded-2xl bg-primary px-3 py-2.5">
-              <p className="flex-1 text-sm font-medium text-primary-foreground">{displayContent}</p>
-              <span className="shrink-0 pl-2 text-xs text-primary-foreground/70">{timestamp}</span>
+            <div className="min-w-0 overflow-hidden rounded-2xl bg-primary px-3 py-2.5">
+              <p className="min-w-0 break-words text-sm font-medium text-primary-foreground">{displayContent}</p>
+              <div className="mt-2 flex justify-end">
+                <span className="text-xs text-primary-foreground/70">{timestamp}</span>
+              </div>
             </div>
           )}
         </div>
@@ -560,8 +571,8 @@ function ChatBubble({
         isGroupedWithPrevious ? "mt-1" : "mt-3"
       )}
     >
-      <div className="max-w-[70%]">
-        <div className="rounded-2xl border border-border bg-card p-3">
+      <div className="min-w-0 max-w-[70%]">
+        <div className="min-w-0 overflow-hidden rounded-2xl border border-border bg-card p-3">
           {isTranscript ? (
               <TranscriptCard
                 status={(metadata?.transcriptStatus as string) ?? "processing"}
@@ -602,7 +613,7 @@ function ChatBubble({
             <>
               <MarkdownRenderer
                 markdown={displayContent}
-                className="text-sm text-foreground break-words"
+                className="min-w-0 break-words text-sm text-foreground"
               />
               
               {/* Источники RAG */}
