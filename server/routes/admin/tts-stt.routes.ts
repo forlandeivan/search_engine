@@ -213,7 +213,7 @@ adminTtsSttRouter.get('/asr-executions/:id', asyncHandler(async (req, res) => {
   if (!execution) {
     return res.status(404).json({ message: 'Execution not found' });
   }
-  res.json(execution);
+  res.json({ execution });
 }));
 
 // ============================================================================

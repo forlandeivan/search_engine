@@ -1,7 +1,10 @@
 import { randomUUID } from "crypto";
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "./db";
+import { createLogger } from "./lib/logger";
 import type { JsonValue } from "./json-types";
+
+const logger = createLogger("asr-exec-log");
 import type {
   AsrExecutionRecord,
   AsrExecutionStatus,
@@ -76,7 +79,8 @@ export class DatabaseAsrExecutionRepository implements AsrExecutionLogRepository
   }
 
   async createExecution(record: AsrExecutionRecord): Promise<void> {
-    await db.execute(sql`
+    try {
+      await db.execute(sql`
       INSERT INTO asr_executions (
         id, created_at, updated_at, workspace_id, skill_id, chat_id,
         user_message_id, transcript_message_id, transcript_id,
@@ -107,6 +111,10 @@ export class DatabaseAsrExecutionRepository implements AsrExecutionLogRepository
         ${JSON.stringify(record.pipelineEvents ?? [])}::jsonb
       )
     `);
+    } catch (err) {
+      logger.error({ id: record.id, error: err }, "INSERT into asr_executions FAILED");
+      throw err;
+    }
   }
 
   async updateExecution(id: string, updates: Partial<AsrExecutionRecord>): Promise<void> {
@@ -135,7 +143,13 @@ export class DatabaseAsrExecutionRepository implements AsrExecutionLogRepository
 
     if (sets.length === 0) return;
     const setClause = sets.reduce((acc, part, idx) => (idx === 0 ? part : sql`${acc}, ${part}`));
-    await db.execute(sql`UPDATE asr_executions SET ${setClause} WHERE id = ${id}`);
+    
+    try {
+      await db.execute(sql`UPDATE asr_executions SET ${setClause} WHERE id = ${id}`);
+    } catch (err) {
+      logger.error({ id, error: err }, "UPDATE asr_executions FAILED");
+      throw err;
+    }
   }
 
   async getExecutionById(id: string): Promise<AsrExecutionRecord | null> {
@@ -236,7 +250,11 @@ export class AsrExecutionLogService {
     error?: { code?: string | null; message?: string | null },
   ): Promise<void> {
     const execution = await this.repository.getExecutionById(executionId);
-    if (!execution) return;
+    if (!execution) {
+      logger.warn({ executionId }, "Execution not found during addEvent");
+      return;
+    }
+    
     const evt: AsrExecutionEvent = {
       id: randomUUID(),
       timestamp: new Date().toISOString(),
@@ -255,6 +273,7 @@ export class AsrExecutionLogService {
       updates.errorCode = error.code ?? null;
       updates.errorMessage = error.message ?? null;
     }
+    
     await this.repository.updateExecution(executionId, updates);
   }
 }

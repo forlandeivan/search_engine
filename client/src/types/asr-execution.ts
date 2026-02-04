@@ -50,10 +50,12 @@ export interface AsrExecutionDetail {
 }
 
 export interface AsrExecutionListResponse {
-  items: AsrExecutionSummary[];
-  total: number;
-  page: number;
-  pageSize: number;
+  executions: AsrExecutionSummary[];
+  pagination: {
+    total: number;
+    page: number;
+    pageSize: number;
+  };
 }
 
 export interface AsrExecutionListParams {

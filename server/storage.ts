@@ -9511,24 +9511,40 @@ export class DatabaseStorage implements IStorage {
     const offset = (opts.page - 1) * opts.pageSize;
     
     // Get total count
-    const [countResult] = await this.db
-      .select({ count: sql<number>`count(*)` })
-      .from(asrExecutions);
-    const total = Number(countResult?.count ?? 0);
+    const countResult = await this.db.execute(sql`SELECT count(*) FROM asr_executions`);
+    const total = Number(countResult.rows[0]?.count ?? 0);
     
-    // Get paginated data
-    const rawExecutions = await this.db
-      .select()
-      .from(asrExecutions)
-      .orderBy(desc(asrExecutions.createdAt))
-      .limit(opts.pageSize)
-      .offset(offset);
+    // Get paginated data with JOINs for workspace and skill names
+    const result = await this.db.execute(sql`
+      SELECT 
+        ae.*,
+        w.name as "workspaceName",
+        s.name as "skillName"
+      FROM asr_executions ae
+      LEFT JOIN workspaces w ON ae.workspace_id = w.id
+      LEFT JOIN skills s ON ae.skill_id = s.id
+      ORDER BY ae.created_at DESC
+      LIMIT ${opts.pageSize}
+      OFFSET ${offset}
+    `);
     
-    // Convert BigInt to Number for JSON serialization
-    const executions = rawExecutions.map(exec => ({
-      ...exec,
-      fileSizeBytes: exec.fileSizeBytes ? Number(exec.fileSizeBytes) : null,
-      durationMs: exec.durationMs ? Number(exec.durationMs) : null,
+    // Convert and map fields from snake_case to camelCase
+    const executions = result.rows.map(row => ({
+      ...row,
+      fileSizeBytes: row.file_size_bytes ? Number(row.file_size_bytes) : null,
+      durationMs: row.duration_ms ? Number(row.duration_ms) : null,
+      workspaceId: row.workspace_id,
+      skillId: row.skill_id,
+      chatId: row.chat_id,
+      userMessageId: row.user_message_id,
+      transcriptMessageId: row.transcript_message_id,
+      transcriptId: row.transcript_id,
+      fileName: row.file_name,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      pipelineEvents: row.pipeline_events,
     }));
     
     return { 
@@ -9538,20 +9554,56 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAsrExecution(id: string): Promise<any | null> {
-    const [execution] = await this.db
-      .select()
-      .from(asrExecutions)
-      .where(eq(asrExecutions.id, id))
-      .limit(1);
-    
-    if (!execution) return null;
-    
-    // Convert BigInt to Number for JSON serialization
-    return {
-      ...execution,
-      fileSizeBytes: execution.fileSizeBytes ? Number(execution.fileSizeBytes) : null,
-      durationMs: execution.durationMs ? Number(execution.durationMs) : null,
-    };
+    try {
+      // Raw SQL query with explicit type casts for UUID/varchar compatibility
+      const result = await this.db.execute(sql`
+        SELECT 
+          ae.*,
+          w.name as "workspaceName",
+          s.name as "skillName"
+        FROM asr_executions ae
+        LEFT JOIN workspaces w ON ae.workspace_id = w.id
+        LEFT JOIN skills s ON ae.skill_id = s.id
+        WHERE ae.id = ${id}::uuid
+        LIMIT 1
+      `);
+      
+      const row = result.rows[0];
+      if (!row) {
+        return null;
+      }
+      
+      // Map snake_case to camelCase
+      return {
+        id: row.id,
+        workspaceId: row.workspace_id,
+        skillId: row.skill_id,
+        chatId: row.chat_id,
+        userMessageId: row.user_message_id,
+        transcriptMessageId: row.transcript_message_id,
+        transcriptId: row.transcript_id,
+        provider: row.provider,
+        mode: row.mode,
+        fileId: row.file_id,
+        status: row.status,
+        language: row.language,
+        fileName: row.file_name,
+        fileSizeBytes: row.file_size_bytes ? Number(row.file_size_bytes) : null,
+        durationMs: row.duration_ms ? Number(row.duration_ms) : null,
+        startedAt: row.started_at,
+        finishedAt: row.finished_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        errorCode: row.error_code,
+        errorMessage: row.error_message,
+        pipelineEvents: row.pipeline_events,
+        workspaceName: row.workspaceName,
+        skillName: row.skillName,
+      };
+    } catch (err) {
+      logger.error({ id, error: err }, "getAsrExecution failed");
+      throw err;
+    }
   }
 
   async listGuardBlocks(opts: { page: number; pageSize: number }): Promise<{ blocks: any[]; total: number; page: number; pageSize: number }> {
@@ -11730,8 +11782,8 @@ export async function ensureDatabaseSchema(): Promise<void> {
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now(),
-        workspace_id uuid,
-        skill_id uuid,
+        workspace_id text,
+        skill_id text,
         chat_id uuid,
         user_message_id uuid,
         transcript_message_id uuid,
@@ -11755,6 +11807,13 @@ export async function ensureDatabaseSchema(): Promise<void> {
     } catch (error) {
       swallowPgError(error, ["42710", "42P07"]);
     }
+    try {
+      await db.execute(sql`ALTER TABLE asr_executions ALTER COLUMN workspace_id TYPE text USING workspace_id::text`);
+      await db.execute(sql`ALTER TABLE asr_executions ALTER COLUMN skill_id TYPE text USING skill_id::text`);
+    } catch (e) {
+      // Ignore if columns already changed or table doesn't exist
+    }
+
     try {
       await db.execute(sql`CREATE INDEX CONCURRENTLY IF NOT EXISTS asr_executions_workspace_idx ON asr_executions (workspace_id, created_at DESC)`);
     } catch (error) {

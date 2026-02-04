@@ -106,13 +106,13 @@ export default function AsrExecutionsPage() {
   };
 
   const sortedEvents = useMemo(() => {
-    const events = Array.isArray(detail?.execution.pipelineEvents) ? detail?.execution.pipelineEvents : [];
+    const events = Array.isArray(detail?.execution?.pipelineEvents) ? detail.execution.pipelineEvents : [];
     return events.slice().sort((a, b) => {
       const ta = new Date(a.timestamp).getTime();
       const tb = new Date(b.timestamp).getTime();
       return ta - tb;
     });
-  }, [detail?.execution.pipelineEvents]);
+  }, [detail?.execution?.pipelineEvents]);
 
   const handleCopy = async (value?: string | null) => {
     if (!value) return;
@@ -280,35 +280,35 @@ export default function AsrExecutionsPage() {
                 <>
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <Badge className={cn(STATUS_BADGES[detail.execution.status])}>
-                        {STATUS_LABELS[detail.execution.status]}
+                      <Badge className={cn(STATUS_BADGES[detail.execution?.status || 'pending'])}>
+                        {STATUS_LABELS[detail.execution?.status || 'pending']}
                       </Badge>
-                      <span className="text-xs text-muted-foreground">{detail.execution.id}</span>
+                      <span className="text-xs text-muted-foreground">{detail.execution?.id}</span>
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      Создано: {formatDate(detail.execution.createdAt)} | Старт: {formatDate(detail.execution.startedAt)} | Завершено: {formatDate(detail.execution.finishedAt)}
+                      Создано: {formatDate(detail.execution?.createdAt)} | Старт: {formatDate(detail.execution?.startedAt)} | Завершено: {formatDate(detail.execution?.finishedAt)}
                     </div>
-                    <div className="text-sm">Длительность: {formatDuration(detail.execution.durationMs)}</div>
-                    {detail.execution.errorMessage ? (
+                    <div className="text-sm">Длительность: {formatDuration(detail.execution?.durationMs)}</div>
+                    {detail.execution?.errorMessage ? (
                       <div className="text-sm text-destructive">
-                        {detail.execution.errorCode ? `[${detail.execution.errorCode}] ` : null}
+                        {detail.execution?.errorCode ? `[${detail.execution.errorCode}] ` : null}
                         {detail.execution.errorMessage}
                       </div>
                     ) : null}
                   </div>
                   <div className="grid gap-2 text-sm">
-                    <DetailRow label="Workspace" value={detail.execution.workspaceName ?? detail.execution.workspaceId} />
-                    <DetailRow label="Chat" value={detail.execution.chatId} onCopy={handleCopy} />
-                    <DetailRow label="User message (audio)" value={detail.execution.userMessageId} onCopy={handleCopy} />
-                    <DetailRow label="Transcript message" value={detail.execution.transcriptMessageId} onCopy={handleCopy} />
-                    <DetailRow label="Transcript" value={detail.execution.transcriptId} onCopy={handleCopy} />
-                    <DetailRow label="Provider" value={detail.execution.provider} />
-                    <DetailRow label="Language" value={detail.execution.language} />
-                    <DetailRow label="File name" value={detail.execution.fileName} />
-                    <DetailRow label="File size" value={formatSize(detail.execution.fileSizeBytes)} />
-                    <DetailRow label="Длительность аудио" value={formatDuration(detail.execution.durationMs)} />
-                    <DetailRow label="Списано кредитов" value={formatCreditsCents(detail.execution.creditsChargedCents)} />
-                    <DetailRow label="Auto action" value={autoActionUsed(detail.execution.pipelineEvents) ? "Да" : "Нет"} />
+                    <DetailRow label="Workspace" value={detail.execution?.workspaceName ?? detail.execution?.workspaceId} />
+                    <DetailRow label="Chat" value={detail.execution?.chatId} onCopy={handleCopy} />
+                    <DetailRow label="User message (audio)" value={detail.execution?.userMessageId} onCopy={handleCopy} />
+                    <DetailRow label="Transcript message" value={detail.execution?.transcriptMessageId} onCopy={handleCopy} />
+                    <DetailRow label="Transcript" value={detail.execution?.transcriptId} onCopy={handleCopy} />
+                    <DetailRow label="Provider" value={detail.execution?.provider} />
+                    <DetailRow label="Language" value={detail.execution?.language} />
+                    <DetailRow label="File name" value={detail.execution?.fileName} />
+                    <DetailRow label="File size" value={formatSize(detail.execution?.fileSizeBytes)} />
+                    <DetailRow label="Длительность аудио" value={formatDuration(detail.execution?.durationMs)} />
+                    <DetailRow label="Списано кредитов" value={formatCreditsCents(detail.execution?.creditsChargedCents)} />
+                    <DetailRow label="Auto action" value={autoActionUsed(detail.execution?.pipelineEvents) ? "Да" : "Нет"} />
                   </div>
                   <div className="pt-2">
                     <h3 className="text-base font-semibold mb-2">Пайплайн</h3>
