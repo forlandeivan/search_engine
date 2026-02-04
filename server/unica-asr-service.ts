@@ -115,7 +115,7 @@ export interface UnicaRecognitionRequest {
 export interface UnicaRecognitionTask {
   id: string;
   workspaceId: string;
-  status: "Queued" | "Processing" | "Completed" | "Failed";
+  status: "Queued" | "Processing" | "Completed" | "Failed" | "Canceling" | "Cancelled";
   createdAt: string;
   updatedAt: string;
   resultDatasetId: string | null;
@@ -481,7 +481,7 @@ export class UnicaAsrService {
         baseUrl: asrProvider.config.baseUrl || "",
         workspaceId: asrProvider.config.workspaceId || "GENERAL",
         skipSslVerify: asrProvider.config.skipSslVerify || false,
-        timeoutMs: 3600000,
+        timeoutMs: 600000, // 10 минут
       };
       
       const restored = {
@@ -534,7 +534,7 @@ export class UnicaAsrService {
     }
 
     const { taskId, config, startedAt } = cached;
-    const timeoutMs = config.timeoutMs || 3600000; // 60 минут по умолчанию
+    const timeoutMs = config.timeoutMs || 600000; // 10 минут по умолчанию (было 60)
     const elapsedMs = Date.now() - startedAt.getTime();
 
     log("[UnicaASR] Task ID:", taskId);
@@ -598,6 +598,25 @@ export class UnicaAsrService {
         done: true,
         status: "failed",
         error: task.error || "Unknown error",
+      };
+    }
+
+    // Обработка отмены задачи
+    if (task.status === "Canceling" || task.status === "Cancelled") {
+      log("[UnicaASR] ⚠️ Task cancelled:", task.status);
+      
+      await this.logEvent(cached.executionId, "asr_error", {
+        taskId,
+        providerStatus: task.status,
+        error: "Задача была отменена",
+        elapsedMs,
+      });
+      
+      this.operationsCache.delete(operationId);
+      return {
+        done: true,
+        status: "failed",
+        error: `Задача была отменена (${task.status})`,
       };
     }
 
