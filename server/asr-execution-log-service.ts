@@ -1,7 +1,10 @@
 import { randomUUID } from "crypto";
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "./db";
+import { createLogger } from "./lib/logger";
 import type { JsonValue } from "./json-types";
+
+const logger = createLogger("asr-exec-log");
 import type {
   AsrExecutionRecord,
   AsrExecutionStatus,
@@ -10,11 +13,6 @@ import type {
   AsrExecutionEvent,
   AsrExecutionStage,
 } from "./asr-execution-log";
-
-// Investigation note for executionId=8b12aba2-82a0-4a4b-baf0-fdbbfc3584cb:
-// - В текущей БД таблицы asr_executions нет (миграция 0048 не применена), поэтому записи по этому id нет.
-// - При этом transcript 902729e8-1720-4c4f-a5ad-f07f96e3afa4 и placeholder message уже в status=ready с текстом,
-//   значит транскрибация прошла до конца, но лог ASR не сохранялся из-за отсутствующей таблицы.
 
 export interface AsrExecutionLogRepository {
   createExecution(record: AsrExecutionRecord): Promise<void>;
@@ -81,7 +79,8 @@ export class DatabaseAsrExecutionRepository implements AsrExecutionLogRepository
   }
 
   async createExecution(record: AsrExecutionRecord): Promise<void> {
-    await db.execute(sql`
+    try {
+      await db.execute(sql`
       INSERT INTO asr_executions (
         id, created_at, updated_at, workspace_id, skill_id, chat_id,
         user_message_id, transcript_message_id, transcript_id,
@@ -112,6 +111,10 @@ export class DatabaseAsrExecutionRepository implements AsrExecutionLogRepository
         ${JSON.stringify(record.pipelineEvents ?? [])}::jsonb
       )
     `);
+    } catch (err) {
+      logger.error({ id: record.id, error: err }, "INSERT into asr_executions FAILED");
+      throw err;
+    }
   }
 
   async updateExecution(id: string, updates: Partial<AsrExecutionRecord>): Promise<void> {
@@ -140,7 +143,13 @@ export class DatabaseAsrExecutionRepository implements AsrExecutionLogRepository
 
     if (sets.length === 0) return;
     const setClause = sets.reduce((acc, part, idx) => (idx === 0 ? part : sql`${acc}, ${part}`));
-    await db.execute(sql`UPDATE asr_executions SET ${setClause} WHERE id = ${id}`);
+    
+    try {
+      await db.execute(sql`UPDATE asr_executions SET ${setClause} WHERE id = ${id}`);
+    } catch (err) {
+      logger.error({ id, error: err }, "UPDATE asr_executions FAILED");
+      throw err;
+    }
   }
 
   async getExecutionById(id: string): Promise<AsrExecutionRecord | null> {
@@ -241,7 +250,11 @@ export class AsrExecutionLogService {
     error?: { code?: string | null; message?: string | null },
   ): Promise<void> {
     const execution = await this.repository.getExecutionById(executionId);
-    if (!execution) return;
+    if (!execution) {
+      logger.warn({ executionId }, "Execution not found during addEvent");
+      return;
+    }
+    
     const evt: AsrExecutionEvent = {
       id: randomUUID(),
       timestamp: new Date().toISOString(),
@@ -260,6 +273,7 @@ export class AsrExecutionLogService {
       updates.errorCode = error.code ?? null;
       updates.errorMessage = error.message ?? null;
     }
+    
     await this.repository.updateExecution(executionId, updates);
   }
 }

@@ -50,10 +50,12 @@ export function useAsrExecutionsList(params: AsrExecutionListParams = {}) {
   });
 
   return {
-    executions: query.data?.items ?? [],
-    pagination: query.data
-      ? { page: query.data.page, pageSize: query.data.pageSize, total: query.data.total }
-      : { page: params.page ?? DEFAULT_PAGE, pageSize: params.pageSize ?? DEFAULT_PAGE_SIZE, total: 0 },
+    executions: query.data?.executions ?? [],
+    pagination: query.data?.pagination ?? { 
+      page: params.page ?? DEFAULT_PAGE, 
+      pageSize: params.pageSize ?? DEFAULT_PAGE_SIZE, 
+      total: 0 
+    },
     isLoading: query.isLoading,
     isFetching: query.isFetching,
     isError: query.isError,

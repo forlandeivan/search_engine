@@ -3026,8 +3026,9 @@ export const asrExecutions = pgTable(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-    workspaceId: uuid("workspace_id"),
-    skillId: uuid("skill_id"),
+    // Use text instead of uuid because workspaces.id and skills.id are varchar, not uuid
+    workspaceId: text("workspace_id"),
+    skillId: text("skill_id"),
     chatId: uuid("chat_id"),
     userMessageId: uuid("user_message_id"),
     transcriptMessageId: uuid("transcript_message_id"),
