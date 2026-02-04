@@ -3,7 +3,8 @@ import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@/lib/zod-resolver";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDownIcon, ChevronsUpDown, Loader2, Plus } from "lucide-react";
+import { CalendarIcon, Check, ChevronsUpDown, Loader2, Plus } from "lucide-react";
+import { ru } from "date-fns/locale";
 import type { DateRange } from "react-day-picker";
 
 import { apiRequest } from "@/lib/queryClient";
@@ -323,6 +324,7 @@ export default function AdminMaintenanceModePage() {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<MaintenanceModeScheduleListItemDto | null>(null);
   const [forceConfirmOpen, setForceConfirmOpen] = useState(false);
+  const [forceEditOpen, setForceEditOpen] = useState(false);
   const [cancelDialog, setCancelDialog] = useState<
     | { kind: "force" }
     | { kind: "schedule"; schedule: MaintenanceModeScheduleListItemDto; status: "scheduled" | "active" }
@@ -415,6 +417,13 @@ export default function AdminMaintenanceModePage() {
     messageBody: values.messageBody.trim(),
     publicEta: values.publicEta.trim() ? values.publicEta.trim() : null,
   });
+
+  const syncMessageFieldsFromSettings = (settings?: MaintenanceModeSettingsDto | null) => {
+    form.setValue("messageTitle", sanitizeText(settings?.messageTitle), { shouldDirty: false });
+    form.setValue("messageBody", sanitizeText(settings?.messageBody), { shouldDirty: false });
+    form.setValue("publicEta", sanitizeText(settings?.publicEta), { shouldDirty: false });
+    form.clearErrors(["messageTitle", "messageBody", "publicEta"]);
+  };
 
   const resetScheduleForm = (schedule?: MaintenanceModeScheduleListItemDto | null) => {
     const start = schedule
@@ -559,6 +568,16 @@ export default function AdminMaintenanceModePage() {
     });
   };
 
+  const handleForceUpdate = () => {
+    const values = form.getValues();
+    updateSettingsMutation.mutate(buildSettingsPayload(values, true), {
+      onSuccess: () => {
+        setForceEditOpen(false);
+        toast({ title: "Сообщения обновлены" });
+      },
+    });
+  };
+
   const handleScheduleSubmit = form.handleSubmit((values) => {
     scheduleMutation.mutate({ scheduleId: editingSchedule?.id, values, action: "save" });
   });
@@ -642,6 +661,28 @@ export default function AdminMaintenanceModePage() {
   );
 
   const journalRows = intervalsQuery.data ?? [];
+  const activeTimeZoneLabel =
+    timeZoneOptions.find((zone) => zone.value === normalizedTimeZone)?.label ?? normalizedTimeZone;
+  const pageStatusMeta =
+    status === "active"
+      ? {
+          label: "Активен",
+          variant: "destructive" as const,
+          className: "rounded-full",
+        }
+      : status === "scheduled"
+        ? {
+            label: "Запланирован",
+            variant: "outline" as const,
+            className:
+              "rounded-full bg-yellow-500/15 text-yellow-700 border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20",
+          }
+        : {
+            label: "Выключен",
+            variant: "outline" as const,
+            className:
+              "rounded-full bg-gray-500/10 text-gray-600 border-gray-500/20 dark:bg-gray-500/10 dark:text-gray-400 dark:border-gray-500/15",
+          };
 
   if (isLoading) {
     return (
@@ -673,18 +714,26 @@ export default function AdminMaintenanceModePage() {
         <div className="flex items-center justify-between gap-4 px-6 pt-6">
           <div className="flex items-center gap-2">
             <h1 className="text-3xl font-semibold">Режим обслуживания</h1>
-            <Badge variant={status === "active" ? "destructive" : status === "scheduled" ? "secondary" : "outline"}>
-              {status === "active" ? "Активен" : status === "scheduled" ? "Запланирован" : "Выключен"}
+            <Badge variant={pageStatusMeta.variant} className={pageStatusMeta.className}>
+              {pageStatusMeta.label}
             </Badge>
           </div>
           <div className="flex flex-wrap gap-2">
-            <AlertDialog open={forceConfirmOpen} onOpenChange={setForceConfirmOpen}>
+            <AlertDialog
+              open={forceConfirmOpen}
+              onOpenChange={(open) => {
+                setForceConfirmOpen(open);
+                if (open) {
+                  syncMessageFieldsFromSettings(data);
+                }
+              }}
+            >
               <AlertDialogTrigger asChild>
                 <Button
                   variant="destructive"
                   disabled={updateSettingsMutation.isPending || status === "active"}
                 >
-                  Включить прямо сейчас
+                  Экстренно включить
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
@@ -694,6 +743,51 @@ export default function AdminMaintenanceModePage() {
                     Режим обслуживания будет активирован немедленно и заблокирует обычные запросы.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
+                <Form {...form}>
+                  <div className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="messageTitle"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Заголовок для пользователей</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Дополнительно" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="publicEta"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Время восстановления</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Дополнительно" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                    <FormField
+                      control={form.control}
+                      name="messageBody"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Описание для страницы заглушки</FormLabel>
+                          <FormControl>
+                            <Textarea placeholder="Дополнительно" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </Form>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Отмена</AlertDialogCancel>
                   <AlertDialogAction onClick={handleForceEnable}>
@@ -702,6 +796,82 @@ export default function AdminMaintenanceModePage() {
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
+
+            <Dialog
+              open={forceEditOpen}
+              onOpenChange={(open) => {
+                setForceEditOpen(open);
+                if (open) {
+                  syncMessageFieldsFromSettings(data);
+                }
+              }}
+            >
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>Редактировать экстренный режим</DialogTitle>
+                  <DialogDescription>
+                    Обновите сообщения для пользователей. Режим останется активным.
+                  </DialogDescription>
+                </DialogHeader>
+                <Form {...form}>
+                  <div className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="messageTitle"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Заголовок для пользователей</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Дополнительно" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="publicEta"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Время восстановления</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Дополнительно" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                    <FormField
+                      control={form.control}
+                      name="messageBody"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Описание для страницы заглушки</FormLabel>
+                          <FormControl>
+                            <Textarea placeholder="Дополнительно" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </Form>
+                <DialogFooter className="gap-2">
+                  <Button type="button" variant="outline" onClick={() => setForceEditOpen(false)}>
+                    Отмена
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={updateSettingsMutation.isPending}
+                    onClick={handleForceUpdate}
+                  >
+                    Сохранить
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             <Button
               disabled={scheduleMutation.isPending || updateSettingsMutation.isPending}
@@ -726,7 +896,7 @@ export default function AdminMaintenanceModePage() {
                     {editingSchedule ? "Редактировать обслуживание" : "Запланировать обслуживание"}
                   </DialogTitle>
                   <DialogDescription>
-                    Укажите интервал, часовой пояс и сообщения для пользователей.
+                    Укажите интервал, часовой пояс и сообщения для пользователей при необходимости
                   </DialogDescription>
                 </DialogHeader>
                 <Form {...form}>
@@ -818,16 +988,17 @@ export default function AdminMaintenanceModePage() {
                             <FormLabel>Интервал обслуживания</FormLabel>
                             <Popover>
                               <PopoverTrigger asChild>
-                                <Button variant="outline" className="w-full justify-between font-normal">
+                                <Button variant="outline" className="w-full justify-start gap-2 font-normal">
+                                  <CalendarIcon className="h-4 w-4 text-muted-foreground" />
                                   <span className="truncate text-left">{displayLabel}</span>
-                                  <ChevronDownIcon className="h-4 w-4 opacity-50 shrink-0" />
                                 </Button>
                               </PopoverTrigger>
                               <PopoverContent className="w-auto p-0" align="start">
-                                <Card className="w-fit py-4">
+                                <Card className="w-fit py-4 border-0 shadow-none">
                                   <CardContent className="px-4">
                                     <Calendar
                                       mode="range"
+                                      locale={ru}
                                       defaultMonth={range?.from}
                                       selected={range}
                                       onSelect={(value) => {
@@ -929,7 +1100,6 @@ export default function AdminMaintenanceModePage() {
                           <FormControl>
                             <Textarea placeholder="Дополнительно" {...field} />
                           </FormControl>
-                          <FormDescription>Подробное описание для пользователей.</FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -955,192 +1125,225 @@ export default function AdminMaintenanceModePage() {
         </div>
 
         <div className="px-6 pb-6 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Журнал</CardTitle>
-              <CardDescription>История интервалов режима обслуживания.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {intervalsQuery.isLoading ? (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Загружаем интервалы...
-                </div>
-              ) : intervalsQuery.isError ? (
-                <Alert variant="destructive">
-                  <AlertTitle>Ошибка загрузки</AlertTitle>
-                  <AlertDescription>
-                    {(intervalsQuery.error as Error | undefined)?.message ?? "Не удалось загрузить интервалы"}
-                  </AlertDescription>
-                </Alert>
-              ) : journalRows.length ? (
-                <div className="space-y-3">
-                  <div className="border rounded-md overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted text-left">
-                        <tr>
-                          <th className="px-3 py-2">Интервал (UTC)</th>
-                          <th className="px-3 py-2">Статус</th>
-                          <th className="px-3 py-2">Админ</th>
-                          <th className="px-3 py-2">Детали</th>
-                          <th className="px-3 py-2 text-right">Действия</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {journalRows.map((row) => {
-                          const startLabel = new Date(row.startAt).toLocaleString("ru-RU", {
+          {intervalsQuery.isLoading ? (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Загружаем интервалы...
+            </div>
+          ) : intervalsQuery.isError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Ошибка загрузки</AlertTitle>
+              <AlertDescription>
+                {(intervalsQuery.error as Error | undefined)?.message ?? "Не удалось загрузить интервалы"}
+              </AlertDescription>
+            </Alert>
+          ) : journalRows.length ? (
+            <div className="space-y-3">
+              <div className="border rounded-md overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted text-left">
+                    <tr>
+                      <th className="px-3 py-2">Интервал ({activeTimeZoneLabel})</th>
+                      <th className="px-3 py-2">Статус</th>
+                      <th className="px-3 py-2">Инициатор</th>
+                      <th className="px-3 py-2">Детали</th>
+                      <th className="px-3 py-2 text-right">Действия</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {journalRows.map((row) => {
+                      const startLabel = new Date(row.startAt).toLocaleString("ru-RU", {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                        timeZone: normalizedTimeZone,
+                      });
+                      const endLabel = row.endAt
+                        ? new Date(row.endAt).toLocaleString("ru-RU", {
                             dateStyle: "medium",
                             timeStyle: "short",
-                            timeZone: "UTC",
-                          });
-                          const endLabel = row.endAt
-                            ? new Date(row.endAt).toLocaleString("ru-RU", {
-                                dateStyle: "medium",
-                                timeStyle: "short",
-                                timeZone: "UTC",
-                              })
-                            : null;
-                          const intervalLabel = endLabel
-                            ? `${startLabel} — ${endLabel} (UTC)`
-                            : `С ${startLabel} (UTC)`;
-                          const statusLabel =
-                            row.status === "active"
-                              ? "Активный"
-                              : row.status === "scheduled"
-                                ? "Запланирован"
-                                : "Прошедший";
-                          const schedule = row.kind === "schedule" ? scheduleLookup.get(row.id) : null;
-                          const details: string[] = [];
-                          if (row.kind === "force") {
-                            details.push("Экстренный режим");
-                          }
-                          if (row.messageTitle?.trim()) {
-                            details.push(row.messageTitle.trim());
-                          }
-                          if (row.messageBody?.trim()) {
-                            details.push(row.messageBody.trim());
-                          }
-                          if (row.publicEta?.trim()) {
-                            details.push(`ETA: ${row.publicEta.trim()}`);
-                          }
+                            timeZone: normalizedTimeZone,
+                          })
+                        : null;
+                      const intervalLabel = endLabel
+                        ? `${startLabel} — ${endLabel}`
+                        : `С ${startLabel}`;
+                      const statusMeta = (() => {
+                        if (row.status === "past") {
+                          return {
+                            label: "Архивный",
+                            variant: "outline" as const,
+                            className:
+                              "rounded-full bg-gray-500/10 text-gray-600 border-gray-500/20 dark:bg-gray-500/10 dark:text-gray-400 dark:border-gray-500/15",
+                          };
+                        }
+                        if (row.kind === "force") {
+                          return {
+                            label: "Экстренный",
+                            variant: "destructive" as const,
+                            className: "rounded-full",
+                          };
+                        }
+                        if (row.status === "active") {
+                          return {
+                            label: "Активный",
+                            variant: "destructive" as const,
+                            className: "rounded-full",
+                          };
+                        }
+                        return {
+                          label: "Запланирован",
+                          variant: "outline" as const,
+                          className:
+                            "rounded-full bg-yellow-500/15 text-yellow-700 border-yellow-500/25 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20",
+                        };
+                      })();
+                      const schedule = row.kind === "schedule" ? scheduleLookup.get(row.id) : null;
+                      const details: string[] = [];
+                      if (row.kind === "force") {
+                        details.push("Экстренный режим");
+                      }
+                      if (row.messageTitle?.trim()) {
+                        details.push(row.messageTitle.trim());
+                      }
+                      if (row.messageBody?.trim()) {
+                        details.push(row.messageBody.trim());
+                      }
+                      if (row.publicEta?.trim()) {
+                        details.push(`ETA: ${row.publicEta.trim()}`);
+                      }
 
-                          return (
-                            <tr key={row.id} className="border-b last:border-b-0">
-                              <td className="px-3 py-2 whitespace-nowrap">{intervalLabel}</td>
-                              <td className="px-3 py-2 whitespace-nowrap">{statusLabel}</td>
-                              <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                                {row.initiatorName ?? "-"}
-                              </td>
-                              <td className="px-3 py-2 text-muted-foreground">
-                                {details.length ? (
-                                  <div className="space-y-1">
-                                    {details.map((line) => (
-                                      <div key={line}>{line}</div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  "-"
-                                )}
-                              </td>
-                              <td className="px-3 py-2 text-right">
-                                {row.kind === "force" ? (
-                                  row.status === "active" ? (
+                      return (
+                        <tr key={row.id} className="border-b last:border-b-0">
+                          <td className="px-3 py-2 whitespace-nowrap">{intervalLabel}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <Badge variant={statusMeta.variant} className={statusMeta.className}>
+                              {statusMeta.label}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
+                            {row.initiatorName ?? "-"}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {details.length ? (
+                              <div className="space-y-1">
+                                {details.map((line) => (
+                                  <div key={line}>{line}</div>
+                                ))}
+                              </div>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            {row.kind === "force" ? (
+                              row.status === "active" ? (
+                                <div className="flex justify-end gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={updateSettingsMutation.isPending}
+                                    onClick={() => {
+                                      syncMessageFieldsFromSettings(data);
+                                      setForceEditOpen(true);
+                                    }}
+                                  >
+                                    Редактировать
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={updateSettingsMutation.isPending}
+                                    onClick={() => setCancelDialog({ kind: "force" })}
+                                  >
+                                    Отключить
+                                  </Button>
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )
+                            ) : schedule ? (
+                              row.status === "past" ? (
+                                <span className="text-muted-foreground">-</span>
+                              ) : (
+                                <div className="flex justify-end gap-2">
+                                  {row.status === "scheduled" ? (
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      disabled={updateSettingsMutation.isPending}
-                                      onClick={() => setCancelDialog({ kind: "force" })}
+                                      disabled={scheduleMutation.isPending}
+                                      onClick={() => handleEditSchedule(schedule)}
                                     >
-                                      Отключить
+                                      Редактировать
                                     </Button>
-                                  ) : (
-                                    <span className="text-muted-foreground">-</span>
-                                  )
-                                ) : schedule ? (
-                                  row.status === "past" ? (
-                                    <span className="text-muted-foreground">-</span>
-                                  ) : (
-                                    <div className="flex justify-end gap-2">
-                                      {row.status === "scheduled" ? (
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          disabled={scheduleMutation.isPending}
-                                          onClick={() => handleEditSchedule(schedule)}
-                                        >
-                                          Редактировать
-                                        </Button>
-                                      ) : null}
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        disabled={scheduleMutation.isPending || deleteScheduleMutation.isPending}
-                                        onClick={() =>
-                                          setCancelDialog({
-                                            kind: "schedule",
-                                            schedule,
-                                            status: row.status === "active" ? "active" : "scheduled",
-                                          })
-                                        }
-                                      >
-                                        {row.status === "active" ? "Отключить" : "Отменить"}
-                                      </Button>
-                                    </div>
-                                  )
-                                ) : (
-                                  <span className="text-muted-foreground">-</span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <AlertDialog
-                    open={Boolean(cancelDialog)}
-                    onOpenChange={(open) => {
-                      if (!open) {
-                        setCancelDialog(null);
-                      }
-                    }}
-                  >
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>
-                          {cancelDialog?.kind === "force"
-                            ? "Отключить режим обслуживания?"
-                            : cancelDialog?.status === "active"
-                              ? "Отключить режим обслуживания?"
-                              : "Отменить запланированное обслуживание?"}
-                        </AlertDialogTitle>
-                        <AlertDialogDescription>
-                          {cancelDialog?.kind === "force"
-                            ? "Режим обслуживания будет выключен."
-                            : cancelDialog?.status === "active"
-                              ? "Интервал будет завершен досрочно. Запись останется в журнале."
-                              : "Запланированный интервал будет отменен."}
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Отмена</AlertDialogCancel>
-                        <AlertDialogAction onClick={handleCancelConfirm}>
-                          Подтвердить
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </div>
-              ) : (
-                <Alert>
-                  <AlertTitle>Пока нет интервалов</AlertTitle>
-                  <AlertDescription>Добавьте или запустите обслуживание, чтобы появились записи.</AlertDescription>
-                </Alert>
-              )}
-            </CardContent>
-          </Card>
+                                  ) : null}
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={scheduleMutation.isPending || deleteScheduleMutation.isPending}
+                                    onClick={() =>
+                                      setCancelDialog({
+                                        kind: "schedule",
+                                        schedule,
+                                        status: row.status === "active" ? "active" : "scheduled",
+                                      })
+                                    }
+                                  >
+                                    {row.status === "active" ? "Отключить" : "Отменить"}
+                                  </Button>
+                                </div>
+                              )
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <AlertDialog
+                open={Boolean(cancelDialog)}
+                onOpenChange={(open) => {
+                  if (!open) {
+                    setCancelDialog(null);
+                  }
+                }}
+              >
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      {cancelDialog?.kind === "force"
+                        ? "Отключить режим обслуживания?"
+                        : cancelDialog?.status === "active"
+                          ? "Отключить режим обслуживания?"
+                          : "Отменить запланированное обслуживание?"}
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {cancelDialog?.kind === "force"
+                        ? "Режим обслуживания будет выключен."
+                        : cancelDialog?.status === "active"
+                          ? "Интервал будет завершен досрочно. Запись останется в журнале."
+                          : "Запланированный интервал будет отменен."}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Отмена</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleCancelConfirm}>
+                      Подтвердить
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          ) : (
+            <Alert>
+              <AlertTitle>Пока нет интервалов</AlertTitle>
+              <AlertDescription>Добавьте или запустите обслуживание, чтобы появились записи.</AlertDescription>
+            </Alert>
+          )}
+        </div>
       </div>
     </div>
-  </div>
   );
 }
