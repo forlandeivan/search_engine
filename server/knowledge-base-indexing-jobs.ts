@@ -290,11 +290,91 @@ function parseFunctionArgs(argsStr: string): string[] {
   return args;
 }
 
+// Создаёт тело запроса для Unica AI провайдера эмбеддингов
+function createUnicaEmbeddingRequestBody(
+  model: string,
+  input: string | string[],
+  options?: {
+    workSpaceId?: string;
+    truncate?: boolean;
+    dimensions?: number;
+  },
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    workSpaceId: options?.workSpaceId ?? "GENERAL",
+    model,
+    input: Array.isArray(input) ? input : [input],
+  };
+
+  if (options?.truncate !== undefined) {
+    body.truncate = options.truncate;
+  }
+
+  if (options?.dimensions !== undefined && options.dimensions > 0) {
+    body.dimensions = options.dimensions;
+  }
+
+  return body;
+}
+
+// Создаёт тело запроса для стандартного (OpenAI-совместимого) провайдера эмбеддингов
+function createStandardEmbeddingRequestBody(
+  model: string,
+  input: string,
+): Record<string, unknown> {
+  return {
+    model,
+    input,
+  };
+}
+
+// Извлекает вектор из ответа Unica AI провайдера
+function extractUnicaEmbeddingVector(data: Record<string, unknown>): number[] | undefined {
+  const vectors = data.vectors;
+  if (Array.isArray(vectors) && vectors.length > 0) {
+    const firstVector = vectors[0];
+    if (Array.isArray(firstVector) && firstVector.every((v) => typeof v === "number")) {
+      return firstVector as number[];
+    }
+  }
+  return undefined;
+}
+
+// Извлекает вектор из ответа стандартного (OpenAI-совместимого) провайдера
+function extractStandardEmbeddingVector(data: Record<string, unknown>): number[] | undefined {
+  // Формат OpenAI: { data: [{ embedding: [...] }] }
+  const dataArray = data.data;
+  if (Array.isArray(dataArray) && dataArray.length > 0) {
+    const firstEntry = dataArray[0] as Record<string, unknown> | undefined;
+    const embedding = firstEntry?.embedding ?? firstEntry?.vector;
+    if (Array.isArray(embedding) && embedding.every((v) => typeof v === "number")) {
+      return embedding as number[];
+    }
+  }
+  // Альтернативный формат: { embedding: [...] }
+  const embedding = data.embedding;
+  if (Array.isArray(embedding) && embedding.every((v) => typeof v === "number")) {
+    return embedding as number[];
+  }
+  return undefined;
+}
+
 async function fetchEmbeddingVectorForChunk(
   provider: EmbeddingProvider,
   accessToken: string,
   text: string,
 ): Promise<{ vector: number[]; usageTokens?: number; embeddingId?: string | number }> {
+  // Проверка входных данных
+  if (!text || text.trim().length === 0) {
+    throw new Error(`Пустой текст для эмбеддинга (длина: ${text?.length ?? 0}, после trim: ${text?.trim()?.length ?? 0})`);
+  }
+
+  const textLength = text.length;
+  const textPreview = text.substring(0, 100).replace(/\n/g, '\\n');
+  const isUnicaProvider = provider.providerType === "unica";
+  
+  workerLog(`fetchEmbeddingVectorForChunk: providerType=${provider.providerType}, model=${provider.model}, textLength=${textLength}, textPreview="${textPreview}..."`);
+
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
   headers.set("Authorization", `Bearer ${accessToken}`);
@@ -306,14 +386,22 @@ async function fetchEmbeddingVectorForChunk(
   const allowSelfSigned = provider.allowSelfSignedCertificate ?? false;
   workerLog(`fetchEmbeddingVectorForChunk: provider.allowSelfSignedCertificate=${provider.allowSelfSignedCertificate}, allowSelfSigned=${allowSelfSigned}, url=${provider.embeddingsUrl}`);
   
+  // Формируем тело запроса в зависимости от типа провайдера
+  const requestBody = isUnicaProvider
+    ? createUnicaEmbeddingRequestBody(provider.model, text, {
+        workSpaceId: provider.unicaWorkspaceId ?? (provider.requestConfig?.additionalBodyFields?.workSpaceId as string) ?? "GENERAL",
+        truncate: provider.requestConfig?.additionalBodyFields?.truncate as boolean | undefined,
+        dimensions: provider.requestConfig?.additionalBodyFields?.dimensions as number | undefined,
+      })
+    : createStandardEmbeddingRequestBody(provider.model, text);
+  
+  workerLog(`fetchEmbeddingVectorForChunk: requestBody=${JSON.stringify(requestBody).substring(0, 200)}...`);
+  
   const requestOptions = applyTlsPreferences<NodeFetchOptions>(
     {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        model: provider.model,
-        input: text,
-      }),
+      body: JSON.stringify(requestBody),
     },
     allowSelfSigned,
   );
@@ -323,24 +411,67 @@ async function fetchEmbeddingVectorForChunk(
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => response.statusText);
-    throw new Error(`Embedding API error: ${response.status} ${errorText}`);
+    
+    // Детальное логирование ошибки
+    workerLog(`Embedding API error: status=${response.status}, statusText=${response.statusText}`);
+    workerLog(`Embedding API error response body: ${errorText}`);
+    workerLog(`Embedding API error request details: providerType=${provider.providerType}, model=${provider.model}, textLength=${textLength}, url=${provider.embeddingsUrl}`);
+    workerLog(`Embedding API error request body: ${JSON.stringify(requestBody).substring(0, 500)}`);
+    
+    // Формируем понятное сообщение об ошибке
+    let errorDetails = "";
+    try {
+      const errorJson = JSON.parse(errorText);
+      if (errorJson.error?.message) {
+        errorDetails = errorJson.error.message;
+      } else if (errorJson.message) {
+        errorDetails = errorJson.message;
+      } else if (errorJson.detail) {
+        errorDetails = typeof errorJson.detail === 'string' ? errorJson.detail : JSON.stringify(errorJson.detail);
+      } else {
+        errorDetails = errorText;
+      }
+    } catch {
+      errorDetails = errorText || response.statusText;
+    }
+    
+    // Добавляем контекст для отладки
+    const contextInfo = `[провайдер: ${provider.providerType}, модель: ${provider.model}, длина текста: ${textLength} символов, URL: ${provider.embeddingsUrl}]`;
+    
+    throw new Error(`Ошибка API эмбеддингов (${response.status}): ${errorDetails} ${contextInfo}`);
   }
 
-  const data = (await response.json()) as {
-    data?: Array<{ embedding?: number[] }>;
-    embedding?: number[];
-    usage?: { total_tokens?: number };
-    id?: string | number;
-  };
-  const vector = Array.isArray(data.data?.[0]?.embedding) ? data.data[0].embedding : data.embedding;
-  if (!Array.isArray(vector)) {
-    throw new Error("Invalid embedding response format");
+  const data = (await response.json()) as Record<string, unknown>;
+  
+  // Извлекаем вектор в зависимости от типа провайдера
+  const vector = isUnicaProvider
+    ? extractUnicaEmbeddingVector(data)
+    : extractStandardEmbeddingVector(data);
+    
+  if (!Array.isArray(vector) || vector.length === 0) {
+    const responsePreview = JSON.stringify(data).substring(0, 300);
+    workerLog(`Invalid embedding response format: providerType=${provider.providerType}, responsePreview=${responsePreview}`);
+    throw new Error(`Некорректный формат ответа от API эмбеддингов (провайдер: ${provider.providerType}). Ответ: ${responsePreview}...`);
+  }
+
+  // Извлекаем usage tokens
+  let usageTokens: number | undefined;
+  const usage = data.usage as Record<string, unknown> | undefined;
+  if (usage?.total_tokens !== undefined && typeof usage.total_tokens === "number") {
+    usageTokens = usage.total_tokens;
+  } else if (isUnicaProvider) {
+    // Для Unica токены могут быть в meta.metrics.inputTokens
+    const meta = data.meta as Record<string, unknown> | undefined;
+    const metrics = meta?.metrics as Record<string, unknown> | undefined;
+    if (metrics?.inputTokens !== undefined && typeof metrics.inputTokens === "number") {
+      usageTokens = metrics.inputTokens;
+    }
   }
 
   return {
     vector,
-    usageTokens: data.usage?.total_tokens,
-    embeddingId: data.id,
+    usageTokens,
+    embeddingId: data.id as string | number | undefined,
   };
 }
 
@@ -1307,6 +1438,12 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       } catch (embeddingError) {
         const errorMsg = embeddingError instanceof Error ? embeddingError.message : String(embeddingError);
         workerLog(`ERROR embedding chunk ${index + 1}/${chunkSet.chunks.length} for job ${job.id}: ${errorMsg}`);
+        
+        // Логируем детали проблемного чанка для отладки
+        const chunkPreview = chunk.text.substring(0, 200).replace(/\n/g, '\\n');
+        workerLog(`ERROR chunk details: textLength=${chunk.text.length}, charCount=${chunk.charCount ?? 'N/A'}, tokenCount=${chunk.tokenCount ?? 'N/A'}`);
+        workerLog(`ERROR chunk preview: "${chunkPreview}..."`);
+        
         if (embeddingError instanceof Error && embeddingError.stack) {
           workerLog(`ERROR stack: ${embeddingError.stack}`);
         }
