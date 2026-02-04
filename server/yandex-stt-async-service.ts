@@ -7,7 +7,7 @@ import { parseBuffer } from "music-metadata";
 import { tmpdir } from "os";
 import { writeFile, unlink, readFile } from "fs/promises";
 import { join } from "path";
-import { randomBytes } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
 import fetch from "node-fetch";
 import type { ChatMessageMetadata, TranscriptStatus } from "@shared/schema";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
@@ -305,6 +305,7 @@ export interface UploadAudioOnlyResponse {
   objectKey: string;
   bucketName: string;
   durationSeconds: number | null;
+  executionId: string | null;
 }
 
 type AsyncUploadResult = {
@@ -645,6 +646,30 @@ class YandexSttAsyncService {
         executionId,
       });
 
+      // Add asr_request_sent event to execution log
+      if (executionId) {
+        try {
+          const { asrExecutionLogService } = await import("./asr-execution-log-context");
+          await asrExecutionLogService.addEvent(
+            executionId,
+            {
+              stage: "asr_request_sent",
+              details: {
+                s3Uri: fileUri,
+                objectKey: fileObjectKey,
+                fileName: originalFileName,
+                durationSeconds: audioDurationSeconds,
+                elapsed: Date.now() - startTime,
+              },
+            },
+            "processing",
+          );
+          console.info({ executionId, operationId }, "[yandex-stt-async] Added asr_request_sent event to execution log");
+        } catch (logError) {
+          console.warn({ error: logError, executionId }, "[yandex-stt-async] Failed to add asr_request_sent event");
+        }
+      }
+
       console.info(`[yandex-stt-async] [SUCCESS] Transcription started, operationId: ${operationId}, total time: ${Date.now() - startTime}ms`, {
         operationId,
         transcriptId,
@@ -766,11 +791,49 @@ class YandexSttAsyncService {
       );
     }
 
+    // Create ASR execution record with file_uploaded event for Yandex
+    let executionId: string | null = null;
+    try {
+      const { asrExecutionLogService } = await import("./asr-execution-log-context");
+      const execution = await asrExecutionLogService.createExecution({
+        workspaceId,
+        chatId,
+        provider: "yandex_speechkit",
+        mode: "pre_upload",
+        status: "pending",
+        fileName: originalFileName || "audio.wav",
+        fileSizeBytes: audioBuffer.length,
+        durationMs: durationSeconds ? Math.round(durationSeconds * 1000) : null,
+        startedAt: new Date(),
+        pipelineEvents: [
+          {
+            id: randomUUID(),
+            timestamp: new Date().toISOString(),
+            stage: "file_uploaded",
+            details: {
+              s3Uri: uploadResult.uri,
+              objectKey: uploadResult.objectKey,
+              bucketName: s3BucketName,
+              mimeType,
+              sizeBytes: audioBuffer.length,
+              durationSeconds,
+              elapsed: Date.now() - startTime,
+            } as Record<string, unknown>,
+          },
+        ],
+      });
+      executionId = execution.id;
+      console.info({ executionId, s3Uri: uploadResult.uri }, "[yandex-stt-async] ASR execution log created with file_uploaded event");
+    } catch (logError) {
+      console.warn({ error: logError }, "[yandex-stt-async] Failed to create ASR execution log");
+    }
+
     return {
       s3Uri: uploadResult.uri,
       objectKey: uploadResult.objectKey,
       bucketName: s3BucketName,
       durationSeconds,
+      executionId,
     };
   }
 

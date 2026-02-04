@@ -765,6 +765,7 @@ transcribeRouter.post('/upload', upload.single('audio'), asyncHandler(async (req
       bucketName: result.bucketName,
       durationSeconds: result.durationSeconds,
       fileName: file.originalname,
+      executionId: result.executionId,
       message: 'Файл загружен. Нажмите "Отправить" для начала транскрибации.',
     });
   } catch (error) {
@@ -993,10 +994,12 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
       s3Uri,
       s3ObjectKey: objectKey,
       durationSeconds: durationSeconds ?? null,
+      executionId: clientExecutionId || null,
     });
 
     logger.info({
       operationId: result.operationId,
+      executionId: clientExecutionId,
       elapsed: Date.now() - startTime,
     }, '[START-TRANSCRIBE-DONE] Transcription started successfully');
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLocation, useRoute } from "wouter";
-import { CalendarIcon, Filter, RefreshCcw, Clock, Copy } from "lucide-react";
+import { CalendarIcon, Filter, RefreshCcw, Clock, Copy, CheckCircle2, XCircle, Circle, Loader2, ChevronDown, ChevronRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -78,7 +78,86 @@ const STAGE_LABELS: Record<string, string> = {
   auto_action_triggered: "Автодействие запущено",
   auto_action_completed: "Автодействие завершено",
   transcript_preview_message_created: "Создана карточка превью",
+  transcribe_complete_called: "Вызван callback завершения",
 };
+
+// Порядок основных этапов пайплайна (для визуализации прогресса)
+const PIPELINE_STAGES_ORDER = [
+  "file_uploaded",
+  "audio_message_created",
+  "asr_request_sent",
+  "asr_result_final",
+  "transcript_saved",
+] as const;
+
+// Опциональные этапы (могут присутствовать или нет)
+const OPTIONAL_STAGES = new Set([
+  "transcript_placeholder_message_created",
+  "asr_result_partial",
+  "auto_action_triggered",
+  "auto_action_completed",
+  "transcript_preview_message_created",
+  "transcribe_complete_called",
+]);
+
+// Форматирование деталей этапа в человекочитаемый вид
+function formatStageDetails(stage: string, details: Record<string, unknown> | null): { key: string; value: string }[] {
+  if (!details) return [];
+  
+  const result: { key: string; value: string }[] = [];
+  
+  switch (stage) {
+    case "file_uploaded":
+      if (details.fileName) result.push({ key: "Файл", value: String(details.fileName) });
+      if (details.fileSize) result.push({ key: "Размер", value: formatSize(Number(details.fileSize)) });
+      if (details.mimeType) result.push({ key: "Тип", value: String(details.mimeType) });
+      break;
+      
+    case "asr_request_sent":
+      if (details.fileName) result.push({ key: "Файл", value: String(details.fileName) });
+      if (details.durationSeconds) result.push({ key: "Длительность", value: `${Number(details.durationSeconds).toFixed(1)} сек` });
+      if (details.elapsed !== undefined) result.push({ key: "Время отправки", value: `${details.elapsed} мс` });
+      if (details.objectKey) result.push({ key: "S3 ключ", value: String(details.objectKey) });
+      break;
+      
+    case "asr_result_final":
+    case "asr_result_partial":
+      if (details.provider) result.push({ key: "Провайдер", value: String(details.provider) });
+      if (details.operationId) result.push({ key: "Operation ID", value: String(details.operationId) });
+      if (details.previewText) {
+        const preview = String(details.previewText);
+        result.push({ key: "Текст", value: preview.length > 150 ? preview.slice(0, 150) + "..." : preview });
+      }
+      break;
+      
+    case "transcript_saved":
+      if (details.transcriptId) result.push({ key: "ID стенограммы", value: String(details.transcriptId) });
+      break;
+      
+    case "transcribe_complete_called":
+      if (details.chatId) result.push({ key: "Chat ID", value: String(details.chatId).slice(0, 8) + "..." });
+      if (details.operationId) result.push({ key: "Operation ID", value: String(details.operationId) });
+      if (details.transcriptId) result.push({ key: "Transcript ID", value: String(details.transcriptId).slice(0, 8) + "..." });
+      break;
+      
+    case "auto_action_triggered":
+    case "auto_action_completed":
+      if (details.actionType) result.push({ key: "Тип действия", value: String(details.actionType) });
+      if (details.skillId) result.push({ key: "Навык", value: String(details.skillId) });
+      break;
+      
+    default:
+      // Для неизвестных этапов показываем все поля
+      for (const [key, value] of Object.entries(details)) {
+        if (value !== null && value !== undefined) {
+          const strValue = typeof value === "object" ? JSON.stringify(value) : String(value);
+          result.push({ key, value: strValue.length > 100 ? strValue.slice(0, 100) + "..." : strValue });
+        }
+      }
+  }
+  
+  return result;
+}
 
 export default function AsrExecutionsPage() {
   const [currentLocation, navigate] = useLocation();
@@ -310,32 +389,11 @@ export default function AsrExecutionsPage() {
                     <DetailRow label="Списано кредитов" value={formatCreditsCents(detail.execution?.creditsChargedCents)} />
                     <DetailRow label="Auto action" value={autoActionUsed(detail.execution?.pipelineEvents) ? "Да" : "Нет"} />
                   </div>
-                  <div className="pt-2">
-                    <h3 className="text-base font-semibold mb-2">Пайплайн</h3>
-                    <div className="space-y-2">
-                      {sortedEvents.map((evt) => (
-                        <div key={evt.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                          <div className="flex items-center justify-between text-sm">
-                            <div className="flex items-center gap-2">
-                              <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
-                              <span className="font-semibold">{STAGE_LABELS[evt.stage] ?? evt.stage}</span>
-                            </div>
-                            <span className="text-xs text-muted-foreground">
-                              {new Date(evt.timestamp).toLocaleTimeString(undefined, { hour12: false })}
-                            </span>
-                          </div>
-                          {evt.details ? (
-                            <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-muted-foreground bg-white/70 p-2 rounded">
-                              {JSON.stringify(evt.details, null, 2)}
-                            </pre>
-                          ) : null}
-                        </div>
-                      ))}
-                      {sortedEvents.length === 0 ? (
-                        <div className="text-sm text-muted-foreground">Событий пока нет.</div>
-                      ) : null}
-                    </div>
-                  </div>
+                  <PipelineVisualizer 
+                    events={sortedEvents} 
+                    status={detail.execution?.status || 'pending'}
+                    errorMessage={detail.execution?.errorMessage}
+                  />
                 </>
               )}
             </CardContent>
@@ -365,6 +423,300 @@ function DetailRow({
             <Copy className="h-3 w-3" />
           </Button>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+// Компонент визуализации пайплайна
+function PipelineVisualizer({
+  events,
+  status,
+  errorMessage,
+}: {
+  events: AsrExecutionEvent[];
+  status: AsrExecutionStatus;
+  errorMessage?: string | null;
+}) {
+  const [expandedStages, setExpandedStages] = useState<Set<string>>(new Set());
+  const [showRawJson, setShowRawJson] = useState<Set<string>>(new Set());
+
+  // Группируем события по этапам
+  const eventsByStage = useMemo(() => {
+    const map = new Map<string, AsrExecutionEvent[]>();
+    for (const evt of events) {
+      const existing = map.get(evt.stage) || [];
+      existing.push(evt);
+      map.set(evt.stage, existing);
+    }
+    return map;
+  }, [events]);
+
+  // Определяем, какие этапы завершены
+  const completedStages = useMemo(() => new Set(events.map(e => e.stage)), [events]);
+
+  // Вычисляем прогресс по основным этапам
+  const progress = useMemo(() => {
+    const completed = PIPELINE_STAGES_ORDER.filter(s => completedStages.has(s)).length;
+    return {
+      completed,
+      total: PIPELINE_STAGES_ORDER.length,
+      percent: Math.round((completed / PIPELINE_STAGES_ORDER.length) * 100),
+    };
+  }, [completedStages]);
+
+  // Определяем текущий этап (последний выполненный или первый не выполненный)
+  const currentStageIndex = useMemo(() => {
+    for (let i = PIPELINE_STAGES_ORDER.length - 1; i >= 0; i--) {
+      if (completedStages.has(PIPELINE_STAGES_ORDER[i])) {
+        return i;
+      }
+    }
+    return -1;
+  }, [completedStages]);
+
+  const toggleExpand = (stage: string) => {
+    setExpandedStages(prev => {
+      const next = new Set(prev);
+      if (next.has(stage)) {
+        next.delete(stage);
+      } else {
+        next.add(stage);
+      }
+      return next;
+    });
+  };
+
+  const toggleRawJson = (stage: string) => {
+    setShowRawJson(prev => {
+      const next = new Set(prev);
+      if (next.has(stage)) {
+        next.delete(stage);
+      } else {
+        next.add(stage);
+      }
+      return next;
+    });
+  };
+
+  const getStageIcon = (stage: string, index: number) => {
+    const isCompleted = completedStages.has(stage);
+    const isCurrent = index === currentStageIndex + 1 && status === "processing";
+    const isFailed = status === "failed" && index === currentStageIndex + 1;
+
+    if (isFailed) {
+      return <XCircle className="h-5 w-5 text-rose-500" />;
+    }
+    if (isCompleted) {
+      return <CheckCircle2 className="h-5 w-5 text-emerald-500" />;
+    }
+    if (isCurrent) {
+      return <Loader2 className="h-5 w-5 text-amber-500 animate-spin" />;
+    }
+    return <Circle className="h-5 w-5 text-slate-300" />;
+  };
+
+  // Собираем все этапы для отображения (основные + опциональные которые выполнились)
+  const allStages = useMemo(() => {
+    const stages: { stage: string; isOptional: boolean }[] = [];
+    
+    // Добавляем основные этапы
+    for (const stage of PIPELINE_STAGES_ORDER) {
+      stages.push({ stage, isOptional: false });
+    }
+    
+    // Добавляем опциональные этапы которые выполнились (вставляем в правильные места)
+    const optionalCompleted = Array.from(completedStages).filter(s => OPTIONAL_STAGES.has(s));
+    for (const optStage of optionalCompleted) {
+      // Находим позицию по времени
+      const optEvents = eventsByStage.get(optStage);
+      if (!optEvents?.length) continue;
+      
+      const optTime = new Date(optEvents[0].timestamp).getTime();
+      
+      // Находим позицию для вставки
+      let insertIdx = stages.length;
+      for (let i = 0; i < stages.length; i++) {
+        const stageEvents = eventsByStage.get(stages[i].stage);
+        if (stageEvents?.length) {
+          const stageTime = new Date(stageEvents[0].timestamp).getTime();
+          if (optTime < stageTime) {
+            insertIdx = i;
+            break;
+          }
+        }
+      }
+      
+      stages.splice(insertIdx, 0, { stage: optStage, isOptional: true });
+    }
+    
+    return stages;
+  }, [completedStages, eventsByStage]);
+
+  return (
+    <div className="pt-2 space-y-4">
+      {/* Заголовок с прогрессом */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold">Пайплайн</h3>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">
+            {progress.completed}/{progress.total} этапов
+          </span>
+          <div className="w-20 h-2 bg-slate-200 rounded-full overflow-hidden">
+            <div 
+              className={cn(
+                "h-full transition-all duration-300",
+                status === "failed" ? "bg-rose-500" : 
+                status === "success" ? "bg-emerald-500" : "bg-amber-500"
+              )}
+              style={{ width: `${progress.percent}%` }}
+            />
+          </div>
+          {status === "success" && (
+            <Badge className="bg-emerald-100 text-emerald-800">Завершён</Badge>
+          )}
+          {status === "failed" && (
+            <Badge className="bg-rose-100 text-rose-800">Ошибка</Badge>
+          )}
+          {status === "processing" && (
+            <Badge className="bg-amber-100 text-amber-800">В процессе</Badge>
+          )}
+        </div>
+      </div>
+
+      {/* Ошибка если есть */}
+      {status === "failed" && errorMessage && (
+        <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-sm text-rose-700">
+          <span className="font-medium">Ошибка: </span>{errorMessage}
+        </div>
+      )}
+
+      {/* Список этапов */}
+      <div className="space-y-1">
+        {allStages.map(({ stage, isOptional }, idx) => {
+          const stageEvents = eventsByStage.get(stage) || [];
+          const isCompleted = completedStages.has(stage);
+          const isExpanded = expandedStages.has(stage);
+          const showJson = showRawJson.has(stage);
+          const lastEvent = stageEvents[stageEvents.length - 1];
+          
+          return (
+            <div 
+              key={stage}
+              className={cn(
+                "rounded-lg border transition-colors",
+                isCompleted 
+                  ? "bg-white border-slate-200" 
+                  : "bg-slate-50 border-slate-100"
+              )}
+            >
+              {/* Заголовок этапа */}
+              <button
+                type="button"
+                onClick={() => isCompleted && stageEvents.length > 0 && toggleExpand(stage)}
+                className={cn(
+                  "w-full flex items-center gap-3 p-3 text-left",
+                  isCompleted && stageEvents.length > 0 && "cursor-pointer hover:bg-slate-50"
+                )}
+                disabled={!isCompleted || stageEvents.length === 0}
+              >
+                {/* Иконка статуса */}
+                {getStageIcon(stage, idx)}
+                
+                {/* Название этапа */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className={cn(
+                      "font-medium text-sm",
+                      isCompleted ? "text-slate-900" : "text-slate-400"
+                    )}>
+                      {STAGE_LABELS[stage] ?? stage}
+                    </span>
+                    {isOptional && (
+                      <span className="text-xs text-slate-400">(опц.)</span>
+                    )}
+                  </div>
+                  
+                  {/* Краткая информация */}
+                  {isCompleted && lastEvent && (
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {formatStageDetails(stage, lastEvent.details as Record<string, unknown> | null)
+                        .slice(0, 2)
+                        .map(d => `${d.key}: ${d.value}`)
+                        .join(" • ") || "Выполнено"}
+                    </div>
+                  )}
+                </div>
+                
+                {/* Время */}
+                {isCompleted && lastEvent && (
+                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {new Date(lastEvent.timestamp).toLocaleTimeString(undefined, { hour12: false })}
+                  </span>
+                )}
+                
+                {/* Стрелка раскрытия */}
+                {isCompleted && stageEvents.length > 0 && (
+                  isExpanded 
+                    ? <ChevronDown className="h-4 w-4 text-slate-400" />
+                    : <ChevronRight className="h-4 w-4 text-slate-400" />
+                )}
+              </button>
+              
+              {/* Детали этапа (раскрываемые) */}
+              {isExpanded && stageEvents.length > 0 && (
+                <div className="px-3 pb-3 pt-0 border-t border-slate-100">
+                  {stageEvents.map((evt, evtIdx) => (
+                    <div key={evt.id} className="mt-2">
+                      {stageEvents.length > 1 && (
+                        <div className="text-xs text-muted-foreground mb-1">
+                          Событие {evtIdx + 1} из {stageEvents.length} — {new Date(evt.timestamp).toLocaleTimeString(undefined, { hour12: false })}
+                        </div>
+                      )}
+                      
+                      {/* Форматированные детали */}
+                      {!showJson && evt.details && (
+                        <div className="space-y-1 bg-slate-50 rounded p-2">
+                          {formatStageDetails(stage, evt.details as Record<string, unknown>).map(({ key, value }) => (
+                            <div key={key} className="flex gap-2 text-xs">
+                              <span className="text-muted-foreground min-w-[100px]">{key}:</span>
+                              <span className="text-slate-700 break-all">{value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      
+                      {/* Raw JSON */}
+                      {showJson && evt.details && (
+                        <pre className="whitespace-pre-wrap break-words text-xs text-muted-foreground bg-slate-50 p-2 rounded overflow-auto max-h-48">
+                          {JSON.stringify(evt.details, null, 2)}
+                        </pre>
+                      )}
+                      
+                      {/* Кнопка переключения JSON/форматированный вид */}
+                      {evt.details && (
+                        <button
+                          type="button"
+                          onClick={() => toggleRawJson(stage)}
+                          className="text-xs text-blue-600 hover:text-blue-800 mt-1"
+                        >
+                          {showJson ? "Показать форматированный вид" : "Показать JSON"}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        
+        {events.length === 0 && (
+          <div className="text-sm text-muted-foreground p-4 text-center bg-slate-50 rounded-lg">
+            Событий пока нет. Пайплайн не запущен.
+          </div>
+        )}
       </div>
     </div>
   );

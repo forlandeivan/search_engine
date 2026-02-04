@@ -521,6 +521,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
             s3Uri: result.s3Uri,
             objectKey: result.objectKey,
             durationSeconds: result.durationSeconds,
+            executionId: result.executionId,
           });
           
           setPreUploadedFile({
@@ -530,6 +531,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
             bucketName: result.bucketName,
             durationSeconds: result.durationSeconds ?? null,
             chatId: targetChatId,
+            executionId: result.executionId,
           });
           return true;
         }
