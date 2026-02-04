@@ -57,10 +57,10 @@ export const maintenanceModeGuard: RequestHandler = async (req, res, next) => {
 
     return res.status(503).json(buildMaintenancePayload(status));
   } catch (error) {
-    return res.status(503).json({
-      errorCode: MAINTENANCE_ERROR_CODE,
-      message: "Идут технические работы",
-    });
+    // Fail-open: if we can't determine maintenance status, allow request through
+    // This prevents false maintenance mode when DB is unavailable or table doesn't exist
+    console.error("[maintenance-mode-guard] Error checking maintenance status, allowing request:", error);
+    return next();
   }
 };
 

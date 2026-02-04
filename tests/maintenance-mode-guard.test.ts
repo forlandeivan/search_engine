@@ -46,4 +46,22 @@ describe("maintenance mode middleware", () => {
     expect(response.status).not.toBe(503);
     expect(response.body?.errorCode).not.toBe("MAINTENANCE_MODE");
   });
+
+  it("allows request through when getEffectiveStatus throws (fail-open)", async () => {
+    vi.spyOn(maintenanceModeSettingsService, "getEffectiveStatus").mockRejectedValue(
+      new Error("Database connection failed"),
+    );
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await supertest(app).get("/api/auth/session");
+
+    // Should NOT return 503 MAINTENANCE_MODE - should fail-open and pass to next handler
+    expect(response.body?.errorCode).not.toBe("MAINTENANCE_MODE");
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[maintenance-mode-guard]"),
+      expect.any(Error),
+    );
+
+    consoleSpy.mockRestore();
+  });
 });
