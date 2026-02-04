@@ -21,7 +21,7 @@ console.log("[App.tsx] api-errors loaded");
 import { Toaster } from "@/components/ui/toaster";
 console.log("[App.tsx] Toaster loaded");
 
-import { MaintenanceBanner } from "@/components/maintenance-mode/MaintenanceBanner";
+import { MaintenanceBanner, shouldShowMaintenanceBanner } from "@/components/maintenance-mode/MaintenanceBanner";
 console.log("[App.tsx] MaintenanceBanner loaded");
 
 import { MaintenanceOverlay } from "@/components/maintenance-mode/MaintenanceOverlay";
@@ -721,7 +721,10 @@ function MaintenanceLayer() {
 
 function AppFrame({ children }: { children: ReactNode }) {
   const maintenance = useMaintenanceStatus();
-  const shouldShowBanner = maintenance.status === "scheduled" && Boolean(maintenance.data);
+  const shouldShowBanner =
+    maintenance.status === "scheduled" && maintenance.data
+      ? shouldShowMaintenanceBanner(maintenance.data)
+      : false;
   const bannerRef = useRef<HTMLDivElement | null>(null);
 
   useLayoutEffect(() => {
