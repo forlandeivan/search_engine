@@ -6,7 +6,7 @@ console.log("[App.tsx] wouter loaded");
 import { useEffect, useLayoutEffect, useRef, Suspense, useState, Component, type ReactNode, type ErrorInfo } from "react";
 console.log("[App.tsx] react loaded");
 
-import { lazyWithRetry, isChunkLoadError, canAutoReload, performAutoReload, clearAllCachesAndReload, resetReloadCounter } from "@/lib/lazy-with-retry";
+import { lazyWithRetry, isChunkLoadError, canAutoReload, performAutoReload } from "@/lib/lazy-with-retry";
 console.log("[App.tsx] lazy-with-retry loaded");
 
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
@@ -209,39 +209,20 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
                 : (this.state.error?.message || "Неизвестная ошибка приложения. Пожалуйста, попробуйте перезагрузить страницу.")}
             </p>
             
-            <div className="flex flex-col sm:flex-row gap-3 mt-2">
-              <Button
-                size="lg"
-                onClick={() => {
-                  // Очищаем кэш React Query и перезагружаем
-                  queryClient.clear();
-                  // Сбрасываем счетчики перезагрузок
-                  resetReloadCounter();
-                  window.location.reload();
-                }}
-              >
-                Перезагрузить страницу
-              </Button>
-              
-              {isChunkError && (
-                <Button
-                  size="lg"
-                  variant="outline"
-                  onClick={() => {
-                    queryClient.clear();
-                    clearAllCachesAndReload();
-                  }}
-                >
-                  Очистить кэш
-                </Button>
-              )}
-            </div>
-            
-            {isChunkError && (
-              <p className="text-xs text-muted-foreground mt-4">
-                Если перезагрузка не помогает — нажмите "Очистить кэш" или перезапустите dev-сервер
-              </p>
-            )}
+            <Button
+              size="lg"
+              onClick={() => {
+                // Очищаем кэш React Query и перезагружаем
+                queryClient.clear();
+                // Сбрасываем счетчики перезагрузок (используем оба ключа на случай рассинхронизации)
+                sessionStorage.removeItem("chunk-reload-attempt");
+                sessionStorage.removeItem("chunk-reload-count");
+                window.location.reload();
+              }}
+              className="mt-2"
+            >
+              Перезагрузить страницу
+            </Button>
           </div>
         </div>
       );

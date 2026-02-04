@@ -4,7 +4,6 @@
     "type": "module",
     "license": "MIT",
     "scripts": {
-        "predev": "node -e \"const fs=require('fs');const p='node_modules/.vite';if(fs.existsSync(p)){fs.rmSync(p,{recursive:true,force:true});console.log('[predev] Vite cache cleared: '+p)}\"",
         "dev": "cross-env NODE_ENV=development tsx -r dotenv/config server/index.ts",
         "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
         "start": "NODE_ENV=production node dist/index.js",

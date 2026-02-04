@@ -82,9 +82,9 @@ const STAGE_LABELS: Record<string, string> = {
 };
 
 // Порядок основных этапов пайплайна (для визуализации прогресса)
-// Примечание: audio_message_created убран т.к. аудио не сохраняется как отдельное сообщение
 const PIPELINE_STAGES_ORDER = [
   "file_uploaded",
+  "audio_message_created",
   "asr_request_sent",
   "asr_result_final",
   "transcript_saved",
@@ -92,7 +92,6 @@ const PIPELINE_STAGES_ORDER = [
 
 // Опциональные этапы (могут присутствовать или нет)
 const OPTIONAL_STAGES = new Set([
-  "audio_message_created", // legacy, не используется
   "transcript_placeholder_message_created",
   "asr_result_partial",
   "auto_action_triggered",

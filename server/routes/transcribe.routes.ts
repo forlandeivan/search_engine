@@ -1397,10 +1397,9 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
   });
   
   if (asrExecutionId) {
-    const provider = operationId.startsWith('unica_') ? 'unica' : 'yandex_speechkit';
     await asrExecutionLogService.addEvent(asrExecutionId, {
       stage: 'asr_result_final',
-      details: { provider, operationId, previewText: transcriptText.substring(0, 200) },
+      details: { provider: 'yandex_speechkit', operationId, previewText: transcriptText.substring(0, 200) },
     });
     await asrExecutionLogService.updateExecution(asrExecutionId, {
       transcriptMessageId: createdMessage.id,
