@@ -81,17 +81,17 @@ const STAGE_LABELS: Record<string, string> = {
   transcribe_complete_called: "Вызван callback завершения",
 };
 
-// Порядок основных этапов пайплайна (для визуализации прогресса)
+// Порядок основных этапов пайплайна (4 этапа; audio_message_created не используется)
 const PIPELINE_STAGES_ORDER = [
   "file_uploaded",
-  "audio_message_created",
   "asr_request_sent",
   "asr_result_final",
   "transcript_saved",
 ] as const;
 
-// Опциональные этапы (могут присутствовать или нет)
+// Опциональные этапы — показываем только если событие было записано
 const OPTIONAL_STAGES = new Set([
+  "audio_message_created",
   "transcript_placeholder_message_created",
   "asr_result_partial",
   "auto_action_triggered",
