@@ -5504,6 +5504,9 @@ async function runKnowledgeBaseRagPipeline(options: {
       }, '[MULTI_TURN_RAG] Passing conversation history to LLM completion');
     }
     
+    // Сохраняем детали LLM запроса для отладки
+    let llmRequestDetails: { url?: string; body?: unknown } | null = null;
+    
     const completionPromise = fetchLlmCompletion(
       configuredProvider,
       llmAccessToken,
@@ -5515,6 +5518,8 @@ async function runKnowledgeBaseRagPipeline(options: {
         responseFormat,
         conversationHistory,
         onBeforeRequest(details) {
+          // Сохраняем для добавления в debug ответа
+          llmRequestDetails = details;
           llmStep.setInput({
             providerId: llmProviderId,
             model: llmModel,
@@ -5690,6 +5695,23 @@ async function runKnowledgeBaseRagPipeline(options: {
       },
       debug: {
         vectorSearch: vectorSearchDetails,
+        /** Детали LLM запроса для отладки */
+        llmRequest: llmRequestDetails !== null ? {
+          url: (llmRequestDetails as { url?: string; body?: unknown }).url,
+          body: (llmRequestDetails as { url?: string; body?: unknown }).body,
+        } : null,
+        /** Контекст, использованный для LLM */
+        contextInfo: {
+          chunksCount: contextRecords.length,
+          totalLength: contextRecords.reduce((sum, r) => sum + (typeof r.payload === 'string' ? r.payload.length : JSON.stringify(r.payload).length), 0),
+          chunks: contextRecords.slice(0, 5).map((r) => ({
+            index: r.index,
+            score: r.score,
+            payloadPreview: typeof r.payload === 'string' 
+              ? r.payload.slice(0, 200) 
+              : JSON.stringify(r.payload).slice(0, 200),
+          })),
+        },
       },
       responseFormat,
     } as const;

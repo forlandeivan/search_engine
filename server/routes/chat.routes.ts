@@ -574,18 +574,24 @@ interface KnowledgeBaseRagPipelineResponse {
     usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     query?: string;
     timings?: Record<string, number>;
-    /** Контекст, отправленный на LLM (для отладки) */
-    debugContext?: {
-      contextChunksCount?: number;
-      contextTotalLength?: number;
-      promptPreview?: string;
-      systemPromptPreview?: string;
-      retrievedChunks?: Array<{
-        chunkId?: string;
-        docTitle?: string;
-        snippet?: string;
-        score?: number;
-      }>;
+    /** Debug информация из RAG pipeline */
+    debug?: {
+      vectorSearch?: unknown;
+      /** Детали LLM запроса - URL и тело запроса с промптом */
+      llmRequest?: {
+        url?: string;
+        body?: unknown;
+      } | null;
+      /** Информация о контексте, использованном для LLM */
+      contextInfo?: {
+        chunksCount?: number;
+        totalLength?: number;
+        chunks?: Array<{
+          index?: number;
+          score?: number;
+          payloadPreview?: string;
+        }>;
+      };
     };
   };
 }
@@ -848,7 +854,9 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       // Логируем детальные шаги RAG пайплайна для отладки
       const citations = ragResult.response.citations ?? [];
       const chunks = ragResult.response.chunks ?? [];
-      const debugContext = ragResult.response.debugContext;
+      const debugInfo = ragResult.response.debug;
+      const contextInfo = debugInfo?.contextInfo;
+      const llmRequest = debugInfo?.llmRequest;
       
       // Шаг 1: Векторный поиск - результаты поиска по базе знаний
       await safeLogStep('VECTOR_SEARCH', SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
@@ -875,31 +883,48 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
       await safeLogStep('BUILD_RAG_CONTEXT', SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
         input: {
           chunksCount: chunks.length,
-          citationsCount: citations.length,
+          citationsFound: citations.length,
         },
         output: {
-          contextChunksCount: debugContext?.contextChunksCount ?? chunks.length,
-          contextTotalLength: debugContext?.contextTotalLength ?? chunks.reduce((sum, c) => sum + (c.snippet?.length ?? 0), 0),
-          retrievedChunks: (debugContext?.retrievedChunks ?? chunks.slice(0, 5)).map((c: any) => ({
-            chunkId: c.chunkId ?? c.chunk_id,
-            docTitle: c.docTitle ?? c.doc_title,
-            snippetPreview: (c.snippet ?? '').slice(0, 150),
+          contextChunksCount: contextInfo?.chunksCount ?? chunks.length,
+          contextTotalLength: contextInfo?.totalLength ?? chunks.reduce((sum, c) => sum + (c.snippet?.length ?? 0), 0),
+          retrievedChunks: (contextInfo?.chunks ?? chunks.slice(0, 5).map((c) => ({
+            index: 0,
             score: c.score,
-          })),
+            payloadPreview: c.snippet?.slice(0, 150),
+          }))).slice(0, 5),
         },
       });
       
-      // Шаг 3: Итоговый промпт - что было отправлено на LLM
+      // Шаг 3: Итоговый промпт - что было отправлено на LLM (КЛЮЧЕВОЙ ШАГ!)
+      // Здесь можно увидеть полный запрос к LLM включая системный промпт и контекст
+      const llmRequestBody = llmRequest?.body as Record<string, unknown> | undefined;
       await safeLogStep('BUILD_LLM_PROMPT', SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
         input: {
           userQuery: payload.content.slice(0, 200),
           normalizedQuery: ragResult.response.normalizedQuery?.slice(0, 200),
-          contextChunksUsed: debugContext?.contextChunksCount ?? chunks.length,
+          contextChunksUsed: contextInfo?.chunksCount ?? chunks.length,
+          llmEndpoint: llmRequest?.url ?? null,
         },
         output: {
-          promptPreview: debugContext?.promptPreview ?? `Вопрос: ${payload.content.slice(0, 100)}...`,
-          systemPromptPreview: debugContext?.systemPromptPreview ?? 'Сформируй понятный ответ на русском языке...',
-          totalContextLength: debugContext?.contextTotalLength ?? chunks.reduce((sum, c) => sum + (c.snippet?.length ?? 0), 0),
+          // Полное тело запроса к LLM (содержит system prompt, messages, контекст)
+          llmRequestBody: llmRequestBody ? {
+            model: llmRequestBody.model,
+            // Для Unica провайдера
+            system: typeof llmRequestBody.system === 'string' ? llmRequestBody.system.slice(0, 2000) : undefined,
+            prompt: typeof llmRequestBody.prompt === 'string' ? llmRequestBody.prompt.slice(0, 1000) : undefined,
+            // Для OpenAI-совместимых провайдеров
+            messages: Array.isArray(llmRequestBody.messages) 
+              ? llmRequestBody.messages.map((m: any) => ({
+                  role: m.role,
+                  contentPreview: typeof m.content === 'string' ? m.content.slice(0, 500) : JSON.stringify(m.content).slice(0, 500),
+                  contentLength: typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length,
+                }))
+              : undefined,
+            temperature: llmRequestBody.temperature,
+            max_tokens: llmRequestBody.max_tokens,
+          } : null,
+          contextTotalLength: contextInfo?.totalLength ?? chunks.reduce((sum, c) => sum + (c.snippet?.length ?? 0), 0),
         },
       });
       
