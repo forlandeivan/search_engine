@@ -209,6 +209,9 @@ export class UnicaAsrService {
     if (cached) {
       cached.executionId = executionId;
       this.operationsCache.set(operationId, cached);
+      log("[UnicaASR] ✅ executionId set:", executionId, "for operationId:", operationId);
+    } else {
+      log("[UnicaASR] ⚠️ setExecutionId failed: operation not in cache:", operationId);
     }
   }
   
@@ -220,10 +223,14 @@ export class UnicaAsrService {
     stage: string,
     details: Record<string, unknown>
   ): Promise<void> {
-    if (!executionId) return;
+    if (!executionId) {
+      log("[UnicaASR] ⚠️ logEvent skipped: no executionId for stage:", stage);
+      return;
+    }
     try {
       const { asrExecutionLogService } = await import("./asr-execution-log-context");
       await asrExecutionLogService.addEvent(executionId, { stage, details });
+      log("[UnicaASR] ✅ Event logged:", stage, "executionId:", executionId);
     } catch (err) {
       log("[UnicaASR] Failed to log event:", err);
     }
