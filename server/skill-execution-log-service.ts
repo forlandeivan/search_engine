@@ -17,6 +17,8 @@ export interface SkillExecutionLogRepository {
   createExecution(record: SkillExecutionRecord): Promise<void>;
   updateExecution(id: string, updates: Partial<SkillExecutionRecord>): Promise<void>;
   createStep(record: SkillExecutionStepRecord): Promise<void>;
+  /** Обновляет последний шаг данного типа для execution */
+  updateStepByType(executionId: string, type: SkillExecutionStepType, updates: Partial<SkillExecutionStepRecord>): Promise<void>;
   listExecutions(): Promise<SkillExecutionRecord[]>;
   getExecutionById(id: string): Promise<SkillExecutionRecord | null>;
   listExecutionSteps(executionId: string): Promise<SkillExecutionStepRecord[]>;
@@ -172,6 +174,37 @@ export class SkillExecutionLogService {
     await this.logStep({ ...params, status: SKILL_EXECUTION_STEP_STATUS.ERROR });
   }
 
+  /**
+   * Обновляет статус последнего шага данного типа с RUNNING на SUCCESS/ERROR.
+   * Используется для завершения "длинных" шагов (CALL_RAG_PIPELINE, CALL_LLM).
+   */
+  async completeStep(params: {
+    executionId: string;
+    type: SkillExecutionStepType;
+    status: SkillExecutionStepStatus;
+    output?: unknown;
+    errorCode?: string;
+    errorMessage?: string;
+    diagnosticInfo?: string;
+  }): Promise<void> {
+    if (!this.enabled) {
+      return;
+    }
+
+    if (params.status === SKILL_EXECUTION_STEP_STATUS.ERROR) {
+      this.executionHasErrors.add(params.executionId);
+    }
+
+    await this.repository.updateStepByType(params.executionId, params.type, {
+      status: params.status,
+      finishedAt: new Date(),
+      outputPayload: sanitizePayload(params.output ?? null, this.sanitizeOptions),
+      errorCode: params.errorCode,
+      errorMessage: params.errorMessage,
+      diagnosticInfo: params.diagnosticInfo,
+    });
+  }
+
   async finishExecution(
     executionId: string,
     finalStatus: SkillExecutionStatus,
@@ -312,6 +345,21 @@ export class InMemorySkillExecutionLogRepository implements SkillExecutionLogRep
     this.steps.push(cloneRecord(record));
   }
 
+  async updateStepByType(
+    executionId: string,
+    type: SkillExecutionStepType,
+    updates: Partial<SkillExecutionStepRecord>,
+  ): Promise<void> {
+    // Находим последний шаг данного типа для execution
+    const stepsOfType = this.steps
+      .filter((s) => s.executionId === executionId && s.type === type)
+      .sort((a, b) => b.order - a.order);
+    const target = stepsOfType[0];
+    if (target) {
+      Object.assign(target, updates);
+    }
+  }
+
   async listExecutions(): Promise<SkillExecutionRecord[]> {
     return this.executions.map(cloneRecord);
   }
@@ -445,6 +493,42 @@ export class DatabaseSkillExecutionLogRepository implements SkillExecutionLogRep
         ${record.errorCode ?? null},
         ${record.errorMessage ?? null},
         ${record.diagnosticInfo ?? null}
+      )
+    `);
+  }
+
+  async updateStepByType(
+    executionId: string,
+    type: SkillExecutionStepType,
+    updates: Partial<SkillExecutionStepRecord>,
+  ): Promise<void> {
+    const fragments: SQL[] = [];
+    const add = (fragment: SQL) => fragments.push(fragment);
+
+    if (updates.status !== undefined) add(sql`status = ${updates.status}`);
+    if (updates.finishedAt !== undefined) {
+      add(sql`finished_at = ${updates.finishedAt ? updates.finishedAt.toISOString() : null}`);
+    }
+    if (updates.outputPayload !== undefined) {
+      add(sql`output_payload = ${updates.outputPayload ?? null}::jsonb`);
+    }
+    if (updates.errorCode !== undefined) add(sql`error_code = ${updates.errorCode ?? null}`);
+    if (updates.errorMessage !== undefined) add(sql`error_message = ${updates.errorMessage ?? null}`);
+    if (updates.diagnosticInfo !== undefined) add(sql`diagnostic_info = ${updates.diagnosticInfo ?? null}`);
+
+    if (fragments.length === 0) return;
+
+    const setClause = fragments.reduce((acc, part, idx) => (idx === 0 ? part : sql`${acc}, ${part}`));
+    
+    // Обновляем последний шаг данного типа для execution (по максимальному order)
+    await db.execute(sql`
+      UPDATE skill_execution_steps 
+      SET ${setClause} 
+      WHERE id = (
+        SELECT id FROM skill_execution_steps 
+        WHERE execution_id = ${executionId} AND type = ${type}
+        ORDER BY "order" DESC 
+        LIMIT 1
       )
     `);
   }

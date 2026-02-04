@@ -4579,10 +4579,12 @@ async function runKnowledgeBaseRagPipeline(options: {
           vectorDuration = performance.now() - vectorStart;
       } else {
         const apiBaseUrl = resolvePublicApiBaseUrl(req);
+        console.log(`[RAG VECTOR DEBUG] apiBaseUrl: ${apiBaseUrl}`);
           const requestUrl = new URL(
             "/api/public/collections/search/vector",
             `${apiBaseUrl}/`,
           ).toString();
+        console.log(`[RAG VECTOR DEBUG] requestUrl: ${requestUrl}`);
 
           for (const collectionName of vectorCollectionsToSearch) {
             const embedKey = await storage.getOrCreateWorkspaceEmbedKey(
@@ -4622,6 +4624,7 @@ async function runKnowledgeBaseRagPipeline(options: {
 
             let vectorResponse: FetchResponse;
             try {
+              console.log(`[RAG VECTOR DEBUG] Fetching vector search: ${requestUrl}`);
               vectorResponse = await fetch(requestUrl, {
                 method: "POST",
                 headers: {
@@ -4634,8 +4637,15 @@ async function runKnowledgeBaseRagPipeline(options: {
                 body: JSON.stringify(vectorRequestPayload),
               });
             } catch (networkError) {
+              const errorDetails = networkError instanceof Error ? networkError.message : String(networkError);
+              const errorStack = networkError instanceof Error ? networkError.stack : undefined;
+              console.error(`[RAG VECTOR DEBUG] Network error fetching ${requestUrl}: ${errorDetails}`);
+              if (errorStack) {
+                console.error(`[RAG VECTOR DEBUG] Stack: ${errorStack}`);
+              }
+              console.error(`[RAG VECTOR DEBUG] Collection: ${collectionName}, WorkspaceId: ${workspaceId}`);
               throw new Error(
-                "Vector search API request failed before reaching the workspace endpoint",
+                `Vector search API request failed before reaching the workspace endpoint: ${errorDetails} [URL: ${requestUrl}]`,
               );
             }
 

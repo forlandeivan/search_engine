@@ -555,9 +555,38 @@ interface KnowledgeBaseRagPipelineResponse {
     answer: string;
     knowledgeBaseId?: string;
     normalizedQuery?: string;
-    citations?: unknown[];
-    usage?: unknown;
+    citations?: Array<{
+      chunk_id?: string;
+      doc_id?: string;
+      doc_title?: string;
+      section_title?: string;
+      snippet?: string;
+      score?: number;
+      scores?: { bm25?: number; vector?: number };
+    }>;
+    chunks?: Array<{
+      chunk_id?: string;
+      doc_id?: string;
+      doc_title?: string;
+      snippet?: string;
+      score?: number;
+    }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     query?: string;
+    timings?: Record<string, number>;
+    /** Контекст, отправленный на LLM (для отладки) */
+    debugContext?: {
+      contextChunksCount?: number;
+      contextTotalLength?: number;
+      promptPreview?: string;
+      systemPromptPreview?: string;
+      retrievedChunks?: Array<{
+        chunkId?: string;
+        docTitle?: string;
+        snippet?: string;
+        score?: number;
+      }>;
+    };
   };
 }
 
@@ -592,10 +621,38 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
     }
   };
 
+  // Отслеживаем шаги, которые были запущены с RUNNING статусом
+  const runningSteps = new Set<string>();
+
   const safeLogStep = async (type: SkillExecutionStepType | string, status: SkillExecutionStepStatus, meta: StepLogMeta = {}) => {
     if (!executionId) return;
     try {
-      const payload = { executionId, type: type as SkillExecutionStepType, input: meta.input, output: meta.output, errorCode: meta.errorCode, errorMessage: meta.errorMessage, diagnosticInfo: meta.diagnosticInfo };
+      const stepType = type as SkillExecutionStepType;
+      const payload = { executionId, type: stepType, input: meta.input, output: meta.output, errorCode: meta.errorCode, errorMessage: meta.errorMessage, diagnosticInfo: meta.diagnosticInfo };
+      
+      // Если это RUNNING - создаём новый шаг и запоминаем его
+      if (status === SKILL_EXECUTION_STEP_STATUS.RUNNING) {
+        runningSteps.add(stepType);
+        await skillExecutionLogService.logStep({ ...payload, status });
+        return;
+      }
+      
+      // Если этот шаг был ранее запущен с RUNNING - обновляем его
+      if (runningSteps.has(stepType) && (status === SKILL_EXECUTION_STEP_STATUS.SUCCESS || status === SKILL_EXECUTION_STEP_STATUS.ERROR)) {
+        runningSteps.delete(stepType);
+        await skillExecutionLogService.completeStep({
+          executionId,
+          type: stepType,
+          status,
+          output: meta.output,
+          errorCode: meta.errorCode,
+          errorMessage: meta.errorMessage,
+          diagnosticInfo: meta.diagnosticInfo,
+        });
+        return;
+      }
+      
+      // Иначе создаём новый шаг с финальным статусом
       if (status === SKILL_EXECUTION_STEP_STATUS.SUCCESS) {
         await skillExecutionLogService.logStepSuccess(payload);
       } else if (status === SKILL_EXECUTION_STEP_STATUS.ERROR) {
@@ -788,6 +845,64 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
         chunks: ragResult.response.chunks,
       }, "[RAG PIPELINE] Full RAG result");
       
+      // Логируем детальные шаги RAG пайплайна для отладки
+      const citations = ragResult.response.citations ?? [];
+      const chunks = ragResult.response.chunks ?? [];
+      const debugContext = ragResult.response.debugContext;
+      
+      // Шаг 1: Векторный поиск - результаты поиска по базе знаний
+      await safeLogStep('VECTOR_SEARCH', SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+        input: {
+          query: payload.content.slice(0, 200),
+          knowledgeBaseId: context.skillConfig.knowledgeBaseIds?.[0] ?? null,
+          collections: context.skillConfig.ragConfig?.collectionIds ?? [],
+          topK: context.skillConfig.ragConfig?.topK ?? 5,
+        },
+        output: {
+          chunksFound: chunks.length,
+          citationsFound: citations.length,
+          chunks: chunks.slice(0, 5).map((c) => ({
+            chunkId: c.chunk_id,
+            docTitle: c.doc_title,
+            snippetPreview: c.snippet?.slice(0, 100),
+            score: c.score,
+          })),
+          timings: ragResult.response.timings,
+        },
+      });
+      
+      // Шаг 2: Сборка контекста - какие чанки попали в контекст LLM
+      await safeLogStep('BUILD_RAG_CONTEXT', SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+        input: {
+          chunksCount: chunks.length,
+          citationsCount: citations.length,
+        },
+        output: {
+          contextChunksCount: debugContext?.contextChunksCount ?? chunks.length,
+          contextTotalLength: debugContext?.contextTotalLength ?? chunks.reduce((sum, c) => sum + (c.snippet?.length ?? 0), 0),
+          retrievedChunks: (debugContext?.retrievedChunks ?? chunks.slice(0, 5)).map((c: any) => ({
+            chunkId: c.chunkId ?? c.chunk_id,
+            docTitle: c.docTitle ?? c.doc_title,
+            snippetPreview: (c.snippet ?? '').slice(0, 150),
+            score: c.score,
+          })),
+        },
+      });
+      
+      // Шаг 3: Итоговый промпт - что было отправлено на LLM
+      await safeLogStep('BUILD_LLM_PROMPT', SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+        input: {
+          userQuery: payload.content.slice(0, 200),
+          normalizedQuery: ragResult.response.normalizedQuery?.slice(0, 200),
+          contextChunksUsed: debugContext?.contextChunksCount ?? chunks.length,
+        },
+        output: {
+          promptPreview: debugContext?.promptPreview ?? `Вопрос: ${payload.content.slice(0, 100)}...`,
+          systemPromptPreview: debugContext?.systemPromptPreview ?? 'Сформируй понятный ответ на русском языке...',
+          totalContextLength: debugContext?.contextTotalLength ?? chunks.reduce((sum, c) => sum + (c.snippet?.length ?? 0), 0),
+        },
+      });
+      
       logger.info({
           component: 'RAG_PIPELINE',
           step: "rag_pipeline_complete",
@@ -805,7 +920,18 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
           queryRewritingEnabled: context.skillConfig.ragConfig?.enableQueryRewriting ?? true,
           historyEnabled: context.skillConfig.ragConfig?.historyMessagesLimit !== 0,
         }, `[RAG] Pipeline complete: ${ragResult.response.answer.length} chars answer, ${ragResult.response.citations?.length ?? 0} citations`);
-        await safeLogStep('CALL_RAG_PIPELINE', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { output: { answerPreview: ragResult.response.answer.slice(0, 160), knowledgeBaseId: ragResult.response.knowledgeBaseId, usage: ragResult.response.usage ?? null } });
+        
+        // Финальный успешный статус CALL_RAG_PIPELINE с расширенными данными
+        await safeLogStep('CALL_RAG_PIPELINE', SKILL_EXECUTION_STEP_STATUS.SUCCESS, { 
+          output: { 
+            answerPreview: ragResult.response.answer.slice(0, 160), 
+            knowledgeBaseId: ragResult.response.knowledgeBaseId, 
+            usage: ragResult.response.usage ?? null,
+            chunksFound: chunks.length,
+            citationsCount: citations.length,
+            timings: ragResult.response.timings,
+          } 
+        });
       } catch (ragError) {
         const info = describeErrorForLog(ragError);
         logger.error({
@@ -878,9 +1004,9 @@ chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(a
           step: 'sse_done_sent',
           chatId: req.params.chatId,
           assistantMessageId: assistantMessage.id,
-          citationsInPayload: ragResult.response.citations.length,
+          citationsInPayload: citations.length,
           metadataCitations: metadata?.citations?.length ?? 0,
-        }, `[CHAT RAG] SSE done event sent with ${ragResult.response.citations.length} citations in payload`);
+        }, `[CHAT RAG] SSE done event sent with ${citations.length} citations in payload`);
         
         sendSseEvent(res, 'done', { assistantMessageId: assistantMessage.id, userMessageId: userMessageRecord?.id ?? null, rag: { knowledgeBaseId: ragResult.response.knowledgeBaseId, normalizedQuery: ragResult.response.normalizedQuery, citations: ragResult.response.citations } });
         await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);

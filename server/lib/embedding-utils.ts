@@ -122,6 +122,72 @@ export interface EmbeddingResult {
   usageTokens?: number;
 }
 
+// Создаёт тело запроса для стандартного (OpenAI-совместимого) провайдера
+function createStandardEmbeddingRequestBody(model: string, text: string): Record<string, unknown> {
+  return {
+    model,
+    input: text,
+  };
+}
+
+// Создаёт тело запроса для Unica AI провайдера
+function createUnicaEmbeddingRequestBody(
+  model: string,
+  input: string | string[],
+  options?: {
+    workSpaceId?: string;
+    truncate?: boolean;
+    dimensions?: number;
+  },
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    workSpaceId: options?.workSpaceId ?? "GENERAL",
+    model,
+    input: Array.isArray(input) ? input : [input],
+  };
+
+  if (options?.truncate !== undefined) {
+    body.truncate = options.truncate;
+  }
+
+  if (options?.dimensions !== undefined && options.dimensions > 0) {
+    body.dimensions = options.dimensions;
+  }
+
+  return body;
+}
+
+// Извлекает вектор из ответа Unica AI провайдера
+function extractUnicaEmbeddingVector(data: Record<string, unknown>): number[] | undefined {
+  const vectors = data.vectors;
+  if (Array.isArray(vectors) && vectors.length > 0) {
+    const firstVector = vectors[0];
+    if (Array.isArray(firstVector) && firstVector.every((v) => typeof v === "number")) {
+      return firstVector as number[];
+    }
+  }
+  return undefined;
+}
+
+// Извлекает вектор из ответа стандартного (OpenAI-совместимого) провайдера
+function extractStandardEmbeddingVector(data: Record<string, unknown>): number[] | undefined {
+  // Формат OpenAI: { data: [{ embedding: [...] }] }
+  const dataArray = data.data;
+  if (Array.isArray(dataArray) && dataArray.length > 0) {
+    const firstEntry = dataArray[0] as Record<string, unknown> | undefined;
+    const embedding = firstEntry?.embedding ?? firstEntry?.vector;
+    if (Array.isArray(embedding) && embedding.every((v) => typeof v === "number")) {
+      return embedding as number[];
+    }
+  }
+  // Альтернативный формат: { embedding: [...] }
+  const embedding = data.embedding;
+  if (Array.isArray(embedding) && embedding.every((v) => typeof v === "number")) {
+    return embedding as number[];
+  }
+  return undefined;
+}
+
 export async function fetchEmbeddingVector(
   provider: EmbeddingProvider,
   accessToken: string,
@@ -133,6 +199,16 @@ export async function fetchEmbeddingVector(
   }
 
   const model = provider.model || 'text-embedding-ada-002';
+  const isUnicaProvider = provider.providerType === "unica";
+  
+  // Формируем тело запроса в зависимости от типа провайдера
+  const requestBody = isUnicaProvider
+    ? createUnicaEmbeddingRequestBody(model, text, {
+        workSpaceId: provider.unicaWorkspaceId ?? (provider.requestConfig?.additionalBodyFields?.workSpaceId as string) ?? "GENERAL",
+        truncate: provider.requestConfig?.additionalBodyFields?.truncate as boolean | undefined,
+        dimensions: provider.requestConfig?.additionalBodyFields?.dimensions as number | undefined,
+      })
+    : createStandardEmbeddingRequestBody(model, text);
   
   let response: Response;
   try {
@@ -142,10 +218,7 @@ export async function fetchEmbeddingVector(
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({
-        input: text,
-        model,
-      }),
+      body: JSON.stringify(requestBody),
     });
   } catch (error) {
     // Обрабатываем сетевые ошибки fetch
@@ -172,21 +245,37 @@ export async function fetchEmbeddingVector(
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'Unknown error');
-    throw new Error(`Embedding request failed: ${response.status} ${errorText}`);
+    throw new Error(`Embedding request failed (${response.status}): ${errorText} [провайдер: ${provider.providerType}, модель: ${model}]`);
   }
 
-  const data = await response.json() as {
-    data?: Array<{ embedding?: number[] }>;
-    usage?: { total_tokens?: number };
-  };
+  const data = await response.json() as Record<string, unknown>;
 
-  const embedding = data?.data?.[0]?.embedding;
-  if (!Array.isArray(embedding)) {
-    throw new Error('Invalid embedding response format');
+  // Извлекаем вектор в зависимости от типа провайдера
+  const vector = isUnicaProvider
+    ? extractUnicaEmbeddingVector(data)
+    : extractStandardEmbeddingVector(data);
+
+  if (!Array.isArray(vector) || vector.length === 0) {
+    const responsePreview = JSON.stringify(data).substring(0, 300);
+    throw new Error(`Некорректный формат ответа от API эмбеддингов (провайдер: ${provider.providerType}). Ответ: ${responsePreview}...`);
+  }
+
+  // Извлекаем usage tokens
+  let usageTokens: number | undefined;
+  const usage = data.usage as Record<string, unknown> | undefined;
+  if (usage?.total_tokens !== undefined && typeof usage.total_tokens === "number") {
+    usageTokens = usage.total_tokens;
+  } else if (isUnicaProvider) {
+    // Для Unica токены могут быть в meta.metrics.inputTokens
+    const meta = data.meta as Record<string, unknown> | undefined;
+    const metrics = meta?.metrics as Record<string, unknown> | undefined;
+    if (metrics?.inputTokens !== undefined && typeof metrics.inputTokens === "number") {
+      usageTokens = metrics.inputTokens;
+    }
   }
 
   return {
-    vector: embedding,
-    usageTokens: data?.usage?.total_tokens,
+    vector,
+    usageTokens,
   };
 }

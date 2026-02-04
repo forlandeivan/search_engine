@@ -978,7 +978,9 @@ export default function ChatPage({ params }: ChatPageProps) {
 
         const pollOperation = async () => {
           let attempts = 0;
+          let consecutiveErrors = 0;
           const maxAttempts = 900; // до ~30 минут при интервале 2с
+          const maxConsecutiveErrors = 5; // прервать после 5 подряд ошибок
           const delayMs = 2000;
 
           while (attempts < maxAttempts) {
@@ -989,9 +991,25 @@ export default function ChatPage({ params }: ChatPageProps) {
               });
 
               if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
+                // Проверяем фатальные ошибки
+                const errorData = await response.json().catch(() => ({}));
+                const errorCode = errorData?.code;
+                const errorMessage = errorData?.message || `HTTP ${response.status}`;
+                
+                // OPERATION_NOT_FOUND — фатальная ошибка, прерываем polling
+                if (errorCode === 'OPERATION_NOT_FOUND' || response.status === 404) {
+                  console.error('[ChatPage] Operation not found, stopping poll');
+                  setStreamError(errorMessage);
+                  showBotAction("Операция не найдена", "error");
+                  await queryClient.invalidateQueries({ queryKey: ["chats"] });
+                  return;
+                }
+                
+                throw new Error(errorMessage);
               }
 
+              // Сбрасываем счётчик ошибок при успешном запросе
+              consecutiveErrors = 0;
               const status = await response.json();
 
               if (status.status === 'completed') {
@@ -1031,7 +1049,18 @@ export default function ChatPage({ params }: ChatPageProps) {
               }
             } catch (error) {
               console.error('[ChatPage] Poll error:', error);
+              consecutiveErrors += 1;
               attempts += 1;
+              
+              // Прерываем после нескольких подряд ошибок
+              if (consecutiveErrors >= maxConsecutiveErrors) {
+                const errMsg = error instanceof Error ? error.message : 'Ошибка соединения';
+                setStreamError(`Не удалось получить статус транскрибации: ${errMsg}`);
+                showBotAction("Ошибка при получении статуса", "error");
+                await queryClient.invalidateQueries({ queryKey: ["chats"] });
+                return;
+              }
+              
               if (attempts < maxAttempts) {
                 await new Promise((resolve) => setTimeout(resolve, delayMs));
               }

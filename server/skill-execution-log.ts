@@ -91,27 +91,19 @@ export type SkillExecutionStepType =
   /**
    * RAG specific steps.
    *
-   * На кастомных навыках сейчас фиксируем только единый шаг CALL_RAG_PIPELINE
-   * (см. chat-rag.ts + routes.ts: POST /api/chat/.../messages/llm).
-   * Шаг лишь оборачивает runKnowledgeBaseRagPipeline без детализации, поэтому
-   * в истории запусков видно «CALL_RAG_PIPELINE → SUCCESS», но не видно
-   * внутренних стадий (embedding/vector/bm25/сбор контекста).
-   *
-   * Для функционала Ask AI уже существует детальный пайплайн внутри
-   * runKnowledgeBaseRagPipeline (startPipelineStep: "bm25_search",
-   * "vector_search", "vector_embedding", "llm_completion" и т.д.),
-   * который пишет расширенные логи (storage.recordKnowledgeBaseAskAiRun).
-   *
-   * TODO(forlandeivan): переиспользовать эти шаги в журнале навыков. Нужно
-   * добавлять отдельные SkillExecutionStep записи для:
-   *  - генерации эмбеддинга запроса;
-   *  - векторного поиска по коллекциям/workspace;
-   *  - BM25/гибридной агрегации и фильтрации чанков;
-   *  - сборки финального контекста/цитат.
-   * Пока этих шагов в skill_execution_step нет, администраторам видно только
-   * CALL_RAG_PIPELINE и далее CALL_LLM (для Unica Chat) или WRITE_ASSISTANT_MESSAGE.
+   * Детализированные шаги RAG пайплайна для отладки:
+   * - CALL_RAG_PIPELINE: Общий контейнер RAG-вызова
+   * - VECTOR_SEARCH: Результаты векторного поиска (чанки, scores)
+   * - BUILD_RAG_CONTEXT: Сборка контекста из найденных чанков
+   * - BUILD_LLM_PROMPT: Итоговый промпт, отправляемый на LLM
    */
   | "CALL_RAG_PIPELINE"
+  /** Результаты векторного и BM25 поиска */
+  | "VECTOR_SEARCH"
+  /** Сборка контекста из найденных чанков для LLM */
+  | "BUILD_RAG_CONTEXT"
+  /** Итоговый промпт/запрос, отправляемый на LLM */
+  | "BUILD_LLM_PROMPT"
   | "CALL_LLM"
   | "STREAM_TO_CLIENT_START"
   | "STREAM_TO_CLIENT_FINISH"

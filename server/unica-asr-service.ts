@@ -385,6 +385,86 @@ export class UnicaAsrService {
    * Получить статус операции по operationId
    * (для совместимости с существующим polling механизмом)
    */
+  /**
+   * Восстановить операцию из ASR execution log (fallback при потере кэша)
+   */
+  async tryRestoreFromExecutionLog(operationId: string): Promise<{
+    taskId: string;
+    config: UnicaAsrConfig;
+    startedAt: Date;
+    filePath: string;
+  } | null> {
+    try {
+      log("[UnicaASR] Attempting to restore operation from execution log...");
+      
+      const { asrExecutionLogService } = await import("./asr-execution-log-context");
+      const { storage } = await import("./storage");
+      
+      // Ищем execution по operationId в pipelineEvents
+      const executions = await asrExecutionLogService.listExecutions();
+      const taskId = operationId.slice("unica_".length);
+      
+      const execution = executions.find((e) => {
+        if (!e.pipelineEvents) return false;
+        return e.pipelineEvents.some((evt) => {
+          const details: any = (evt as any)?.details ?? null;
+          return details?.unicaOperationId === operationId || details?.taskId === taskId;
+        });
+      });
+      
+      if (!execution || !execution.chatId) {
+        log("[UnicaASR] Execution not found in log");
+        return null;
+      }
+      
+      log("[UnicaASR] Found execution:", execution.id, "chatId:", execution.chatId);
+      
+      // Получаем chat для получения skillId
+      const chat = await storage.getChat(execution.chatId);
+      if (!chat || !chat.skillId) {
+        log("[UnicaASR] Chat or skillId not found");
+        return null;
+      }
+      
+      // Получаем skill для config
+      const skill = await storage.getSkill(chat.skillId);
+      if (!skill || !skill.asrProviderId) {
+        log("[UnicaASR] Skill or asrProviderId not found");
+        return null;
+      }
+      
+      // Получаем ASR provider config
+      const asrProvider = await storage.getAsrProvider(skill.asrProviderId);
+      if (!asrProvider || asrProvider.type !== 'unica') {
+        log("[UnicaASR] ASR provider not found or not Unica type");
+        return null;
+      }
+      
+      const config: UnicaAsrConfig = {
+        baseUrl: asrProvider.config.baseUrl || "",
+        workspaceId: asrProvider.config.workspaceId || "GENERAL",
+        skipSslVerify: asrProvider.config.skipSslVerify || false,
+        timeoutMs: 3600000,
+      };
+      
+      const restored = {
+        taskId,
+        config,
+        startedAt: execution.startedAt || new Date(),
+        filePath: execution.fileName || "restored",
+      };
+      
+      // Восстанавливаем в кэш
+      this.operationsCache.set(operationId, restored);
+      log("[UnicaASR] ✅ Operation restored from execution log");
+      
+      return restored;
+    } catch (err) {
+      log("[UnicaASR] Failed to restore from execution log:", err);
+      return null;
+    }
+  }
+
   async getOperationStatus(operationId: string): Promise<{
     done: boolean;
     status: "pending" | "processing" | "completed" | "failed";
@@ -394,10 +474,21 @@ export class UnicaAsrService {
     log("[UnicaASR] ========== GET OPERATION STATUS ==========");
     log("[UnicaASR] Operation ID:", operationId);
 
-    const cached = this.operationsCache.get(operationId);
+    let cached = this.operationsCache.get(operationId);
+    
+    // Если операции нет в кэше — пробуем восстановить из ASR execution log
     if (!cached) {
-      log("[UnicaASR] ❌ Operation not found in cache");
-      throw new UnicaAsrError(`Operation not found: ${operationId}`, "OPERATION_NOT_FOUND");
+      log("[UnicaASR] ⚠️ Operation not found in cache, attempting restore...");
+      const restored = await this.tryRestoreFromExecutionLog(operationId);
+      if (restored) {
+        cached = restored;
+      } else {
+        log("[UnicaASR] ❌ Operation not found in cache and could not be restored");
+        throw new UnicaAsrError(
+          `Операция не найдена. Возможно, сервер был перезапущен. Попробуйте загрузить файл заново.`,
+          "OPERATION_NOT_FOUND"
+        );
+      }
     }
 
     if (cached.finalResult) {
