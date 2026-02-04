@@ -1237,32 +1237,31 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
       logger.info({ operationId, textLength: transcriptText.length }, "[UNICA-ASR] ✅ Transcription text retrieved");
     }
     
-    // Получить chatId и другие данные из ASR execution
-    if (!chatId) {
-      logger.info({ operationId }, "[UNICA-ASR] Looking up ASR execution record...");
-      const executions = await asrExecutionLogService.listExecutions();
-      const taskId = operationId.slice("unica_".length);
-      const execution = executions.find((e) => {
-        if (!e.pipelineEvents) return false;
-        return e.pipelineEvents.some((evt) => {
-          const details: any = (evt as any)?.details ?? null;
-          return details?.unicaOperationId === operationId || details?.taskId === taskId;
-        });
+    // Всегда ищем ASR execution по operationId — нужен executionId для записи asr_result_final и transcript_saved
+    logger.info({ operationId }, "[UNICA-ASR] Looking up ASR execution record by operationId...");
+    const executions = await asrExecutionLogService.listExecutions();
+    const taskId = operationId.slice("unica_".length);
+    
+    const execution = executions.find((e) => {
+      if (!e.pipelineEvents) return false;
+      return e.pipelineEvents.some((evt) => {
+        const details: any = (evt as any)?.details ?? null;
+        return details?.unicaOperationId === operationId || details?.taskId === taskId;
       });
-      
-      if (execution) {
-        chatId = execution.chatId ?? undefined;
-        transcriptId = execution.transcriptId ?? undefined;
-        executionId = execution.id;
-        logger.info({
-          operationId,
-          chatId,
-          transcriptId,
-          executionId,
-        }, "[UNICA-ASR] ✅ Execution record found");
-      } else {
-        logger.warn({ operationId }, "[UNICA-ASR] Execution record not found (continuing without it)");
-      }
+    });
+    
+    if (execution) {
+      if (!chatId) chatId = execution.chatId ?? undefined;
+      if (!transcriptId) transcriptId = execution.transcriptId ?? undefined;
+      executionId = execution.id;
+      logger.info({
+        operationId,
+        chatId,
+        transcriptId,
+        executionId,
+      }, "[UNICA-ASR] ✅ Execution record found");
+    } else {
+      logger.warn({ operationId }, "[UNICA-ASR] Execution record not found (pipeline events will not be updated)");
     }
 
     // Очистить операцию из кэша
@@ -1397,9 +1396,10 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
   });
   
   if (asrExecutionId) {
+    const provider = operationId.startsWith('unica_') ? 'unica' : 'yandex_speechkit';
     await asrExecutionLogService.addEvent(asrExecutionId, {
       stage: 'asr_result_final',
-      details: { provider: 'yandex_speechkit', operationId, previewText: transcriptText.substring(0, 200) },
+      details: { provider, operationId, previewText: transcriptText.substring(0, 200) },
     });
     await asrExecutionLogService.updateExecution(asrExecutionId, {
       transcriptMessageId: createdMessage.id,

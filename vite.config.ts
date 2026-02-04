@@ -15,9 +15,10 @@ export default defineConfig({
   // рассинхронизации кеша оптимизированных зависимостей.
   cacheDir: path.resolve(__dirname, "node_modules", ".vite"),
   optimizeDeps: {
-    // Принудительная пересборка зависимостей при запуске dev-сервера.
-    // Это решает проблему "Outdated Optimize Dep" (504) когда кэш устаревает.
-    force: true,
+    // force: false — не пересобирать deps при каждом запуске. Хэш остаётся тем же,
+    // браузер не получает 504 (Outdated Optimize Dep) после перезапуска сервера.
+    // После npm install при необходимости удалить node_modules/.vite один раз.
+    force: false,
     // Эти зависимости могут подтягиваться только в lazy-роутах (например, AdminModelsPage),
     // что приводит к поздней оптимизации deps и 504 (Outdated Optimize Dep).
     // Принудительно оптимизируем их на старте, чтобы не ломать динамический импорт.
