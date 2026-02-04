@@ -32,6 +32,60 @@ export function isChunkLoadError(error: unknown): boolean {
 }
 
 /**
+ * Полностью очищает все кэши браузера, связанные с приложением.
+ * Используется при неустранимых ошибках загрузки модулей.
+ */
+export async function clearAllCachesAndReload(): Promise<void> {
+  console.info("[clearAllCachesAndReload] Clearing all browser caches...");
+  
+  try {
+    // 1. Очистить sessionStorage (счетчики перезагрузок)
+    sessionStorage.clear();
+    console.info("[clearAllCachesAndReload] sessionStorage cleared");
+    
+    // 2. Очистить localStorage
+    localStorage.clear();
+    console.info("[clearAllCachesAndReload] localStorage cleared");
+    
+    // 3. Удалить service workers
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const reg of registrations) {
+        await reg.unregister();
+      }
+      console.info(`[clearAllCachesAndReload] Unregistered ${registrations.length} service worker(s)`);
+    }
+    
+    // 4. Очистить Cache Storage (для PWA)
+    if ("caches" in window) {
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames.map(name => caches.delete(name)));
+      console.info(`[clearAllCachesAndReload] Deleted ${cacheNames.length} cache(s)`);
+    }
+    
+    console.info("[clearAllCachesAndReload] All caches cleared, reloading with cache bypass...");
+  } catch (error) {
+    console.error("[clearAllCachesAndReload] Error clearing caches:", error);
+  }
+  
+  // 5. Перезагрузить с обходом кэша (hard reload)
+  window.location.href = window.location.href.split("?")[0] + "?cache_bust=" + Date.now();
+}
+
+/**
+ * Сбрасывает счетчик перезагрузок.
+ * Вызывается при успешной загрузке страницы.
+ */
+export function resetReloadCounter(): void {
+  try {
+    sessionStorage.removeItem(RELOAD_KEY);
+    sessionStorage.removeItem(RELOAD_COUNT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Проверяет, можно ли выполнить автоматическую перезагрузку
  * (защита от бесконечного цикла перезагрузок)
  */
