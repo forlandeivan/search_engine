@@ -94,6 +94,8 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [isPageDragOver, setIsPageDragOver] = useState(false);
   const dragCounterRef = useRef(0);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
+  // Track active polling operations to avoid duplicates
+  const activePollingRef = useRef<Set<string>>(new Set());
 
   const { createChat } = useCreateChat();
   const { renameChat } = useRenameChat({
@@ -155,6 +157,145 @@ export default function ChatPage({ params }: ChatPageProps) {
     setOpenTranscript(null);
   }, [effectiveChatId]);
 
+  // Start polling for a transcription operation (used for initial start and recovery after page refresh)
+  const startPollingForOperation = useCallback(
+    async (operationId: string, chatId: string) => {
+      // Skip if already polling this operation
+      if (activePollingRef.current.has(operationId)) {
+        debugLog("[Polling] Already polling operation", operationId);
+        return;
+      }
+      activePollingRef.current.add(operationId);
+      debugLog("[Polling] Starting polling for operation", { operationId, chatId });
+
+      const showBotAction = (text: string, status: BotAction["status"]) => {
+        if (botActionTimerRef.current) {
+          clearTimeout(botActionTimerRef.current);
+          botActionTimerRef.current = null;
+        }
+        const action: BotAction = {
+          workspaceId: workspaceId || "local-workspace",
+          chatId: chatId,
+          actionId: `transcribe-${operationId}`,
+          actionType: "transcribe_audio",
+          status,
+          displayText: text,
+          updatedAt: new Date().toISOString(),
+        };
+        setBotActionsByChatId((prev) => {
+          const chatActions = prev[action.chatId] ?? [];
+          const existingIndex = chatActions.findIndex((a) => a.actionId === action.actionId);
+          const next = [...chatActions];
+          if (existingIndex >= 0) {
+            next[existingIndex] = action;
+          } else {
+            next.push(action);
+          }
+          const filtered = next.filter((a) => a.status === "processing" || a.actionId === action.actionId);
+          return { ...prev, [action.chatId]: filtered };
+        });
+        if (status === "done" || status === "error") {
+          botActionTimerRef.current = setTimeout(() => {
+            setBotActionsByChatId((prev) => {
+              const chatActions = prev[action.chatId] ?? [];
+              const filtered = chatActions.filter((a) => a.actionId !== action.actionId);
+              return { ...prev, [action.chatId]: filtered };
+            });
+          }, 1800);
+        }
+      };
+
+      let attempts = 0;
+      let consecutiveErrors = 0;
+      const maxAttempts = 900;
+      const maxConsecutiveErrors = 5;
+      const delayMs = 2000;
+
+      try {
+        while (attempts < maxAttempts) {
+          try {
+            const response = await fetch(`/api/chat/transcribe/operations/${operationId}`, {
+              method: "GET",
+              credentials: "include",
+            });
+
+            if (!response.ok) {
+              const errorData = await response.json().catch(() => ({}));
+              const errorCode = errorData?.code;
+              const errorMessage = errorData?.message || `HTTP ${response.status}`;
+
+              if (errorCode === "OPERATION_NOT_FOUND" || response.status === 404) {
+                debugLog("[Polling] Operation not found, stopping poll");
+                setStreamError(errorMessage);
+                showBotAction("Операция не найдена", "error");
+                await queryClient.invalidateQueries({ queryKey: ["chats"] });
+                return;
+              }
+              throw new Error(errorMessage);
+            }
+
+            consecutiveErrors = 0;
+            const status = await response.json();
+
+            if (status.status === "completed") {
+              const completeRes = await fetch(`/api/chat/transcribe/complete/${operationId}`, {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ chatId, text: status?.result?.text ?? null }),
+              });
+
+              if (completeRes.ok) {
+                await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+                await queryClient.invalidateQueries({ queryKey: ["chats"] });
+                showBotAction("Готово", "done");
+              } else {
+                await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+                await queryClient.invalidateQueries({ queryKey: ["chats"] });
+                showBotAction("Готово", "done");
+              }
+              return;
+            }
+
+            if (status.status === "failed") {
+              setStreamError(status.error || "Транскрибация не удалась. Попробуйте снова.");
+              showBotAction("Ошибка при стенограмме", "error");
+              await queryClient.invalidateQueries({ queryKey: ["chats"] });
+              return;
+            }
+
+            attempts += 1;
+            if (attempts < maxAttempts) {
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+            }
+          } catch (error) {
+            console.error("[Polling] Poll error:", error);
+            consecutiveErrors += 1;
+            attempts += 1;
+
+            if (consecutiveErrors >= maxConsecutiveErrors) {
+              const errMsg = error instanceof Error ? error.message : "Ошибка соединения";
+              setStreamError(`Не удалось получить статус транскрибации: ${errMsg}`);
+              showBotAction("Ошибка соединения", "error");
+              await queryClient.invalidateQueries({ queryKey: ["chats"] });
+              return;
+            }
+
+            if (attempts < maxAttempts) {
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+            }
+          }
+        }
+
+        setStreamError("Транскрибация заняла слишком много времени. Попробуйте снова.");
+        showBotAction("Стенограмма заняла слишком много времени", "error");
+      } finally {
+        activePollingRef.current.delete(operationId);
+      }
+    },
+    [workspaceId, queryClient],
+  );
+
   // Initial fetch of active bot_actions on mount / chatId change (cold start recovery)
   useEffect(() => {
     if (!workspaceId || !effectiveChatId) {
@@ -185,6 +326,22 @@ export default function ChatPage({ params }: ChatPageProps) {
           ...prev,
           [effectiveChatId]: data.actions,
         }));
+
+        // Resume polling for any transcription operations that were interrupted (e.g. by page refresh)
+        for (const action of data.actions) {
+          if (
+            action.actionType === "transcribe_audio" &&
+            action.status === "processing" &&
+            action.actionId?.startsWith("transcribe-")
+          ) {
+            const operationId = action.actionId.replace("transcribe-", "");
+            if (operationId && !activePollingRef.current.has(operationId)) {
+              debugLog("[BotAction] Resuming polling for interrupted transcription", { operationId, chatId: effectiveChatId });
+              // Start polling in background (don't await)
+              startPollingForOperation(operationId, effectiveChatId);
+            }
+          }
+        }
       } catch (error) {
         debugLog("[BotAction] Error fetching active actions", error);
       }
@@ -192,7 +349,7 @@ export default function ChatPage({ params }: ChatPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, effectiveChatId]);
+  }, [workspaceId, effectiveChatId, startPollingForOperation]);
 
   // SSE connection: listen for messages and bot_action events
   useEffect(() => {
@@ -976,102 +1133,8 @@ export default function ChatPage({ params }: ChatPageProps) {
         // Обновляем список чатов: название может смениться после загрузки аудио
         queryClient.invalidateQueries({ queryKey: ["chats"] }).catch(() => {});
 
-        const pollOperation = async () => {
-          let attempts = 0;
-          let consecutiveErrors = 0;
-          const maxAttempts = 900; // до ~30 минут при интервале 2с
-          const maxConsecutiveErrors = 5; // прервать после 5 подряд ошибок
-          const delayMs = 2000;
-
-          while (attempts < maxAttempts) {
-            try {
-              const response = await fetch(`/api/chat/transcribe/operations/${operationId}`, {
-                method: 'GET',
-                credentials: 'include',
-              });
-
-              if (!response.ok) {
-                // Проверяем фатальные ошибки
-                const errorData = await response.json().catch(() => ({}));
-                const errorCode = errorData?.code;
-                const errorMessage = errorData?.message || `HTTP ${response.status}`;
-                
-                // OPERATION_NOT_FOUND — фатальная ошибка, прерываем polling
-                if (errorCode === 'OPERATION_NOT_FOUND' || response.status === 404) {
-                  console.error('[ChatPage] Operation not found, stopping poll');
-                  setStreamError(errorMessage);
-                  showBotAction("Операция не найдена", "error");
-                  await queryClient.invalidateQueries({ queryKey: ["chats"] });
-                  return;
-                }
-                
-                throw new Error(errorMessage);
-              }
-
-              // Сбрасываем счётчик ошибок при успешном запросе
-              consecutiveErrors = 0;
-              const status = await response.json();
-
-              if (status.status === 'completed') {
-                const completeRes = await fetch(`/api/chat/transcribe/complete/${operationId}`, {
-                  method: 'POST',
-                  credentials: 'include',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    chatId: targetChatId,
-                    text: status?.result?.text ?? null,
-                  }),
-                });
-                
-                if (completeRes.ok) {
-                  // Обновляем сообщения через invalidateQueries - готовый transcript появится автоматически
-                  await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
-                  await queryClient.invalidateQueries({ queryKey: ["chats"] });
-                  showBotAction("Готово", "done");
-                } else {
-                  await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
-                  await queryClient.invalidateQueries({ queryKey: ["chats"] });
-                  showBotAction("Готово", "done");
-                }
-                return;
-              }
-
-              if (status.status === 'failed') {
-                setStreamError(status.error || 'Транскрибация не удалась. Попробуйте снова.');
-                showBotAction("Ошибка при стенограмме", "error");
-                await queryClient.invalidateQueries({ queryKey: ["chats"] });
-                return;
-              }
-
-              attempts += 1;
-              if (attempts < maxAttempts) {
-                await new Promise((resolve) => setTimeout(resolve, delayMs));
-              }
-            } catch (error) {
-              console.error('[ChatPage] Poll error:', error);
-              consecutiveErrors += 1;
-              attempts += 1;
-              
-              // Прерываем после нескольких подряд ошибок
-              if (consecutiveErrors >= maxConsecutiveErrors) {
-                const errMsg = error instanceof Error ? error.message : 'Ошибка соединения';
-                setStreamError(`Не удалось получить статус транскрибации: ${errMsg}`);
-                showBotAction("Ошибка при получении статуса", "error");
-                await queryClient.invalidateQueries({ queryKey: ["chats"] });
-                return;
-              }
-              
-              if (attempts < maxAttempts) {
-                await new Promise((resolve) => setTimeout(resolve, delayMs));
-              }
-            }
-          }
-
-          setStreamError('Транскрибация заняла слишком много времени. Попробуйте снова.');
-          showBotAction("Стенограмма заняла слишком много времени", "error");
-        };
-
-        await pollOperation();
+        // Start polling using the shared function
+        await startPollingForOperation(operationId, targetChatId);
       }
       showBotAction("Готово", "done");
     },
@@ -1084,6 +1147,7 @@ export default function ChatPage({ params }: ChatPageProps) {
       handleSelectChat,
       queryClient,
       workspaceId,
+      startPollingForOperation,
     ],
   );
 

@@ -385,10 +385,13 @@ function ChatBubble({
     Boolean(cardId);
   const resolvedStreaming = isStreamingBubble || metadata?.streaming === true;
   const fileMeta = message.file ?? (metadata as any)?.file;
+  // Audio messages should not be treated as file messages (they have their own bubble without download button)
   const isFileMessage =
-    message.type === "file" ||
-    Boolean(fileMeta?.attachmentId || fileMeta?.storageKey || fileMeta?.filename) ||
-    (message.role === "user" && fileMeta);
+    metadata?.type !== 'audio' && (
+      message.type === "file" ||
+      Boolean(fileMeta?.attachmentId || fileMeta?.storageKey || fileMeta?.filename) ||
+      (message.role === "user" && fileMeta)
+    );
 
   const displayContent = useTypewriter(message.content ?? "", {
     enabled: resolvedStreaming && !isAudioFile && !isAudioMessage,
