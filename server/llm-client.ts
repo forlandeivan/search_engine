@@ -1571,7 +1571,7 @@ export async function checkLlmProviderHealth(
                   // Игнорируем ошибки при отмене
                 });
               }
-            } else if ("cancel" in body && typeof body.cancel === "function") {
+            } else if (body && "cancel" in body && typeof body.cancel === "function") {
               // Если нет getReader, просто отменяем body
               body.cancel().catch(() => {
                 // Игнорируем ошибки при отмене

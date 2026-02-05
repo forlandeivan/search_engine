@@ -1877,7 +1877,7 @@ export type ChatMessageRole = (typeof chatMessageRoles)[number];
 export const chatMessageTypes = ["text", "file", "card"] as const;
 export type ChatMessageType = (typeof chatMessageTypes)[number];
 
-export const chatStatuses = ["active", "archived"] as const;
+export const chatStatuses = ["active", "archived", "deleted"] as const;
 export type ChatStatus = (typeof chatStatuses)[number];
 
 export const assistantActionTypes = ["ANALYZING", "TRANSCRIBING", "TYPING"] as const;

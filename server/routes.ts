@@ -5718,9 +5718,9 @@ async function runKnowledgeBaseRagPipeline(options: {
         } : null,
         /** Контекст, использованный для LLM */
         contextInfo: {
-          chunksCount: contextRecords.length,
-          totalLength: contextRecords.reduce((sum, r) => sum + (typeof r.payload === 'string' ? r.payload.length : JSON.stringify(r.payload).length), 0),
-          chunks: contextRecords.slice(0, 5).map((r) => ({
+          chunksCount: (contextRecords as { index: number; score: number; payload: unknown }[]).length,
+          totalLength: (contextRecords as { index: number; score: number; payload: unknown }[]).reduce((sum, r) => sum + (typeof r.payload === 'string' ? r.payload.length : JSON.stringify(r.payload).length), 0),
+          chunks: (contextRecords as { index: number; score: number; payload: unknown }[]).slice(0, 5).map((r) => ({
             index: r.index,
             score: r.score,
             payloadPreview: typeof r.payload === 'string' 

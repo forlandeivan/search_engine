@@ -460,8 +460,8 @@ export async function analyzeJsonStructure(
   let fileSize = 0;
   try {
     const bucket = await ensureWorkspaceBucketExists(workspaceId);
-    const minioClient = getMinioClient();
-    const headResponse = await minioClient.send(
+    const s3Client = minioClient;
+    const headResponse = await s3Client.send(
       new HeadObjectCommand({
         Bucket: bucket,
         Key: fileKey,

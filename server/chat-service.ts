@@ -559,7 +559,7 @@ interface FileMessageMetadata {
  * Добавляет содержимое файла к тексту сообщения
  */
 function formatMessageWithAttachment(message: ChatMessage): ChatConversationMessage {
-  const meta = message.metadata as FileMessageMetadata | null;
+  const meta = message.metadata as unknown as FileMessageMetadata | null;
   
   // Если это документ с извлеченным текстом
   if (meta?.type === 'document' && meta.extractedText) {
@@ -604,7 +604,7 @@ function formatMessageWithAttachment(message: ChatMessage): ChatConversationMess
  * Проверить, содержит ли сообщение проиндексированный файл
  */
 function hasIndexedFile(message: ChatMessage): boolean {
-  const meta = message.metadata as FileMessageMetadata | null;
+  const meta = message.metadata as unknown as FileMessageMetadata | null;
   return meta?.type === 'document' && meta?.isIndexed === true;
 }
 
@@ -612,7 +612,7 @@ function hasIndexedFile(message: ChatMessage): boolean {
  * Получить ID attachment из сообщения
  */
 function getAttachmentId(message: ChatMessage): string | null {
-  const meta = message.metadata as FileMessageMetadata | null;
+  const meta = message.metadata as unknown as FileMessageMetadata | null;
   return meta?.attachmentId ?? null;
 }
 

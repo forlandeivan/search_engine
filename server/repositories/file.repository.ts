@@ -115,7 +115,6 @@ export const fileRepository = {
       .update(fileEventOutbox)
       .set({
         status: 'sent',
-        sentAt: sql`CURRENT_TIMESTAMP`,
         updatedAt: sql`CURRENT_TIMESTAMP`,
       })
       .where(eq(fileEventOutbox.id, id));
@@ -128,7 +127,7 @@ export const fileRepository = {
     await db
       .update(fileEventOutbox)
       .set({
-        status: 'pending',
+        status: 'retrying',
         nextAttemptAt,
         lastError: error ?? null,
         updatedAt: sql`CURRENT_TIMESTAMP`,

@@ -169,7 +169,7 @@ export const skillRepository = {
     const [job] = await db
       .update(skillFileIngestionJobs)
       .set({
-        status: 'processing',
+        status: 'running',
         attempts: sql`${skillFileIngestionJobs.attempts} + 1`,
         updatedAt: now,
       })
@@ -195,7 +195,6 @@ export const skillRepository = {
   ): Promise<SkillFileIngestionJob | null> {
     const updates: Record<string, unknown> = {
       status: 'done',
-      finishedAt: sql`CURRENT_TIMESTAMP`,
       updatedAt: sql`CURRENT_TIMESTAMP`,
     };
 
@@ -239,9 +238,8 @@ export const skillRepository = {
     const [updated] = await db
       .update(skillFileIngestionJobs)
       .set({
-        status: 'failed',
+        status: 'error',
         lastError: error ?? null,
-        finishedAt: sql`CURRENT_TIMESTAMP`,
         updatedAt: sql`CURRENT_TIMESTAMP`,
       })
       .where(eq(skillFileIngestionJobs.id, id))
