@@ -23,7 +23,7 @@ import { actionsRepository } from '../actions';
 import { skillActionsRepository } from '../skill-actions';
 import { getSkillById } from '../skills';
 import { runTranscriptActionCommon } from '../lib/transcript-actions';
-import { upsertBotActionForChat } from '../chat-service';
+import { upsertBotActionForChat, mapMessage } from '../chat-service';
 import { scheduleChatTitleGenerationIfNeeded } from '../chat-title-jobs';
 import { uploadFileToProvider, FileUploadToProviderError } from '../file-storage-provider-upload-service';
 import type { PublicUser, ChatMessageMetadata, UnicaAsrConfig } from '@shared/schema';
@@ -427,6 +427,29 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         executionId: executionId,
       });
 
+      // Create user message in database so it persists after page refresh
+      let audioMessage = null;
+      try {
+        const userMessage = await storage.createChatMessage({
+          chatId,
+          role: 'user',
+          messageType: 'file',
+          content: `[Загружено аудио: ${file.originalname || 'audio'}]`,
+          metadata: {
+            type: 'audio',
+            fileName: file.originalname || 'audio',
+            mimeType: file.mimetype,
+            sizeBytes: file.size,
+            transcriptionStatus: 'processing',
+            operationId: unicaOperationId,
+          },
+        });
+        audioMessage = mapMessage(userMessage);
+        logger.info({ messageId: userMessage.id, chatId }, "[UNICA-ASR] ✅ User audio message created");
+      } catch (msgError) {
+        logger.warn({ error: msgError, chatId }, "[UNICA-ASR] ⚠️ Failed to create user audio message");
+      }
+
       logger.info("[UNICA-ASR] ========== UNICA ASR FLOW COMPLETED ==========");
       logger.info({ unicaOperationId, message: "Client should poll for status" }, "[UNICA-ASR] Response sent to client");
 
@@ -434,6 +457,7 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
         status: 'started',
         operationId: unicaOperationId,
         message: 'Аудио файл загружен и отправлен на транскрибацию через Unica ASR',
+        audioMessage,
       });
     } catch (error) {
       const errorObj = error as { name?: string; status?: number; code?: string; statusCode?: number; message?: string; details?: unknown };
@@ -545,10 +569,34 @@ transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res)
       executionId: executionId,
     });
 
+    // Create user message in database so it persists after page refresh
+    let audioMessage = null;
+    try {
+      const userMessage = await storage.createChatMessage({
+        chatId,
+        role: 'user',
+        messageType: 'file',
+        content: `[Загружено аудио: ${file.originalname || 'audio'}]`,
+        metadata: {
+          type: 'audio',
+          fileName: file.originalname || 'audio',
+          mimeType: file.mimetype,
+          sizeBytes: file.size,
+          transcriptionStatus: 'processing',
+          operationId: result.operationId,
+        },
+      });
+      audioMessage = mapMessage(userMessage);
+      logger.info({ messageId: userMessage.id, chatId }, "[TRANSCRIBE] ✅ User audio message created");
+    } catch (msgError) {
+      logger.warn({ error: msgError, chatId }, "[TRANSCRIBE] ⚠️ Failed to create user audio message");
+    }
+
     res.json({
       status: 'started',
       operationId: result.operationId,
       message: 'Аудио файл загружен и отправлен на транскрибацию',
+      audioMessage,
     });
   } catch (error) {
     logger.error({
@@ -1064,11 +1112,33 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
         chatTitle: chat.title,
       });
 
+      // Create user message in database so it persists after page refresh
+      let audioMessage = null;
+      try {
+        const userMessage = await storage.createChatMessage({
+          chatId,
+          role: 'user',
+          messageType: 'file',
+          content: `[Загружено аудио: ${fileName || 'audio'}]`,
+          metadata: {
+            type: 'audio',
+            fileName: fileName || 'audio',
+            transcriptionStatus: 'processing',
+            operationId: unicaOperationId,
+          },
+        });
+        audioMessage = mapMessage(userMessage);
+        logger.info({ messageId: userMessage.id, chatId }, "[START-TRANSCRIBE-UNICA] ✅ User audio message created");
+      } catch (msgError) {
+        logger.warn({ error: msgError, chatId }, "[START-TRANSCRIBE-UNICA] ⚠️ Failed to create user audio message");
+      }
+
       return res.json({
         status: 'started',
         operationId: unicaOperationId,
         taskId,
         message: 'Транскрибация началась',
+        audioMessage,
       });
     } catch (error) {
       logger.error({
@@ -1164,10 +1234,32 @@ transcribeRouter.post('/start', asyncHandler(async (req, res) => {
       // but we could try to pass it if we had it.
     });
 
+    // Create user message in database so it persists after page refresh
+    let audioMessage = null;
+    try {
+      const userMessage = await storage.createChatMessage({
+        chatId,
+        role: 'user',
+        messageType: 'file',
+        content: `[Загружено аудио: ${fileName || 'audio'}]`,
+        metadata: {
+          type: 'audio',
+          fileName: fileName || 'audio',
+          transcriptionStatus: 'processing',
+          operationId: result.operationId,
+        },
+      });
+      audioMessage = mapMessage(userMessage);
+      logger.info({ messageId: userMessage.id, chatId }, "[START-TRANSCRIBE] ✅ User audio message created");
+    } catch (msgError) {
+      logger.warn({ error: msgError, chatId }, "[START-TRANSCRIBE] ⚠️ Failed to create user audio message");
+    }
+
     res.json({
       status: 'started',
       operationId: result.operationId,
       message: 'Транскрибация началась',
+      audioMessage,
     });
   } catch (error) {
     logger.error({

@@ -625,6 +625,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
         if (result.status === "started" && result.operationId) {
           console.log("[ChatInput] Transcription started for pre-uploaded file", {
             operationId: result.operationId,
+            hasAudioMessage: !!result.audioMessage,
           });
 
           const payload: TranscribePayload = {
@@ -634,6 +635,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
             status: "started",
             s3Uri: preUploadedFile.s3Uri,
             objectKey: preUploadedFile.objectKey,
+            audioMessage: result.audioMessage,
           };
           
           return payload;

@@ -12,6 +12,8 @@ export type AsrExecutionStage =
   | "transcript_placeholder_message_created"
   | "asr_request_sent"
   | "asr_polling_attempt"      // Попытка polling с результатом от провайдера
+  | "api_call_get_task_status" // HTTP вызов GET /recognition-task/{id}
+  | "api_call_get_dataset"     // HTTP вызов GET /Datasets/{id}
   | "asr_dataset_fetch"        // Запрос датасета с результатом
   | "asr_error"                // Ошибка на любом этапе
   | "asr_result_partial"

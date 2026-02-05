@@ -73,6 +73,8 @@ const STAGE_LABELS: Record<string, string> = {
   transcript_placeholder_message_created: "Создан placeholder стенограммы",
   asr_request_sent: "Отправлен запрос ASR",
   asr_polling_attempt: "Polling провайдера",
+  api_call_get_task_status: "API: GET статус задачи",
+  api_call_get_dataset: "API: GET датасет",
   asr_dataset_fetch: "Получение текста",
   asr_error: "Ошибка",
   asr_result_partial: "Частичный результат",
@@ -97,6 +99,8 @@ const OPTIONAL_STAGES = new Set([
   "audio_message_created",
   "transcript_placeholder_message_created",
   "asr_polling_attempt",
+  "api_call_get_task_status",
+  "api_call_get_dataset",
   "asr_dataset_fetch",
   "asr_error",
   "asr_result_partial",
@@ -135,6 +139,28 @@ function formatStageDetails(stage: string, details: Record<string, unknown> | nu
       if (details.error) result.push({ key: "Ошибка", value: String(details.error) });
       if (details.success !== undefined) result.push({ key: "Успех", value: details.success ? "Да" : "Нет" });
       break;
+    
+    case "api_call_get_task_status":
+    case "api_call_get_dataset": {
+      // HTTP запрос
+      const httpReq = details.httpRequest as Record<string, unknown> | undefined;
+      if (httpReq) {
+        result.push({ key: "HTTP запрос", value: `${httpReq.method} ${httpReq.url}` });
+      }
+      // HTTP ответ
+      const httpResp = details.httpResponse as Record<string, unknown> | undefined;
+      if (httpResp) {
+        result.push({ key: "HTTP статус", value: `${httpResp.statusCode} ${httpResp.statusText || ""}` });
+        if (httpResp.taskStatus) result.push({ key: "Статус задачи", value: String(httpResp.taskStatus) });
+        if (httpResp.resultDatasetId) result.push({ key: "Dataset ID", value: String(httpResp.resultDatasetId) });
+        if (httpResp.body && typeof httpResp.body === "string" && httpResp.body.length < 500) {
+          result.push({ key: "Ответ", value: httpResp.body });
+        }
+      }
+      if (details.error) result.push({ key: "Ошибка", value: String(details.error) });
+      if (details.success !== undefined) result.push({ key: "Успех", value: details.success ? "Да" : "Нет" });
+      break;
+    }
     
     case "asr_dataset_fetch":
       if (details.datasetId) result.push({ key: "Dataset ID", value: String(details.datasetId) });

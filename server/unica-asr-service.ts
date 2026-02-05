@@ -221,7 +221,9 @@ export class UnicaAsrService {
   private async logEvent(
     executionId: string | undefined,
     stage: string,
-    details: Record<string, unknown>
+    details: Record<string, unknown>,
+    newStatus?: "pending" | "processing" | "success" | "failed",
+    errorMessage?: string
   ): Promise<void> {
     if (!executionId) {
       log("[UnicaASR] ⚠️ logEvent skipped: no executionId for stage:", stage);
@@ -229,8 +231,18 @@ export class UnicaAsrService {
     }
     try {
       const { asrExecutionLogService } = await import("./asr-execution-log-context");
-      await asrExecutionLogService.addEvent(executionId, { stage, details });
-      log("[UnicaASR] ✅ Event logged:", stage, "executionId:", executionId);
+      await asrExecutionLogService.addEvent(executionId, { stage, details }, newStatus);
+      
+      // Если есть errorMessage — обновляем execution с ошибкой
+      if (errorMessage && newStatus === "failed") {
+        await asrExecutionLogService.updateExecution(executionId, {
+          status: "failed",
+          errorMessage,
+          completedAt: new Date(),
+        });
+      }
+      
+      log("[UnicaASR] ✅ Event logged:", stage, "executionId:", executionId, newStatus ? `status: ${newStatus}` : "");
     } catch (err) {
       log("[UnicaASR] Failed to log event:", err);
     }
@@ -258,74 +270,100 @@ export class UnicaAsrService {
       language,
     });
 
-    log("[UnicaASR] ========== START RECOGNITION ==========");
-    log("[UnicaASR] File path:", filePath);
-    log("[UnicaASR] Config:", {
-      baseUrl: config.baseUrl,
-      apiBaseUrl,
-      workspaceId: config.workspaceId,
-      pollingIntervalMs: config.pollingIntervalMs,
-      timeoutMs: config.timeoutMs,
-    });
-    log("[UnicaASR] POST", url);
-    log("[UnicaASR] Request body:", JSON.stringify(bodies.json, null, 2));
+    // ========== ШАГ 1: START RECOGNITION (POST) ==========
+    const requestHeaders = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    const requestBody = bodies.json;
+    
+    log("[UnicaASR] ========== ШАГ: START RECOGNITION ==========");
+    log("[UnicaASR] ВХОДНЫЕ ПАРАМЕТРЫ:", JSON.stringify({
+      method: "POST",
+      url,
+      headers: requestHeaders,
+      body: requestBody,
+    }, null, 2));
 
     // Используем insecureAgent если skipSslVerify включен
     const agent = config.skipSslVerify ? insecureAgent : undefined;
 
     const jsonResponse = await fetchWithRetry(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(bodies.json),
+      headers: requestHeaders,
+      body: JSON.stringify(requestBody),
       agent,
     } as RequestInit & { agent?: https.Agent });
 
-    log("[UnicaASR] Response status:", jsonResponse.status, jsonResponse.statusText);
-
     let response = jsonResponse;
-    if (!response.ok) {
-      const errorText = await response.text();
-      log("[UnicaASR] ❌ Error response:", errorText);
+    let responseText = await response.text();
+    
+    log("[UnicaASR] ВЫХОДНЫЕ ПАРАМЕТРЫ:", JSON.stringify({
+      statusCode: response.status,
+      statusText: response.statusText,
+      body: responseText,
+    }, null, 2));
 
+    if (!response.ok) {
       // Some environments of Unica ASR appear to NOT bind JSON body (returns "required" for filePath/workspaceId).
       // As a compatibility fallback, retry with application/x-www-form-urlencoded payload.
-      if (looksLikeUnicaMissingRequiredFieldsResponse(response.status, errorText)) {
-        log("[UnicaASR] Retrying startRecognition as form-urlencoded");
+      if (looksLikeUnicaMissingRequiredFieldsResponse(response.status, responseText)) {
+        log("[UnicaASR] ⚠️ Retry с form-urlencoded...");
+        
+        const formHeaders = {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          Accept: "application/json",
+        };
+        const formBody = bodies.form.toString();
+        
+        log("[UnicaASR] ВХОДНЫЕ ПАРАМЕТРЫ (retry):", JSON.stringify({
+          method: "POST",
+          url,
+          headers: formHeaders,
+          body: formBody,
+        }, null, 2));
 
         response = await fetchWithRetry(url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            Accept: "application/json",
-          },
-          body: bodies.form.toString(),
+          headers: formHeaders,
+          body: formBody,
           agent,
         } as RequestInit & { agent?: https.Agent });
 
-        log("[UnicaASR] Form retry response status:", response.status, response.statusText);
+        responseText = await response.text();
+        
+        log("[UnicaASR] ВЫХОДНЫЕ ПАРАМЕТРЫ (retry):", JSON.stringify({
+          statusCode: response.status,
+          statusText: response.statusText,
+          body: responseText,
+        }, null, 2));
+        
         if (!response.ok) {
-          const retryErrorText = await response.text();
-          log("[UnicaASR] ❌ Form retry error response:", retryErrorText);
           throw new UnicaAsrError(
-            `Failed to start recognition: ${retryErrorText}`,
+            `Failed to start recognition: ${responseText}`,
             "START_RECOGNITION_FAILED",
             response.status,
           );
         }
       } else {
         throw new UnicaAsrError(
-          `Failed to start recognition: ${errorText}`,
+          `Failed to start recognition: ${responseText}`,
           "START_RECOGNITION_FAILED",
           response.status
         );
       }
     }
 
-    const task: UnicaRecognitionTask = await readJsonOrThrow(response, { url, label: "startRecognition" });
-    log("[UnicaASR] ✅ Response body:", JSON.stringify(task, null, 2));
+    let task: UnicaRecognitionTask;
+    try {
+      task = JSON.parse(responseText) as UnicaRecognitionTask;
+    } catch (parseError) {
+      log("[UnicaASR] ❌ JSON parse error:", parseError);
+      throw new UnicaAsrError(`Invalid JSON: ${responseText}`, "INVALID_JSON", 500);
+    }
+    
+    log("[UnicaASR] ✅ START RECOGNITION успешно, taskId:", task.id);
+    log("[UnicaASR] ==========================================");
 
     // Генерируем operationId для совместимости с существующей архитектурой
     const operationId = `unica_${task.id}`;
@@ -348,33 +386,83 @@ export class UnicaAsrService {
   /**
    * Получить статус задачи транскрибации
    */
-  async getTaskStatus(taskId: string, config: UnicaAsrConfig): Promise<UnicaRecognitionTask> {
+  async getTaskStatus(
+    taskId: string, 
+    config: UnicaAsrConfig,
+    executionId?: string
+  ): Promise<UnicaRecognitionTask> {
     const apiBaseUrl = normalizeUnicaApiBaseUrl(config.baseUrl);
     const url = `${apiBaseUrl}/asr/SpeechRecognition/recognition-task/${taskId}?workSpaceId=${config.workspaceId}`;
 
-    log("[UnicaASR] ========== GET TASK STATUS ==========");
-    log("[UnicaASR] Task ID:", taskId);
-    log("[UnicaASR] GET", url);
+    // ========== ШАГ: GET TASK STATUS ==========
+    const requestHeaders = { Accept: "application/json" };
+    const httpRequest = {
+      method: "GET",
+      url,
+      headers: requestHeaders,
+      body: null,
+    };
+    
+    log("[UnicaASR] ========== ШАГ: GET TASK STATUS ==========");
+    log("[UnicaASR] ВХОДНЫЕ ПАРАМЕТРЫ:", JSON.stringify(httpRequest, null, 2));
 
     const agent = config.skipSslVerify ? insecureAgent : undefined;
-    const response = await fetchWithRetry(url, { method: "GET", headers: { Accept: "application/json" }, agent } as RequestInit & { agent?: https.Agent });
+    const response = await fetchWithRetry(url, { method: "GET", headers: requestHeaders, agent } as RequestInit & { agent?: https.Agent });
 
-    log("[UnicaASR] Response status:", response.status, response.statusText);
+    const responseText = await response.text();
+    const httpResponse = {
+      statusCode: response.status,
+      statusText: response.statusText,
+      body: responseText,
+    };
+    
+    log("[UnicaASR] ВЫХОДНЫЕ ПАРАМЕТРЫ:", JSON.stringify(httpResponse, null, 2));
 
     if (!response.ok) {
-      const errorText = await response.text();
-      log("[UnicaASR] ❌ Error response:", errorText);
+      // Логируем ошибку HTTP в ASR execution log
+      await this.logEvent(executionId, "api_call_get_task_status", {
+        httpRequest,
+        httpResponse,
+        success: false,
+        error: `HTTP ${response.status}: ${responseText}`,
+      });
       throw new UnicaAsrError(
-        `Failed to get task status: ${errorText}`,
+        `Failed to get task status: ${responseText}`,
         "GET_STATUS_FAILED",
         response.status
       );
     }
 
-    const task = await readJsonOrThrow<UnicaRecognitionTask>(response, { url, label: "getTaskStatus" });
-    log("[UnicaASR] ✅ Task status:", task.status);
-    log("[UnicaASR] Response body:", JSON.stringify(task, null, 2));
-    log("[UnicaASR] ========================================");
+    let task: UnicaRecognitionTask;
+    try {
+      task = JSON.parse(responseText) as UnicaRecognitionTask;
+    } catch (parseError) {
+      log("[UnicaASR] ❌ JSON parse error:", parseError);
+      await this.logEvent(executionId, "api_call_get_task_status", {
+        httpRequest,
+        httpResponse,
+        success: false,
+        error: `JSON parse error: ${parseError}`,
+      });
+      throw new UnicaAsrError(`Invalid JSON: ${responseText}`, "INVALID_JSON", 500);
+    }
+    
+    // Логируем успешный вызов API в ASR execution log
+    await this.logEvent(executionId, "api_call_get_task_status", {
+      httpRequest,
+      httpResponse: {
+        statusCode: response.status,
+        statusText: response.statusText,
+        taskId: task.id,
+        taskStatus: task.status,
+        resultDatasetId: task.resultDatasetId,
+        error: task.error,
+      },
+      success: true,
+    });
+    
+    log("[UnicaASR] ✅ GET TASK STATUS успешно, status:", task.status);
+    log("[UnicaASR] ==========================================");
 
     return task;
   }
@@ -382,37 +470,87 @@ export class UnicaAsrService {
   /**
    * Получить текст из датасета
    */
-  async getDatasetText(datasetId: string, config: UnicaAsrConfig, version: number = 1): Promise<string> {
+  async getDatasetText(
+    datasetId: string, 
+    config: UnicaAsrConfig, 
+    version: number = 1,
+    executionId?: string
+  ): Promise<string> {
     const apiBaseUrl = normalizeUnicaApiBaseUrl(config.baseUrl);
     const url = `${apiBaseUrl}/datamanagement/Datasets/${datasetId}?workspaceId=${config.workspaceId}&version=${version}`;
 
-    log("[UnicaASR] ========== GET DATASET TEXT ==========");
-    log("[UnicaASR] Dataset ID:", datasetId);
-    log("[UnicaASR] Version:", version);
-    log("[UnicaASR] GET", url);
+    // ========== ШАГ: GET DATASET TEXT ==========
+    const requestHeaders = { Accept: "application/json" };
+    const httpRequest = {
+      method: "GET",
+      url,
+      headers: requestHeaders,
+      body: null,
+      datasetId,
+      version,
+    };
+    
+    log("[UnicaASR] ========== ШАГ: GET DATASET TEXT ==========");
+    log("[UnicaASR] ВХОДНЫЕ ПАРАМЕТРЫ:", JSON.stringify(httpRequest, null, 2));
 
     const agent = config.skipSslVerify ? insecureAgent : undefined;
-    const response = await fetchWithRetry(url, { method: "GET", headers: { Accept: "application/json" }, agent } as RequestInit & { agent?: https.Agent });
+    const response = await fetchWithRetry(url, { method: "GET", headers: requestHeaders, agent } as RequestInit & { agent?: https.Agent });
 
-    log("[UnicaASR] Response status:", response.status, response.statusText);
+    const responseText = await response.text();
+    const httpResponse = {
+      statusCode: response.status,
+      statusText: response.statusText,
+      bodyLength: responseText.length,
+      bodyPreview: responseText.substring(0, 500),
+    };
+    
+    log("[UnicaASR] ВЫХОДНЫЕ ПАРАМЕТРЫ:", JSON.stringify(httpResponse, null, 2));
 
     if (!response.ok) {
-      const errorText = await response.text();
-      log("[UnicaASR] ❌ Error response:", errorText);
+      await this.logEvent(executionId, "api_call_get_dataset", {
+        httpRequest,
+        httpResponse: { ...httpResponse, body: responseText },
+        success: false,
+        error: `HTTP ${response.status}: ${responseText}`,
+      });
       throw new UnicaAsrError(
-        `Failed to get dataset: ${errorText}`,
+        `Failed to get dataset: ${responseText}`,
         "GET_DATASET_FAILED",
         response.status
       );
     }
 
-    const data: UnicaDatasetResponse = await readJsonOrThrow(response, { url, label: "getDatasetText" });
+    let data: UnicaDatasetResponse;
+    try {
+      data = JSON.parse(responseText) as UnicaDatasetResponse;
+    } catch (parseError) {
+      log("[UnicaASR] ❌ JSON parse error:", parseError);
+      await this.logEvent(executionId, "api_call_get_dataset", {
+        httpRequest,
+        httpResponse: { ...httpResponse, body: responseText.substring(0, 500) },
+        success: false,
+        error: `JSON parse error`,
+      });
+      throw new UnicaAsrError(`Invalid JSON: ${responseText.substring(0, 200)}`, "INVALID_JSON", 500);
+    }
+    
     const text = data.dataset.text;
     
-    log("[UnicaASR] ✅ Dataset retrieved");
-    log("[UnicaASR] Text length:", text.length, "chars");
-    log("[UnicaASR] Text preview (first 200 chars):", text.substring(0, 200));
-    log("[UnicaASR] ========================================");
+    // Логируем успешный вызов в ASR execution log
+    await this.logEvent(executionId, "api_call_get_dataset", {
+      httpRequest,
+      httpResponse: {
+        statusCode: response.status,
+        statusText: response.statusText,
+        datasetId: data.id,
+        textLength: text.length,
+        textPreview: text.substring(0, 200),
+      },
+      success: true,
+    });
+    
+    log("[UnicaASR] ✅ GET DATASET TEXT успешно, textLength:", text.length);
+    log("[UnicaASR] ==========================================");
 
     return text;
   }
@@ -543,29 +681,40 @@ export class UnicaAsrService {
 
     // Проверка таймаута
     if (elapsedMs > timeoutMs) {
-      log("[UnicaASR] ❌ Operation timed out");
+      const errorMsg = `Превышено время ожидания транскрибации (${Math.round(timeoutMs / 1000)} сек)`;
+      log("[UnicaASR] ❌ Operation timed out after", Math.round(elapsedMs / 1000), "seconds");
+      
+      // Логируем ошибку в ASR execution log и обновляем статус
+      await this.logEvent(
+        cached.executionId,
+        "asr_error",
+        {
+          taskId,
+          taskStatus: "Timeout",
+          error: errorMsg,
+          elapsedMs,
+          timeoutMs,
+        },
+        "failed",
+        errorMsg
+      );
+      
       this.operationsCache.delete(operationId);
       return {
         done: true,
         status: "failed",
-        error: "Transcription timeout",
+        error: errorMsg,
       };
     }
 
     let task;
     try {
-      task = await this.getTaskStatus(taskId, config);
+      task = await this.getTaskStatus(taskId, config, cached.executionId);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log("[UnicaASR] ❌ getTaskStatus failed:", errorMessage);
       
-      // Логируем ошибку в ASR execution log
-      await this.logEvent(cached.executionId, "asr_polling_attempt", {
-        taskId,
-        elapsedMs,
-        error: errorMessage,
-        success: false,
-      });
+      // Ошибка уже залогирована в getTaskStatus
       
       throw err;
     }
@@ -583,40 +732,54 @@ export class UnicaAsrService {
     });
 
     if (task.status === "Failed") {
-      log("[UnicaASR] ❌ Task failed:", task.error || "Unknown error");
+      const errorMsg = task.error || "Ошибка транскрибации";
+      log("[UnicaASR] ❌ Task failed:", errorMsg);
       
-      // Логируем ошибку
-      await this.logEvent(cached.executionId, "asr_error", {
-        taskId,
-        taskStatus: "Failed",
-        error: task.error || "Unknown error",
-        elapsedMs,
-      });
+      // Логируем ошибку и обновляем статус execution
+      await this.logEvent(
+        cached.executionId,
+        "asr_error",
+        {
+          taskId,
+          taskStatus: "Failed",
+          error: errorMsg,
+          elapsedMs,
+        },
+        "failed",
+        errorMsg
+      );
       
       this.operationsCache.delete(operationId);
       return {
         done: true,
         status: "failed",
-        error: task.error || "Unknown error",
+        error: errorMsg,
       };
     }
 
     // Обработка отмены задачи
     if (task.status === "Canceling" || task.status === "Cancelled") {
+      const errorMsg = `Задача была отменена (${task.status})`;
       log("[UnicaASR] ⚠️ Task cancelled:", task.status);
       
-      await this.logEvent(cached.executionId, "asr_error", {
-        taskId,
-        taskStatus: task.status,
-        error: "Задача была отменена",
-        elapsedMs,
-      });
+      await this.logEvent(
+        cached.executionId,
+        "asr_error",
+        {
+          taskId,
+          taskStatus: task.status,
+          error: errorMsg,
+          elapsedMs,
+        },
+        "failed",
+        errorMsg
+      );
       
       this.operationsCache.delete(operationId);
       return {
         done: true,
         status: "failed",
-        error: `Задача была отменена (${task.status})`,
+        error: errorMsg,
       };
     }
 
@@ -626,9 +789,9 @@ export class UnicaAsrService {
       
       let text: string;
       try {
-        text = await this.getDatasetText(task.resultDatasetId, config);
+        text = await this.getDatasetText(task.resultDatasetId, config, 1, cached.executionId);
         
-        // Логируем успешное получение датасета
+        // Логируем успешное получение датасета (краткая сводка)
         await this.logEvent(cached.executionId, "asr_dataset_fetch", {
           datasetId: task.resultDatasetId,
           textLength: text.length,
