@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { CatalogLogoBadge } from "@/components/CatalogLogoBadge";
 import { cn } from "@/lib/utils";
 
@@ -89,33 +90,23 @@ const STATUS_META: Record<
   IntegrationStatus,
   {
     label: string;
-    actionLabel: string;
-    actionVariant: "default" | "secondary" | "outline";
     badgeClassName: string;
   }
 > = {
   installed: {
     label: "Установлено",
-    actionLabel: "Открыть",
-    actionVariant: "secondary",
     badgeClassName: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700",
   },
   available: {
     label: "Готово к установке",
-    actionLabel: "Установить",
-    actionVariant: "default",
     badgeClassName: "border-blue-500/30 bg-blue-500/10 text-blue-700",
   },
   requires_setup: {
     label: "Требуется настройка",
-    actionLabel: "Настроить",
-    actionVariant: "outline",
     badgeClassName: "border-amber-500/30 bg-amber-500/10 text-amber-700",
   },
   beta: {
     label: "Бета-доступ",
-    actionLabel: "Запросить доступ",
-    actionVariant: "outline",
     badgeClassName: "border-violet-500/30 bg-violet-500/10 text-violet-700",
   },
 };
@@ -325,9 +316,10 @@ export default function IntegrationsPage() {
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<"all" | IntegrationCategory>("all");
   const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>("all");
+  const [activeToggles, setActiveToggles] = useState<Record<string, boolean>>({});
 
   const installedCount = INTEGRATION_CATALOG.filter((item) => item.status === "installed").length;
-  const russianCount = INTEGRATION_CATALOG.filter((item) => item.isRussian).length;
+  const requiresSetupCount = INTEGRATION_CATALOG.filter((item) => item.status === "requires_setup").length;
   const totalScenarios = INTEGRATION_CATALOG.reduce((acc, item) => acc + item.actionsCount, 0);
 
   const filteredCatalog = useMemo(() => {
@@ -388,8 +380,8 @@ export default function IntegrationsPage() {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Российские сервисы</p>
-            <p className="mt-2 text-2xl font-semibold">{russianCount}</p>
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Требуют настройки</p>
+            <p className="mt-2 text-2xl font-semibold">{requiresSetupCount}</p>
           </CardContent>
         </Card>
         <Card>
@@ -481,6 +473,8 @@ export default function IntegrationsPage() {
           {filteredCatalog.map((item) => {
             const statusMeta = STATUS_META[item.status];
             const logoMeta = INTEGRATION_LOGOS[item.id];
+            const showActiveToggle = item.status === "installed";
+            const isToggleOn = Boolean(activeToggles[item.id]);
 
             return (
               <Card key={item.id} className="flex h-full flex-col">
@@ -527,15 +521,12 @@ export default function IntegrationsPage() {
                     <span>{item.actionsCount} сценариев</span>
                     <span>{item.status === "installed" ? "Подключено" : "Можно подключить"}</span>
                   </div>
-
-                  <div className="flex gap-2">
-                    <Button variant={statusMeta.actionVariant} size="sm" className="flex-1">
-                      {statusMeta.actionLabel}
-                    </Button>
-                    <Button variant="outline" size="sm" className="flex-1">
-                      Карточка
-                    </Button>
-                  </div>
+                  {showActiveToggle ? (
+                    <div className={cn("flex items-center justify-between rounded-md border px-3 py-2", isToggleOn ? "border-blue-500/70 bg-blue-500/5" : "border-border/60 bg-muted/30")}>
+                      <span className="text-xs font-medium text-foreground">Активен</span>
+                      <Switch checked={isToggleOn} onCheckedChange={(checked) => setActiveToggles((prev) => ({ ...prev, [item.id]: checked }))} aria-label={`${item.name} активен`} />
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
             );

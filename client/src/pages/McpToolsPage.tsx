@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { CatalogLogoBadge } from "@/components/CatalogLogoBadge";
 import { cn } from "@/lib/utils";
 
@@ -85,27 +86,19 @@ const MCP_STATUS_META: Record<
   McpStatus,
   {
     label: string;
-    actionLabel: string;
-    actionVariant: "default" | "secondary" | "outline";
     badgeClassName: string;
   }
 > = {
   connected: {
     label: "Подключен",
-    actionLabel: "Открыть сервер",
-    actionVariant: "secondary",
     badgeClassName: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700",
   },
   available: {
     label: "Доступен",
-    actionLabel: "Подключить",
-    actionVariant: "default",
     badgeClassName: "border-blue-500/30 bg-blue-500/10 text-blue-700",
   },
   pilot: {
     label: "Пилот",
-    actionLabel: "Запросить доступ",
-    actionVariant: "outline",
     badgeClassName: "border-violet-500/30 bg-violet-500/10 text-violet-700",
   },
 };
@@ -345,9 +338,10 @@ export default function McpToolsPage() {
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<"all" | McpCategory>("all");
   const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>("all");
+  const [activeToggles, setActiveToggles] = useState<Record<string, boolean>>({});
 
   const connectedCount = MCP_CATALOG.filter((item) => item.status === "connected").length;
-  const russianCount = MCP_CATALOG.filter((item) => item.isRussian).length;
+  const pilotCount = MCP_CATALOG.filter((item) => item.status === "pilot").length;
   const toolsCount = MCP_CATALOG.reduce((acc, item) => acc + item.toolsCount, 0);
 
   const averageFreshnessSeconds = Math.round(
@@ -412,8 +406,8 @@ export default function McpToolsPage() {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Российские источники</p>
-            <p className="mt-2 text-2xl font-semibold">{russianCount}</p>
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Пилотные подключения</p>
+            <p className="mt-2 text-2xl font-semibold">{pilotCount}</p>
           </CardContent>
         </Card>
         <Card>
@@ -502,6 +496,8 @@ export default function McpToolsPage() {
           {filteredCatalog.map((item) => {
             const statusMeta = MCP_STATUS_META[item.status];
             const logoMeta = MCP_LOGOS[item.id];
+            const showActiveToggle = item.status === "connected";
+            const isToggleOn = Boolean(activeToggles[item.id]);
 
             return (
               <Card key={item.id} className="flex h-full flex-col">
@@ -520,9 +516,11 @@ export default function McpToolsPage() {
                         <CardDescription className="mt-1 text-xs">{item.provider}</CardDescription>
                       </div>
                     </div>
-                    <Badge variant="outline" className={cn("text-[11px]", statusMeta.badgeClassName)}>
-                      {statusMeta.label}
-                    </Badge>
+                    {item.status !== "pilot" ? (
+                      <Badge variant="outline" className={cn("text-[11px]", statusMeta.badgeClassName)}>
+                        {statusMeta.label}
+                      </Badge>
+                    ) : null}
                   </div>
                   <p className="text-sm text-muted-foreground">{item.description}</p>
                 </CardHeader>
@@ -558,15 +556,12 @@ export default function McpToolsPage() {
                       <span>Данные приходят в реальном времени и доступны сразу в сценариях ассистента.</span>
                     </div>
                   </div>
-
-                  <div className="flex gap-2">
-                    <Button variant={statusMeta.actionVariant} size="sm" className="flex-1">
-                      {statusMeta.actionLabel}
-                    </Button>
-                    <Button variant="outline" size="sm" className="flex-1">
-                      Конфигурация
-                    </Button>
-                  </div>
+                  {showActiveToggle ? (
+                    <div className={cn("flex items-center justify-between rounded-md border px-3 py-2", isToggleOn ? "border-blue-500/70 bg-blue-500/5" : "border-border/60 bg-muted/30")}>
+                      <span className="text-xs font-medium text-foreground">Активен</span>
+                      <Switch checked={isToggleOn} onCheckedChange={(checked) => setActiveToggles((prev) => ({ ...prev, [item.id]: checked }))} aria-label={`${item.name} активен`} />
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
             );
