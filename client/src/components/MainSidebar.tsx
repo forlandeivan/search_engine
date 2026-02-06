@@ -19,6 +19,7 @@ import {
 import {
   BookOpen,
   Brain,
+  Database,
   LayoutDashboard,
   Layers,
   MessageCircle,
@@ -27,6 +28,7 @@ import {
   Shield,
   Sparkle,
   Users,
+  Workflow,
   Zap,
 } from "lucide-react";
 import type { PublicUser } from "@shared/schema";
@@ -175,6 +177,16 @@ export default function MainSidebar({ showAdminLink = false, user, workspace }: 
           title: "Коллекции",
           url: "/vector/collections",
           icon: Layers,
+        },
+        {
+          title: "Интеграции",
+          url: "/integrations",
+          icon: Workflow,
+        },
+        {
+          title: "Инструменты MCP",
+          url: "/integrations/mcp-tools",
+          icon: Database,
         },
         {
           title: "Документация API",

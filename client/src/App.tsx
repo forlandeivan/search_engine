@@ -267,6 +267,8 @@ const AdminMaintenanceModePage = lazyWithRetry(() => import("@/pages/AdminMainte
 // Lazy loaded pages - Main routes (с автоперезагрузкой при ошибке загрузки чанков)
 const KnowledgeBasePage = lazyWithRetry(() => import("@/pages/KnowledgeBasePage"));
 const SkillsPage = lazyWithRetry(() => import("@/pages/SkillsPage"));
+const IntegrationsPage = lazyWithRetry(() => import("@/pages/IntegrationsPage"));
+const McpToolsPage = lazyWithRetry(() => import("@/pages/McpToolsPage"));
 const ChatPage = lazyWithRetry(() => import("@/pages/ChatPage"));
 const WorkspaceActionsPage = lazyWithRetry(() => import("@/pages/WorkspaceActionsPage"));
 const WorkspaceSettingsPage = lazyWithRetry(() => import("@/pages/WorkspaceSettingsPage"));
@@ -431,8 +433,14 @@ function MainRouter() {
       <Route path="/vector/collections">
         <LazyRouteWrapper><VectorCollectionsPage /></LazyRouteWrapper>
       </Route>
+      <Route path="/integrations/mcp-tools">
+        <LazyRouteWrapper><McpToolsPage /></LazyRouteWrapper>
+      </Route>
       <Route path="/integrations/api">
         <LazyRouteWrapper><ApiDocsPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/integrations">
+        <LazyRouteWrapper><IntegrationsPage /></LazyRouteWrapper>
       </Route>
       <Route path="/profile" component={ProfilePage} />
       <Route path="/" component={DashboardPage} />
