@@ -334,11 +334,67 @@ const MCP_STATUS_ORDER: Record<McpStatus, number> = {
   available: 2,
 };
 
+const MCP_TOGGLE_STORAGE_KEY = "unica-demo-mcp-toggles-v1";
+
+function readEnabledMcpToggleIds(): string[] {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") return [];
+
+  const raw = window.sessionStorage.getItem(MCP_TOGGLE_STORAGE_KEY);
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as { enabledIds?: unknown };
+    if (!Array.isArray(parsed.enabledIds)) return [];
+
+    return parsed.enabledIds
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .filter((value, index, self) => self.indexOf(value) === index);
+  } catch {
+    return [];
+  }
+}
+
+function writeEnabledMcpToggleIds(enabledIds: string[]): void {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") return;
+
+  const uniqueIds = enabledIds
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .filter((value, index, self) => self.indexOf(value) === index);
+
+  window.sessionStorage.setItem(
+    MCP_TOGGLE_STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      enabledIds: uniqueIds,
+    }),
+  );
+}
+
 export default function McpToolsPage() {
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<"all" | McpCategory>("all");
   const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>("all");
-  const [activeToggles, setActiveToggles] = useState<Record<string, boolean>>({});
+  const [activeToggles, setActiveToggles] = useState<Record<string, boolean>>(() => {
+    const enabledIds = new Set(readEnabledMcpToggleIds());
+    return MCP_CATALOG.reduce<Record<string, boolean>>((acc, item) => {
+      if (item.status === "connected") {
+        acc[item.id] = enabledIds.has(item.id);
+      }
+      return acc;
+    }, {});
+  });
+
+  const handleToggleChange = (itemId: string, checked: boolean) => {
+    setActiveToggles((prev) => {
+      const next = { ...prev, [itemId]: checked };
+      const enabledIds = Object.entries(next)
+        .filter(([, enabled]) => enabled)
+        .map(([id]) => id);
+      writeEnabledMcpToggleIds(enabledIds);
+      return next;
+    });
+  };
 
   const connectedCount = MCP_CATALOG.filter((item) => item.status === "connected").length;
   const pilotCount = MCP_CATALOG.filter((item) => item.status === "pilot").length;
@@ -559,7 +615,7 @@ export default function McpToolsPage() {
                   {showActiveToggle ? (
                     <div className={cn("flex items-center justify-between rounded-md border px-3 py-2", isToggleOn ? "border-blue-500/70 bg-blue-500/5" : "border-border/60 bg-muted/30")}>
                       <span className="text-xs font-medium text-foreground">Активен</span>
-                      <Switch checked={isToggleOn} onCheckedChange={(checked) => setActiveToggles((prev) => ({ ...prev, [item.id]: checked }))} aria-label={`${item.name} активен`} />
+                      <Switch checked={isToggleOn} onCheckedChange={(checked) => handleToggleChange(item.id, checked)} aria-label={`${item.name} активен`} />
                     </div>
                   ) : null}
                 </CardContent>

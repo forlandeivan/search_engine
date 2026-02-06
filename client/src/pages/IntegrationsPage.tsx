@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search, Sparkles, Workflow } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,16 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { CatalogLogoBadge } from "@/components/CatalogLogoBadge";
+import {
+  DEMO_INTEGRATIONS_STORAGE_KEY,
+  DEMO_INTEGRATIONS_UPDATED_EVENT,
+  DEMO_INTEGRATION_TOGGLES_STORAGE_KEY,
+  readEnabledDemoIntegrations,
+  readEnabledDemoIntegrationToggleIds,
+  removeEnabledDemoIntegration,
+  setDemoIntegrationToggle,
+  upsertEnabledDemoIntegration,
+} from "@/lib/demoIntegrationActions";
 import { cn } from "@/lib/utils";
 
 type IntegrationStatus = "installed" | "available" | "requires_setup" | "beta";
@@ -312,11 +322,171 @@ const STATUS_SORT_ORDER: Record<IntegrationStatus, number> = {
   available: 3,
 };
 
+const DEMO_INTEGRATION_ACTIONS: Record<string, { buttonLabel: string; actions: string[] }> = {
+  "vk-teams": {
+    buttonLabel: "Действия VK Teams",
+    actions: [
+      "Создать задачу в канале команды",
+      "Отправить сводку в чат руководителя",
+      "Запросить согласование документа",
+    ],
+  },
+  telegram: {
+    buttonLabel: "Действия Telegram",
+    actions: [
+      "Отправить уведомление в Telegram-канал",
+      "Создать напоминание в боте",
+      "Передать клиенту статус заявки",
+    ],
+  },
+  bitrix24: {
+    buttonLabel: "Действия Битрикс24",
+    actions: [
+      "Создать лид в CRM",
+      "Запустить бизнес-процесс согласования",
+      "Поставить задачу ответственному",
+    ],
+  },
+  "kontur-diadoc": {
+    buttonLabel: "Действия Диадок",
+    actions: [
+      "Создать и отправить УПД контрагенту",
+      "Запросить подпись документа",
+      "Проверить статус подписания",
+    ],
+  },
+  yookassa: {
+    buttonLabel: "Действия ЮKassa",
+    actions: [
+      "Сформировать ссылку на оплату",
+      "Создать платёж по заказу",
+      "Проверить статус транзакции",
+    ],
+  },
+};
+
 export default function IntegrationsPage() {
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<"all" | IntegrationCategory>("all");
   const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>("all");
-  const [activeToggles, setActiveToggles] = useState<Record<string, boolean>>({});
+  const [activeToggles, setActiveToggles] = useState<Record<string, boolean>>(() => {
+    const enabledIntegrationIds = new Set(readEnabledDemoIntegrationToggleIds());
+    return INTEGRATION_CATALOG.reduce<Record<string, boolean>>((acc, item) => {
+      if (item.status === "installed") {
+        acc[item.id] = enabledIntegrationIds.has(item.id);
+      }
+      return acc;
+    }, {});
+  });
+
+  useEffect(() => {
+    const enabledToggleIds = new Set(readEnabledDemoIntegrationToggleIds());
+    const enabledActionIds = new Set(
+      readEnabledDemoIntegrations().map((integration) => integration.integrationId),
+    );
+
+    INTEGRATION_CATALOG.forEach((item) => {
+      if (item.status !== "installed") return;
+
+      const demoActions = DEMO_INTEGRATION_ACTIONS[item.id];
+      const shouldBeEnabled = enabledToggleIds.has(item.id);
+      const hasActionPayload = enabledActionIds.has(item.id);
+
+      if (!demoActions) {
+        if (shouldBeEnabled) {
+          setDemoIntegrationToggle(item.id, false);
+        }
+        if (hasActionPayload) {
+          removeEnabledDemoIntegration(item.id);
+        }
+        return;
+      }
+
+      if (shouldBeEnabled && !hasActionPayload) {
+        upsertEnabledDemoIntegration({
+          integrationId: item.id,
+          integrationName: item.name,
+          buttonLabel: demoActions.buttonLabel,
+          actions: demoActions.actions,
+        });
+      }
+
+      if (!shouldBeEnabled && hasActionPayload) {
+        removeEnabledDemoIntegration(item.id);
+      }
+    });
+
+    setActiveToggles((prev) =>
+      INTEGRATION_CATALOG.reduce<Record<string, boolean>>((acc, item) => {
+        if (item.status === "installed") {
+          acc[item.id] = enabledToggleIds.has(item.id);
+        } else if (item.id in prev) {
+          acc[item.id] = prev[item.id];
+        }
+        return acc;
+      }, {}),
+    );
+  }, []);
+
+  useEffect(() => {
+    const syncActiveToggles = () => {
+      const enabledToggleIds = new Set(readEnabledDemoIntegrationToggleIds());
+      setActiveToggles((prev) =>
+        INTEGRATION_CATALOG.reduce<Record<string, boolean>>((acc, item) => {
+          if (item.status === "installed") {
+            acc[item.id] = enabledToggleIds.has(item.id);
+          } else if (item.id in prev) {
+            acc[item.id] = prev[item.id];
+          }
+          return acc;
+        }, {}),
+      );
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea !== window.localStorage) return;
+      if (
+        event.key !== DEMO_INTEGRATIONS_STORAGE_KEY &&
+        event.key !== DEMO_INTEGRATION_TOGGLES_STORAGE_KEY
+      ) {
+        return;
+      }
+      syncActiveToggles();
+    };
+
+    window.addEventListener(DEMO_INTEGRATIONS_UPDATED_EVENT, syncActiveToggles);
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("focus", syncActiveToggles);
+
+    return () => {
+      window.removeEventListener(DEMO_INTEGRATIONS_UPDATED_EVENT, syncActiveToggles);
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("focus", syncActiveToggles);
+    };
+  }, []);
+
+  const handleToggleChange = (item: IntegrationItem, checked: boolean) => {
+    setActiveToggles((prev) => ({ ...prev, [item.id]: checked }));
+    setDemoIntegrationToggle(item.id, checked);
+
+    if (!checked) {
+      removeEnabledDemoIntegration(item.id);
+      return;
+    }
+
+    const demoActions = DEMO_INTEGRATION_ACTIONS[item.id];
+    if (!demoActions) {
+      removeEnabledDemoIntegration(item.id);
+      return;
+    }
+
+    upsertEnabledDemoIntegration({
+      integrationId: item.id,
+      integrationName: item.name,
+      buttonLabel: demoActions.buttonLabel,
+      actions: demoActions.actions,
+    });
+  };
 
   const installedCount = INTEGRATION_CATALOG.filter((item) => item.status === "installed").length;
   const requiresSetupCount = INTEGRATION_CATALOG.filter((item) => item.status === "requires_setup").length;
@@ -524,7 +694,7 @@ export default function IntegrationsPage() {
                   {showActiveToggle ? (
                     <div className={cn("flex items-center justify-between rounded-md border px-3 py-2", isToggleOn ? "border-blue-500/70 bg-blue-500/5" : "border-border/60 bg-muted/30")}>
                       <span className="text-xs font-medium text-foreground">Активен</span>
-                      <Switch checked={isToggleOn} onCheckedChange={(checked) => setActiveToggles((prev) => ({ ...prev, [item.id]: checked }))} aria-label={`${item.name} активен`} />
+                      <Switch checked={isToggleOn} onCheckedChange={(checked) => handleToggleChange(item, checked)} aria-label={`${item.name} активен`} />
                     </div>
                   ) : null}
                 </CardContent>

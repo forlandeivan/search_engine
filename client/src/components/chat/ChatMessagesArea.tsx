@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Loader2, Sparkles, Music, Search, Archive, File as FileIcon, Download } from "lucide-react";
+import { Loader2, Sparkles, Music, Search, Archive, File as FileIcon, Download, ChevronDown } from "lucide-react";
 import MarkdownRenderer from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { DEMO_INTEGRATIONS_UPDATED_EVENT, readEnabledDemoIntegrations, type DemoIntegrationActionSet } from "@/lib/demoIntegrationActions";
 import type { AssistantActionState, ChatMessage } from "@/types/chat";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -64,6 +66,7 @@ export default function ChatMessagesArea({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState(chatTitle ?? "");
   const [isSavingTitle, setIsSavingTitle] = useState(false);
+  const [enabledDemoIntegrations, setEnabledDemoIntegrations] = useState<DemoIntegrationActionSet[]>([]);
   const resolvedReadOnlyReason = readOnlyReason ?? (isReadOnly ? "chat" : null);
   const readOnlyBannerText =
     resolvedReadOnlyReason === "skill"
@@ -79,6 +82,19 @@ export default function ChatMessagesArea({
     if (!target) return;
     target.scrollTo({ top: target.scrollHeight, behavior: "smooth" });
   }, [messages, scrollContainerRef]);
+
+  useEffect(() => {
+    const syncEnabledIntegrations = () => setEnabledDemoIntegrations(readEnabledDemoIntegrations());
+    syncEnabledIntegrations();
+
+    window.addEventListener(DEMO_INTEGRATIONS_UPDATED_EVENT, syncEnabledIntegrations);
+    window.addEventListener("focus", syncEnabledIntegrations);
+
+    return () => {
+      window.removeEventListener(DEMO_INTEGRATIONS_UPDATED_EVENT, syncEnabledIntegrations);
+      window.removeEventListener("focus", syncEnabledIntegrations);
+    };
+  }, []);
 
   const headerTitle = useMemo(() => {
     if (isNewChat) return "";
@@ -302,6 +318,7 @@ export default function ChatMessagesArea({
                     message={message}
                     previousRole={index > 0 ? sortedMessages[index - 1]?.role : undefined}
                     isStreamingBubble={streamingAssistantId === message.id || message.metadata?.streaming === true}
+                    enabledDemoIntegrations={enabledDemoIntegrations}
                     onOpenTranscript={onOpenTranscript}
                     onOpenCard={onOpenCard}
                     workspaceId={workspaceId}
@@ -338,6 +355,7 @@ type ChatBubbleProps = {
   message: ChatMessage;
   previousRole?: ChatMessage["role"];
   isStreamingBubble?: boolean;
+  enabledDemoIntegrations?: DemoIntegrationActionSet[];
   onOpenTranscript?: (transcriptId: string, defaultTabId?: string | null) => void;
   onOpenCard?: (cardId: string, fallbackTranscriptId?: string | null, defaultTabId?: string | null) => void;
   workspaceId?: string;
@@ -347,6 +365,7 @@ function ChatBubble({
   message,
   previousRole,
   isStreamingBubble = false,
+  enabledDemoIntegrations = [],
   onOpenTranscript,
   onOpenCard,
   workspaceId,
@@ -438,6 +457,16 @@ function ChatBubble({
 
   // Не показывать источники во время стриминга
   const showCitations = !resolvedStreaming && citations.length > 0;
+  const shouldShowIntegrationActions =
+    message.role === "assistant" &&
+    !resolvedStreaming &&
+    !isTranscript &&
+    !isFileMessage &&
+    enabledDemoIntegrations.length > 0;
+  const integrationActionsTriggerLabel =
+    enabledDemoIntegrations.length === 1
+      ? enabledDemoIntegrations[0]?.buttonLabel ?? "Действия"
+      : "Действия интеграций";
 
   const formatSize = (size?: number | null) => {
     if (!size || size <= 0) return null;
@@ -521,6 +550,40 @@ function ChatBubble({
       </div>
     </div>
   );
+
+  const renderIntegrationActions = () => {
+    if (!shouldShowIntegrationActions) return null;
+
+    return (
+      <div className="mt-3">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="outline" className="h-8 rounded-full text-xs">
+              {integrationActionsTriggerLabel}
+              <ChevronDown className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-72">
+            {enabledDemoIntegrations.map((integration, index) => (
+              <div key={integration.integrationId}>
+                {enabledDemoIntegrations.length > 1 ? (
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">
+                    {integration.integrationName}
+                  </DropdownMenuLabel>
+                ) : null}
+                {integration.actions.map((action) => (
+                  <DropdownMenuItem key={`${integration.integrationId}-${action}`}>
+                    {action}
+                  </DropdownMenuItem>
+                ))}
+                {index < enabledDemoIntegrations.length - 1 ? <DropdownMenuSeparator /> : null}
+              </div>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    );
+  };
 
   if (isUser) {
     return (
@@ -631,6 +694,7 @@ function ChatBubble({
                 {resolvedStreaming ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                 <span>{resolvedStreaming ? "Ассистент печатает..." : timestamp}</span>
               </div>
+              {renderIntegrationActions()}
             </>
           )}
         </div>
