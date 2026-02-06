@@ -4,7 +4,13 @@ import MarkdownRenderer from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { DEMO_INTEGRATIONS_UPDATED_EVENT, readEnabledDemoIntegrations, type DemoIntegrationActionSet } from "@/lib/demoIntegrationActions";
+import {
+  DEMO_INTEGRATIONS_STORAGE_KEY,
+  DEMO_INTEGRATIONS_UPDATED_EVENT,
+  DEMO_INTEGRATION_TOGGLES_STORAGE_KEY,
+  readEnabledDemoIntegrations,
+  type DemoIntegrationActionSet,
+} from "@/lib/demoIntegrationActions";
 import type { AssistantActionState, ChatMessage } from "@/types/chat";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -85,13 +91,26 @@ export default function ChatMessagesArea({
 
   useEffect(() => {
     const syncEnabledIntegrations = () => setEnabledDemoIntegrations(readEnabledDemoIntegrations());
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea !== window.localStorage) return;
+      if (
+        event.key !== DEMO_INTEGRATIONS_STORAGE_KEY &&
+        event.key !== DEMO_INTEGRATION_TOGGLES_STORAGE_KEY
+      ) {
+        return;
+      }
+      syncEnabledIntegrations();
+    };
+
     syncEnabledIntegrations();
 
     window.addEventListener(DEMO_INTEGRATIONS_UPDATED_EVENT, syncEnabledIntegrations);
+    window.addEventListener("storage", handleStorage);
     window.addEventListener("focus", syncEnabledIntegrations);
 
     return () => {
       window.removeEventListener(DEMO_INTEGRATIONS_UPDATED_EVENT, syncEnabledIntegrations);
+      window.removeEventListener("storage", handleStorage);
       window.removeEventListener("focus", syncEnabledIntegrations);
     };
   }, []);
